@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Privacy Policy — {{ brand }}{% endblock %}
+{% block body %}
+<h1>Privacy Policy</h1>
+<p style="color:var(--muted);font-size:14px">
+  Template — have a lawyer review before you rely on it. Replace the bracketed
+  items and confirm it matches what you actually do.
+</p>
+
+<h2>Who we are</h2>
+<p>{{ company }}, {{ address }}. Contact: <a href="mailto:{{ contact_email }}">{{ contact_email }}</a>.</p>
+
+<h2>What we collect</h2>
+<ul>
+  <li><strong>Business contact details</strong> — business name, location, website,
+      publicly listed business email and phone. For prospects, this comes from
+      public sources such as business directories and search results.</li>
+  <li><strong>Information you give us</strong> — anything submitted through the
+      audit request form on this site.</li>
+  <li><strong>Client service data</strong> — for paying clients, the audit results
+      we generate and any access you grant us to your business listings or website.</li>
+</ul>
+<p>
+  We do not collect consumer personal data, and we do not use tracking pixels
+  or analytics cookies in the emails we send.
+</p>
+
+<h2>How we use it</h2>
+<ul>
+  <li>To run AI visibility audits on the business and produce the report.</li>
+  <li>To contact a business about its audit result. This is business-to-business
+      communication under CAN-SPAM.</li>
+  <li>To deliver and bill for the service, for clients.</li>
+</ul>
+<p>We do not sell, rent, or transfer your information to anyone.</p>
+
+<h2>Opting out</h2>
+<p>
+  Use the <a href="/unsubscribe">unsubscribe page</a>, click the unsubscribe link
+  in any email, or reply "STOP". It takes effect immediately and permanently. We
+  keep your address on a suppression list for the sole purpose of never
+  contacting you again.
+</p>
+
+<h2>How long we keep it</h2>
+<p>
+  Prospect records are deleted after [12] months of no engagement. Client data is
+  kept for the life of the engagement plus [7] years where tax law requires it.
+  Suppression records are kept indefinitely — that is what makes the opt-out stick.
+</p>
+
+<h2>Security</h2>
+<p>
+  Data is stored in an encrypted database with access limited to
+  {{ company }}. Client credentials, where provided, are held in a password
+  manager and never stored alongside business records.
+</p>
+
+<h2>Your rights</h2>
+<p>
+  Email <a href="mailto:{{ contact_email }}">{{ contact_email }}</a> to request a
+  copy of what we hold about your business, to correct it, or to have it deleted.
+  We respond within 30 days. Residents of some states and countries have
+  additional statutory rights; we honour these requests regardless of where you are.
+</p>
+
+<h2>Changes</h2>
+<p>If this policy changes materially, we will note it here and tell current clients directly.</p>
+<p style="color:var(--muted);font-size:14px">Last updated: [DATE]</p>
+{% endblock %}

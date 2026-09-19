@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Unsubscribe — {{ brand }}{% endblock %}
+{% block body %}
+{% if done %}
+  <h1>You're unsubscribed.</h1>
+  <p class="lead">
+    {% if email %}<strong>{{ email }}</strong> has been removed.{% else %}You have been removed.{% endif %}
+    We will not contact you again.
+  </p>
+  <p>
+    This took effect immediately — not in ten days. Anything already queued for
+    you has been cancelled.
+  </p>
+  <p style="color:var(--muted);font-size:14px">
+    Sorry for the interruption. If this was a mistake, just email
+    <a href="mailto:{{ contact_email }}">{{ contact_email }}</a>.
+  </p>
+{% else %}
+  <h1>Unsubscribe</h1>
+  <p class="lead">Confirm your address and we will stop, permanently.</p>
+  <section>
+    <form method="post" action="/unsubscribe">
+      <label for="email">Email address</label>
+      <input id="email" name="email" type="email" required value="{{ email }}"
+             placeholder="you@yourbusiness.com">
+      <p style="margin:18px 0 0"><button class="btn" type="submit">Unsubscribe me</button></p>
+    </form>
+  </section>
+{% endif %}
+{% endblock %}

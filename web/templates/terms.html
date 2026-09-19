@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Terms of Service — {{ brand }}{% endblock %}
+{% block body %}
+<h1>Terms of Service</h1>
+<p style="color:var(--muted);font-size:14px">
+  Template — have a lawyer review before you rely on it. The signed client
+  agreement governs paid engagements and takes precedence over this page.
+</p>
+
+<h2>The service</h2>
+<p>
+  {{ company }} measures how often a business is named in answers produced by AI
+  assistants and search engines, and supplies structured data, content, and
+  recommendations intended to improve that.
+</p>
+
+<h2>No guarantee of results</h2>
+<p>
+  <strong>We do not and cannot guarantee that your business will appear in any AI
+  answer, at any position, at any time.</strong> AI engines are operated by third
+  parties, change without notice, and produce non-deterministic output. Anyone
+  who guarantees placement in an AI answer is not being straight with you.
+</p>
+<p>
+  What we guarantee is the work: the audit runs, the report is delivered, and the
+  deliverables are produced each cycle.
+</p>
+
+<h2>Your responsibilities</h2>
+<ul>
+  <li>Implement the deliverables, or authorise us to implement them.</li>
+  <li>Give accurate business information. Our output is only as good as it.</li>
+  <li>Hold the rights to any material you ask us to publish on your behalf.</li>
+</ul>
+<p>Results depend materially on implementation. Deliverables left unused will not move the score.</p>
+
+<h2>Fees and billing</h2>
+<ul>
+  <li>Subscriptions bill monthly in advance and renew automatically.</li>
+  <li>Cancel any time with 30 days' notice; service runs to the end of the paid period.</li>
+  <li>No refunds after a report has been delivered, except under the first-month
+      guarantee below.</li>
+  <li>Service pauses on failed payment and resumes when payment succeeds.</li>
+</ul>
+
+<h2>First-month guarantee</h2>
+<p>
+  If your visibility score has not moved after 30 days <em>and</em> you have
+  implemented the deliverables we provided, we refund your first month. This
+  applies to the first month only, and implementation is a condition of it.
+</p>
+
+<h2>Intellectual property</h2>
+<p>
+  Deliverables produced for you — schema, content, action lists — become yours on
+  payment. The measurement methodology, scoring system, and software remain ours.
+</p>
+
+<h2>Limitation of liability</h2>
+<p>
+  To the maximum extent permitted by law, our total liability is limited to the
+  fees you paid in the three months preceding the claim. We are not liable for
+  indirect or consequential losses, including lost profits or lost business.
+</p>
+
+<h2>Termination</h2>
+<p>
+  Either side may terminate with 30 days' written notice. You keep every
+  deliverable already provided. We may terminate immediately for non-payment or
+  for any request to do something unlawful.
+</p>
+
+<h2>Governing law</h2>
+<p>These terms are governed by the laws of [YOUR STATE], United States.</p>
+
+<h2>Contact</h2>
+<p><a href="mailto:{{ contact_email }}">{{ contact_email }}</a> · {{ address }}</p>
+<p style="color:var(--muted);font-size:14px">Last updated: [DATE]</p>
+{% endblock %}

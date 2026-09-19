@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}{{ brand }} — Get found when customers ask AI{% endblock %}
+{% block body %}
+
+<h1>When someone asks AI for the best business in your town, does it say your name?</h1>
+
+<p class="lead">
+  More and more customers now ask ChatGPT, Google, or Perplexity instead of
+  scrolling search results. The answer names two or three businesses. If you
+  are not one of them, you were never seen — and there is no page two to be on.
+</p>
+
+<section id="audit">
+  <h2 style="margin-top:0">Find out for free</h2>
+  <p>
+    We ask the AI engines the questions your customers actually ask — "who is
+    the best plumber in Charlotte?", "my AC died, who do I call?" — and send you
+    a one-page report showing whether you were named, who was named instead, and
+    the three fastest fixes.
+  </p>
+  <p style="color:var(--muted);font-size:14px">
+    No charge, no call required, no card.
+  </p>
+
+  {% if error %}<div class="err">{{ error }}</div>{% endif %}
+
+  <form method="post" action="/audit-request">
+    <label for="business">Business name</label>
+    <input id="business" name="business" required placeholder="Apex Heating &amp; Air">
+
+    <div class="row">
+      <div>
+        <label for="city">City</label>
+        <input id="city" name="city" required placeholder="Austin">
+      </div>
+      <div>
+        <label for="state">State</label>
+        <input id="state" name="state" placeholder="TX" maxlength="2">
+      </div>
+    </div>
+
+    <label for="vertical">What do you do?</label>
+    <select id="vertical" name="vertical">
+      <option value="hvac">HVAC / heating &amp; air</option>
+      <option value="plumbing">Plumbing</option>
+      <option value="roofing">Roofing</option>
+      <option value="dental">Dental</option>
+      <option value="legal">Legal</option>
+      <option value="medical">Medical clinic</option>
+      <option value="insurance">Insurance</option>
+      <option value="home_services">Other home services</option>
+    </select>
+
+    <label for="website">Website</label>
+    <input id="website" name="website" type="url" placeholder="https://yourbusiness.com">
+
+    <label for="email">Where should we send the report?</label>
+    <input id="email" name="email" type="email" required placeholder="you@yourbusiness.com">
+
+    <p style="margin:18px 0 0"><button class="btn" type="submit">Send me the free report</button></p>
+  </form>
+</section>
+
+<h2>Why this is not the same as SEO</h2>
+<p>
+  A business can sit at number one in local search and still be completely
+  absent from the AI answer. Assistants do not read the results page — they
+  build answers from structured data on your site and from what independent
+  sources say about you. Different inputs, different outcome.
+</p>
+<div class="quote">
+  That is why your existing SEO spend did not stop this happening.
+</div>
+
+<h2>What you get each month</h2>
+<ul>
+  <li><strong>The report</strong> — your visibility score, the trend since last month, and every question we tested with the actual AI answer.</li>
+  <li><strong>The structured data</strong> — ready-to-paste code that makes your site readable by AI engines.</li>
+  <li><strong>Answer-shaped content</strong> — written against the exact questions you are currently losing.</li>
+  <li><strong>Your action list</strong> — Google Business Profile and directory work, in priority order.</li>
+</ul>
+
+<h2>Pricing</h2>
+<div class="tiers">
+  <div class="tier">
+    <div class="n">Audit</div>
+    <div class="p">${{ '%0.0f'|format(pricing.audit_one_time) }}<small> once</small></div>
+    <div class="d">Full audit, report and all deliverables. One time.</div>
+  </div>
+  <div class="tier">
+    <div class="n">Starter</div>
+    <div class="p">${{ '%0.0f'|format(pricing.starter_monthly) }}<small>/mo</small></div>
+    <div class="d">Monthly tracking, report, schema and content refresh.</div>
+  </div>
+  <div class="tier">
+    <div class="n">Growth</div>
+    <div class="p">${{ '%0.0f'|format(pricing.growth_monthly) }}<small>/mo</small></div>
+    <div class="d">Twice the questions tracked, competitor monitoring, quarterly strategy call.</div>
+  </div>
+  <div class="tier">
+    <div class="n">Managed</div>
+    <div class="p">${{ '%0.0f'|format(pricing.managed_monthly) }}<small>/mo</small></div>
+    <div class="d">We implement it for you. Multi-location, priority support.</div>
+  </div>
+</div>
+<p style="margin-top:16px;font-size:14px;color:var(--muted)">
+  Month to month, cancel any time with 30 days' notice.
+</p>
+
+<h2>What we will not tell you</h2>
+<p>
+  That we can guarantee you a spot in an AI answer. Nobody can — not us, not
+  anyone charging ten times this. What we can do is measure exactly where you
+  stand, do the work that reliably moves it, and show you the number every
+  month so you can judge for yourself.
+</p>
+
+{% endblock %}

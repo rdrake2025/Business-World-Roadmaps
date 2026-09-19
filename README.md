@@ -4,6 +4,17 @@ Welcome, business trailblazer! 🚀 The business world is your arena, brimming w
 
 ---
 
+## 🤖 Bonus: A Working Business You Can Run
+
+Beyond the roadmaps, this repository contains **[AnswerRank](./ANSWERRANK.md)** —
+a complete, runnable business: an AI search visibility service for local service
+businesses, operated by a fleet of agents that runs 24/7. It ships with a full
+business plan, financial model, sales playbook, legal checklist and a 30-day
+launch plan. Use it as a live case study in productized services, unit
+economics and go-to-market — or run it.
+
+---
+
 ## 🌟 Why Business World Roadmaps?
 The business landscape is dynamic, competitive, and ever-evolving. Our roadmaps cut through the complexity, providing:
 - **Clarity**: Step-by-step guidance from zero to hero, no degree required.

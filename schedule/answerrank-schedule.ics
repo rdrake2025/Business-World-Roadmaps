@@ -1,0 +1,423 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//AnswerRank//Operator Schedule//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+X-WR-CALNAME:AnswerRank - Business Schedule
+X-WR-CALDESC:Daily operating rhythm and 30-day launch plan.
+BEGIN:VEVENT
+UID:3e6d1b4c696bde30b777@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20260926T090000
+DTEND:20260926T110000
+SUMMARY:LAUNCH 1: Install and prove it works
+CATEGORIES:AnswerRank Launch
+DESCRIPTION:Nothing costs money today.\n\n1. git clone the repo onto your l
+ aptop\n2. pip install -r requirements.txt\n3. python3 -m unittest discover
+  -s tests     (expect 43 passing)\n4. python3 run.py tick --force         
+       (watch the fleet run)\n5. python3 run.py budget-init                
+ (then edit budget.yml with\n   YOUR real numbers - guesses give you a runw
+ ay you cannot trust)\n\n6. Audit three businesses you personally know:\n  
+  python3 run.py audit "<Name>" <City> --state <ST> --vertical hvac \\\n   
+     --website <url> --report\n\nREAD THOSE REPORTS CRITICALLY. Would you p
+ ay $997/mo for that?\nIf not\, that is today's real work - fix it before a
+  stranger sees one.
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:LAUNCH 1: Install and prove it works
+TRIGGER:-PT30M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:e1ef534046ced6dc0c97@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20260926T130000
+DTEND:20260926T143000
+SUMMARY:LAUNCH 2: Pick your vertical and market
+CATEGORIES:AnswerRank Launch
+DESCRIPTION:Decide\, then commit. Specificity is what makes the email land.
+ \n\nPick ONE vertical: hvac\, plumbing\, roofing\, dental\, or legal.\nPic
+ k 2-3 metros. Mid-size beats huge - less competition\, same budgets.\n\nSu
+ ggested: HVAC. Highest urgency\, highest ticket ($6-12k jobs)\,\nand the w
+ orst AI visibility of any vertical tested.\n\nThen run 20 audits in it and
+  look for the pattern:\nwhat do the VISIBLE businesses have that the invis
+ ible ones don't?\n\nWrite that down. That is your expertise\, and it is wh
+ at you say on calls.
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:LAUNCH 2: Pick your vertical and market
+TRIGGER:-PT30M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:b7335169ae5fa3ca703c@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20260928T180000
+DTEND:20260928T184500
+SUMMARY:LAUNCH 3: Buy the sending domain ($12)
+CATEGORIES:AnswerRank Launch
+DESCRIPTION:First money spent. Twelve dollars.\n\n1. Buy a SEPARATE sending
+  domain - never your main one.\n   If it burns\, your real domain and clie
+ nt email survive.\n   Pattern: <brand>-mail.com\, get<brand>.com\, <brand>
+ hq.com\n\n2. Set up Google Workspace Business Starter ($7.20/mo\, 1 seat).
+ \n   You need real authenticated sending\, not a free inbox.\n\nRunning to
+ tal: $12 one-time\, $7.20/mo. That is the whole spend so far.
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:LAUNCH 3: Buy the sending domain ($12)
+TRIGGER:-PT30M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:290ac7f8976849bf7010@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20260929T180000
+DTEND:20260929T190000
+SUMMARY:LAUNCH 4: DNS - SPF\, DKIM\, DMARC
+CATEGORIES:AnswerRank Launch
+DESCRIPTION:The most important hour of the whole launch.\n\nIn your domain'
+ s DNS:\n  SPF    TXT  @         v=spf1 include:_spf.google.com ~all\n  DKI
+ M   TXT  (Google Admin generates this - enable it and paste)\n  DMARC  TXT
+   _dmarc    v=DMARC1\; p=quarantine\; rua=mailto:you@domain\n\np=none is N
+ OT enough in 2026. It must be quarantine or reject.\n\nVerify:\n  dig +sho
+ rt TXT yourdomain.com\n  dig +short TXT _dmarc.yourdomain.com\n\nCompliant
+  senders see ~89% inbox placement. Non-compliant see 22-34%\nfiltered or r
+ ejected outright. This hour is the difference.\n\nWARMUP STARTS TOMORROW a
+ nd runs two weeks. It gates everything else.
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:LAUNCH 4: DNS - SPF\, DKIM\, DMARC
+TRIGGER:-PT30M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:6311c1202eff1c136dc6@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20260930T180000
+DTEND:20260930T184500
+SUMMARY:LAUNCH 5: API keys + first real audits
+CATEGORIES:AnswerRank Launch
+DESCRIPTION:Put $15 of credit on the APIs. It goes further than you expect 
+ -\na full 10-prompt\, 4-engine audit costs about $0.06.\n\n  export OPENAI
+ _API_KEY=...\n  export ANTHROPIC_API_KEY=...\n  export SERPER_API_KEY=... 
+        (free tier is plenty to start)\n\nThen re-run an audit and compare 
+ it to the simulated one from day 1.\nThis is the first time you see REAL d
+ ata about a real business.\n\nRunning total: $27 one-time\, $12.20/mo.
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:LAUNCH 5: API keys + first real audits
+TRIGGER:-PT30M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:b92a976aaa3b23ff3eb3@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20261003T090000
+DTEND:20261003T110000
+SUMMARY:LAUNCH 6: Build the prospect list
+CATEGORIES:AnswerRank Launch
+DESCRIPTION:Target 200-300 qualified prospects in your vertical and metros.
+ \n\n  python3 run.py tick --force\n  python3 run.py prospects\n\nQualifica
+ tion bar - all four must be true:\n  1. Visibility score under 55       (t
+ here is a real problem)\n  2. A competitor is beating them    (there is a 
+ real threat)\n  3. They have a website             (there is something to 
+ fix)\n  4. They already spend on marketing (truck wraps\, ads\, real GBP)\
+ n\nNumber 4 you check by hand. A business with no website and no marketing
+ \nspend is not a cheap client - it is a client who never pays.\n\nLet the 
+ auditor run overnight.
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:LAUNCH 6: Build the prospect list
+TRIGGER:-PT30M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:90dc141ccc329411cda7@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20261003T130000
+DTEND:20261003T150000
+SUMMARY:LAUNCH 7: One-page site + unsubscribe
+CATEGORIES:AnswerRank Launch
+DESCRIPTION:Keep it to one page. A logo is not what closes a $997 deal.\n\n
+   - What it is\, who it is for\, the three tiers\, a booking link\n  - Pri
+ vacy policy and terms (templates are fine)\n  - THE UNSUBSCRIBE ENDPOINT A
+ T /unsubscribe\n\nThat last one is legally required and blocks sending unt
+ il it works.\nWire it to the suppression list.\n\nFree hosting is fine: Gi
+ tHub Pages\, Netlify\, Cloudflare Pages.
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:LAUNCH 7: One-page site + unsubscribe
+TRIGGER:-PT30M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:4cd6eba6da33b1ff1733@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20261005T180000
+DTEND:20261005T184500
+SUMMARY:LAUNCH 8: Stripe + booking link
+CATEGORIES:AnswerRank Launch
+DESCRIPTION:  - Stripe account\, verified\n  - Payment links for all four t
+ iers: $297\, $499\, $997\, $1997\n  - A calendar booking link (Cal.com fre
+ e tier works)\n\nPut the booking link in your email signature today.
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:LAUNCH 8: Stripe + booking link
+TRIGGER:-PT30M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:742140a06a27659a7ac2@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20261006T180000
+DTEND:20261006T183000
+SUMMARY:LAUNCH 9: Mid-warmup check
+CATEGORIES:AnswerRank Launch
+DESCRIPTION:Halfway through warmup.\n\n  python3 run.py send --dry-run\n\nC
+ onfirm: DNS passes\, no preflight errors\, physical address set in\nanswer
+ rank.yml. If anything is red\, fix it now - you send in four days.\n\nStil
+ l warming. Do not start cold outreach yet.
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:LAUNCH 9: Mid-warmup check
+TRIGGER:-PT30M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:b49a68b76143ff901ede@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20261008T180000
+DTEND:20261008T190000
+SUMMARY:LAUNCH 10: FIRST SEND - 20 emails
+CATEGORIES:AnswerRank Launch
+DESCRIPTION:The business starts today.\n\n  python3 run.py send --dry-run  
+    (confirm clean)\n  python3 run.py inbox --full       (READ ALL 20. Ever
+ y word.)\n  python3 run.py approve\n  python3 run.py send --limit 20\n\nTw
+ enty. Not two hundred.\n\nThe first 50 emails are a test\, not a campaign.
+  If nobody replies\, the\nproblem is the subject line or the targeting - n
+ ot the volume. Find that\nout for 50 emails\, not 500.
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:LAUNCH 10: FIRST SEND - 20 emails
+TRIGGER:-PT30M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:a0d9dc0aa3c300ae14ef@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20261009T180000
+DTEND:20261009T183000
+SUMMARY:LAUNCH 11: Ramp to 40/day
+CATEGORIES:AnswerRank Launch
+DESCRIPTION:  python3 run.py send --limit 40\n\nWatch two numbers daily fro
+ m here:\n  bounces    must stay under 2%\n  complaints must stay under 0.1
+ %\n\nEither one drifts up -> STOP SENDING. Verify the list. Re-warm.\nDeli
+ verability is the one resource you cannot buy back.
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:LAUNCH 11: Ramp to 40/day
+TRIGGER:-PT30M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:b8bc74193188a86ab850@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20261012T180000
+DTEND:20261012T183000
+SUMMARY:LAUNCH 12: Ramp to 60-100/day
+CATEGORIES:AnswerRank Launch
+DESCRIPTION:  python3 run.py send --limit 60\n\nReplies should be appearing
+  by now. Every reply gets an answer within\ntwo hours during the day.\n\nE
+ xpected at this point: 1-3% reply rate. On 200 sent\, that is 2-6 replies.
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:LAUNCH 12: Ramp to 60-100/day
+TRIGGER:-PT30M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:64e61bef1f414c8cc0e8@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20261017T090000
+DTEND:20261017T103000
+SUMMARY:LAUNCH 13: Deliver to anyone who said yes
+CATEGORIES:AnswerRank Launch
+DESCRIPTION:Send the full report to everyone who asked\, and offer the 20-m
+ inute call.\n\n  python3 run.py audit "<Business>" <City> --state <ST> \\\
+ n      --vertical <v> --website <url> --report\n\nReview the report by han
+ d before it goes. Every time\, for your first\nthree prospects. After that
+ \, trust the fleet.
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:LAUNCH 13: Deliver to anyone who said yes
+TRIGGER:-PT30M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:fc3b79bf9ecd9300da49@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20261024T090000
+DTEND:20261024T110000
+SUMMARY:LAUNCH 14: Diagnose\, do not guess
+CATEGORIES:AnswerRank Launch
+DESCRIPTION:Thirty days. Be honest about the numbers.\n\n  python3 run.py d
+ ashboard\n  python3 run.py budget\n\nTargets:   250 audited / 400 sent / 8
+ -15 replies / 4-8 calls / 2-3 clients\nAcceptable: 150 audited / 250 sent 
+ / 4 replies   / 2 calls   / 1 client\n\nONE client by day 30 puts you on t
+ he pessimistic curve - which still\nclears $5k inside a year. That is a wi
+ n\, not a disappointment.\n\nZERO clients is a signal\, not a failure. Dia
+ gnose which step broke and\nfix ONLY the earliest broken one:\n\n  not del
+ ivered -> DNS/reputation. Everything else is wasted until fixed.\n  no rep
+ lies    -> subject line\, then targeting.\n  no calls      -> report not l
+ anding. Lead with the competitor gap.\n  no closes     -> talk less. Show 
+ the test log. Ask for the card.\n\nFixing the pitch while your email lands
+  in spam wastes a month.
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:LAUNCH 14: Diagnose\, do not guess
+TRIGGER:-PT30M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:065746fc7139fba7e526@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20260930T193000
+DTEND:20260930T194000
+SUMMARY:AnswerRank: Email warmup (10 min)
+CATEGORIES:AnswerRank Launch
+DESCRIPTION:10 minutes. Keep the sending domain warming.\n\nSend 5-10 real\
+ , personal emails from the sending address today - to\nyourself\, to frien
+ ds\, to anyone who will reply. Replies are the signal\nthat builds reputat
+ ion.\n\nDo NOT start cold outreach until day 18. Sending cold from a cold 
+ domain\nburns it permanently\, and a burned domain is abandoned\, not repa
+ ired.
+RRULE:FREQ=DAILY;UNTIL=20261008T193000
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:AnswerRank: Email warmup (10 min)
+TRIGGER:-PT5M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:38b39691abb345217ad5@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20261012T063000
+DTEND:20261012T065000
+SUMMARY:AnswerRank: Morning ops
+CATEGORIES:AnswerRank
+DESCRIPTION:Your 20 minutes that keep the business moving.\n\n1. python3 ru
+ n.py agents\n   -> any ERR twice in a row? investigate before anything els
+ e.\n\n2. python3 run.py inbox --full\n   -> READ every draft. They go out 
+ under your name.\n\n3. python3 run.py approve\n   python3 run.py send --li
+ mit 40\n\n4. Check the reply inbox. Anything in there beats everything els
+ e today.\n\nIf you only ever do this one block\, the business still runs.
+RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:AnswerRank: Morning ops
+TRIGGER:-PT5M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:218ec477e7ccb62e0fac@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20261012T121500
+DTEND:20261012T122500
+SUMMARY:AnswerRank: Reply check
+CATEGORIES:AnswerRank
+DESCRIPTION:10 minutes. Replies only.\n\nAnswer anyone who responded. Speed
+  matters more than polish -\na reply inside an hour converts far better th
+ an a perfect one tomorrow.\n\nIf they asked for the report:\n  python3 run
+ .py audit "<Business>" <City> --state <ST> \\\n      --vertical <vertical>
+  --website <url> --report\n\nSend it with one line: "Here it is - happy to
+  walk you through it\,\n20 minutes this week?" 
+RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:AnswerRank: Reply check
+TRIGGER:-PT5M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:aaadb9325b4d6a669804@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20261013T173000
+DTEND:20261013T190000
+SUMMARY:AnswerRank: Sales calls
+CATEGORIES:AnswerRank
+DESCRIPTION:Owners of home service businesses are reachable now -\noff the 
+ tools\, not yet at dinner. This is the best calling window you have.\n\nPe
+ r business/02_SALES_PLAYBOOK.md:\n  0-2 min   "How do people find you toda
+ y when they don't know you?"\n  2-8 min   Share the report. Walk the test 
+ log. Stop at the competitor row.\n            THEN SAY NOTHING. Let the si
+ lence work.\n  8-12 min  The three causes: schema\, answer-shaped content\
+ , GBP + citations.\n  12-15 min The offer. $997/mo. Ask for the card ON TH
+ E CALL.\n\nDo not offer to "send a proposal". That is where these deals di
+ e.\n\nClosed one?  python3 run.py win "<Business>" --plan growth
+RRULE:FREQ=WEEKLY;BYDAY=TU,TH
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:AnswerRank: Sales calls
+TRIGGER:-PT15M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:611016c5d252ea6e59ea@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20261031T090000
+DTEND:20261031T110000
+SUMMARY:AnswerRank: Weekly deep work
+CATEGORIES:AnswerRank
+DESCRIPTION:Two hours. The only long block in your week - protect it.\n\n1.
+  python3 run.py dashboard\n   Where are you against $5k? Which funnel step
+  is weakest?\n\n2. python3 run.py prospects --stage audited --limit 30\n  
+  Top up the list if it is thinning.\n\n3. Review any client report that we
+ nt out. Would YOU pay $997 for it?\n\n4. Fix the weakest funnel number - a
+ nd only that one:\n     not delivered  -> DNS/reputation. Stop sending. Fi
+ x SPF/DKIM/DMARC.\n     no replies     -> subject line and targeting.\n   
+   no calls       -> report is not landing. Lead with the competitor gap.\n
+      no closes      -> talk less\, show the test log\, ask for the card.\n
+ \n5. Ten minutes: write down what you learned about your vertical this wee
+ k.\n   That accumulates into the expertise you sell.
+RRULE:FREQ=WEEKLY;BYDAY=SA
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:AnswerRank: Weekly deep work
+TRIGGER:-PT30M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:bc8c32173c73936b9da5@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20260927T100000
+DTEND:20260927T103000
+SUMMARY:AnswerRank: Rest day - no business work
+CATEGORIES:AnswerRank
+DESCRIPTION:Deliberately empty.\n\nThe plan assumes you take this day off. 
+ Six days a week is sustainable\nfor a year\; seven is sustainable for abou
+ t a month\, and this business\nneeds the year.
+RRULE:FREQ=WEEKLY;BYDAY=SU
+END:VEVENT
+BEGIN:VEVENT
+UID:b9928e723e44461c4eb1@answerrank.local
+DTSTAMP:20260919T051854Z
+DTSTART:20261107T111500
+DTEND:20261107T120000
+SUMMARY:AnswerRank: Monthly close + tax reserve
+CATEGORIES:AnswerRank
+DESCRIPTION:Monthly close - 45 minutes. Do not skip this one.\n\n1. python3
+  run.py dashboard\n   python3 run.py budget\n\n2. Reconcile the ledger aga
+ inst your bank and Stripe.\n\n3. MOVE 30% OF PROFIT TO THE TAX ACCOUNT. To
+ day\, not later.\n   Money that sits in the main account gets spent.\n\n4.
+  python3 run.py budget --profit <this month's profit>\n   Follow the split
+  it gives you.\n\n5. Any client whose score is flat two months running: ca
+ ll them.\n   They churn quietly\, and always before they complain.\n\n6. R
+ e-read one report you sent as if you were the client.
+RRULE:FREQ=MONTHLY;BYDAY=1SA
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:AnswerRank: Monthly close + tax reserve
+TRIGGER:-PT60M
+END:VALARM
+END:VEVENT
+END:VCALENDAR

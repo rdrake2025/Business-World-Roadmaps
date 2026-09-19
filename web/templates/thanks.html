@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Report on the way — {{ brand }}{% endblock %}
+{% block body %}
+<h1>Got it — we're running your audit now.</h1>
+<p class="lead">
+  We are asking the AI engines about <strong>{{ business }}</strong> right now.
+  Your report will arrive by email within one business day.
+</p>
+<section>
+  <h2 style="margin-top:0">What to expect</h2>
+  <ul>
+    <li>Your visibility score out of 100, and what it means.</li>
+    <li>Every question we tested, and the actual answer the AI gave.</li>
+    <li>Which competitors were named when you were not.</li>
+    <li>The three fixes that move it fastest.</li>
+  </ul>
+  <p style="margin-bottom:0">
+    No call required. Read it, and if it is useful, reply — we will take it from there.
+  </p>
+</section>
+{% endblock %}

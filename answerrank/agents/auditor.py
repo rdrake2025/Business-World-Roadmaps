@@ -1,0 +1,73 @@
+"""Auditor — runs visibility audits.
+
+Handles both halves of the business:
+
+* **Teaser audits** on ``discovered`` prospects, producing the proof that
+  makes the cold email land.
+* **Full audits** for paying clients on their monthly cycle.
+
+Cold-prospect auditing is rate-limited per run so a runaway loop can never
+burn a month of API budget in an afternoon.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+from ..audit import estimate_cost, run_audit
+from ..models import LedgerEntry
+from ..scoring import competitor_gap
+from .base import Agent
+
+
+class AuditorAgent(Agent):
+    name = "auditor"
+    description = "Runs teaser audits on prospects and full audits for clients."
+    interval = 3600
+
+    def __init__(self, store, settings, teaser_budget: int = 20):
+        super().__init__(store, settings)
+        self.teaser_budget = teaser_budget
+
+    def execute(self) -> tuple[int, str]:
+        engine_count = len(self.settings.available_engines())
+        processed = 0
+        spend = 0.0
+
+        # --- 1. Teaser audits on freshly discovered prospects ---
+        for prospect in self.store.due_prospects("discovered", self.teaser_budget):
+            audit = run_audit(prospect.business, self.settings, depth="teaser")
+            self.store.save_audit(audit)
+
+            prospect.score = audit.score
+            prospect.competitor_gap = competitor_gap(audit)
+            prospect.last_audit_id = audit.id
+            prospect.stage = "audited"
+            prospect.notes = audit.headline()
+            self.store.upsert_prospect(prospect)
+
+            spend += estimate_cost("teaser", engine_count)
+            processed += 1
+
+        # --- 2. Full audits for clients due a report ---
+        clients_audited = 0
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=28)).isoformat(timespec="seconds")
+        for client in self.store.get_clients("active"):
+            if client.last_report_at and client.last_report_at > cutoff:
+                continue
+            audit = run_audit(client.business, self.settings, depth="full")
+            self.store.save_audit(audit)
+            spend += estimate_cost("full", engine_count)
+            clients_audited += 1
+            processed += 1
+
+        if spend > 0:
+            self.store.add_ledger(LedgerEntry(
+                kind="cost", category="api", amount=round(spend, 4),
+                description=f"{processed} audits ({engine_count} engines)",
+            ))
+
+        return processed, (
+            f"{processed - clients_audited} teaser audits, {clients_audited} client audits, "
+            f"${spend:.2f} API spend"
+        )
