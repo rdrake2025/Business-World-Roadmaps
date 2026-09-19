@@ -16,6 +16,15 @@ being named, and does the work to change it.
 
 ## Quick start
 
+One command does everything — isolated environment, dependencies, tests,
+configuration, diagnostics, and the web server:
+
+```bash
+./start.sh
+```
+
+Or step by step:
+
 ```bash
 # Runs with zero API keys in simulation mode
 python3 run.py tick --force        # run one full cycle of the fleet
