@@ -549,6 +549,17 @@ class TestSchedule(unittest.TestCase):
         for e in launch_events(datetime.date(2026, 9, 21)) + recurring_events(datetime.date(2026, 9, 21)):
             self.assertTrue(e.description.strip(), f"{e.summary} has no instructions")
 
+    def test_custom_brand_replaces_default_everywhere(self):
+        """A renamed business must not leak the default brand into the
+        calendar — including CATEGORIES, which fell back to the module
+        default because recurring events never passed it."""
+        import datetime
+        from answerrank.schedule import build_calendar
+        ics = build_calendar(datetime.date(2026, 9, 21), brand="TheAnswerCheck")
+        self.assertNotIn("AnswerRank", ics)
+        self.assertIn("SUMMARY:TheAnswerCheck: Morning ops", ics)
+        self.assertIn("X-WR-CALNAME:TheAnswerCheck", ics)
+
     def test_recurring_only_mode_has_no_launch_tasks(self):
         import datetime
         from answerrank.schedule import build_calendar

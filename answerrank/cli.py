@@ -500,7 +500,8 @@ def cmd_expense(args, settings: Settings) -> int:
 def cmd_schedule(args, settings: Settings) -> int:
     start = (datetime.strptime(args.start, "%Y-%m-%d").date()
              if args.start else datetime.now(timezone.utc).date())
-    ics = build_calendar(start, include_launch=not args.no_launch)
+    ics = build_calendar(start, include_launch=not args.no_launch,
+                         brand=settings.brand)
 
     out = Path(args.out or Path(settings.output_dir) / "answerrank-schedule.ics")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -578,7 +579,7 @@ def cmd_web(args, settings: Settings) -> int:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="answerrank",
-        description="AnswerRank — AI search visibility, run by an agent fleet.",
+        description=f"{SETTINGS.brand} — AI search visibility, run by an agent fleet.",
     )
     ap.add_argument("--config", help="path to answerrank.yml")
     ap.add_argument("-v", "--verbose", action="store_true")

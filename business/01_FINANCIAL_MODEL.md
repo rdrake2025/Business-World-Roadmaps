@@ -60,14 +60,14 @@ because delivery is metered API calls rather than seat licences.
 | **4** | **7.4** | **$5,550** | **$435** | **$5,115** ← target |
 | 5 | 9.0 | $6,768 | $500 | $6,269 |
 | 6 | 10.6 | $7,926 | $562 | $7,364 |
-| 12 | 16.1 | $12,006 | $780 | $11,226 |
+| 12 | 18.4 | $13,752 | $873 | $12,879 |
 
 **Scenario comparison:**
 
 | Scenario | Adds/mo | Churn | Target hit | Month 12 profit |
 | --- | --- | --- | --- | --- |
 | Pessimistic | 1 | 8% | Month 11 | ~$5,460 |
-| **Base** | **2** | **5%** | **Month 4** | **~$11,230** |
+| **Base** | **2** | **5%** | **Month 4** | **~$12,880** |
 | Optimistic | 3 | 4% | Month 3 | ~$20,430 |
 
 Even the pessimistic case — one client a month with churn running at nearly
