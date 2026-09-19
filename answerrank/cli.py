@@ -14,12 +14,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .agents.fixer import FixerAgent
+from .budget import (
+    PHASES, cumulative_monthly, load_personal, milestones, phase_cost,
+    quit_threshold, reinvestment_split, runway_months, write_template,
+)
 from .agents.reporter import render_report
 from .audit import estimate_cost, run_audit
 from .config import SETTINGS, Settings, load_settings
 from .mailer import Mailer, check_dns_readiness, throttle
 from .models import Business, Client, LedgerEntry, Prospect, now_iso
 from .orchestrator import Orchestrator, build_fleet, setup_logging
+from .schedule import build_calendar
 from .scoring import grade
 from .store import Store
 
@@ -389,6 +394,135 @@ def cmd_export(args, settings: Settings) -> int:
     return 0
 
 
+def cmd_budget_init(args, settings: Settings) -> int:
+    path = Path(args.path or "budget.yml")
+    if path.exists() and not args.force:
+        print(f"{path} already exists. Use --force to overwrite.")
+        return 1
+    write_template(path)
+    print(f"Wrote {path}")
+    print("\nEdit every line with your real numbers, then run: python3 run.py budget")
+    print("This file is gitignored — it never leaves your machine.")
+    return 0
+
+
+def cmd_budget(args, settings: Settings) -> int:
+    from .agents.bookkeeper import BookkeeperAgent
+
+    store = _store(settings)
+    me = load_personal(args.path or "budget.yml")
+    kpis = BookkeeperAgent(store, settings).kpis()
+    profit = args.profit if args.profit is not None else kpis["profit"]
+
+    _hr("PERSONAL")
+    print(f"  Take-home income        ${me.net_income:>10,.0f}")
+    for name, amount in sorted(me.expenses.items(), key=lambda kv: -kv[1]):
+        print(f"    {name.replace('_',' '):<22}${amount:>8,.0f}")
+    print(f"  {'Total expenses':<24}${me.total_expenses:>10,.0f}")
+    print(f"  {'Disposable':<24}${me.disposable:>10,.0f} / month")
+
+    _hr("BUSINESS COST BY PHASE")
+    print(f"  {'Phase':<34}{'One-time':>11}{'Monthly':>10}")
+    for key, ph in PHASES.items():
+        one, month = phase_cost(key)
+        print(f"  {ph['label']:<34}{f'${one:,.0f}':>11}{f'${month:,.2f}':>10}")
+    current = cumulative_monthly(args.phase)
+    print(f"\n  At {PHASES[args.phase]['label']}: ${current:,.2f}/mo recurring")
+    for note in PHASES[args.phase]["notes"]:
+        print(f"    • {note}")
+
+    _hr("RUNWAY")
+    surplus = max(0.0, me.disposable)
+    months = runway_months(me.savings, current, surplus)
+    print(f"  Monthly disposable      ${surplus:>10,.0f}")
+    print(f"  Savings                 ${me.savings:>10,.0f}")
+    print(f"  Monthly business burn   ${current:>10,.2f}")
+    if months == float("inf"):
+        covered = surplus / current if current else 0
+        print(f"  Runway                     indefinite")
+        print(f"\n  Your disposable income covers the burn {covered:,.0f}x over, so this")
+        print("  never touches savings. Spend nothing beyond the current phase.")
+    else:
+        print(f"  Shortfall               ${current - surplus:>10,.2f} / month")
+        print(f"  Runway                  {months:>11,.1f} months on savings")
+        if months < 3:
+            print("\n  Tight. Do Phase 0 only — about $12/mo. Do not form the LLC")
+            print("  or buy tools until a client has actually paid you.")
+
+    _hr("PROFIT SPLIT")
+    if profit <= 0:
+        print("  No profit yet. Nothing to split — this is expected before month 2.")
+    else:
+        split = reinvestment_split(profit)
+        note = split.pop("_note", "")
+        print(f"  On ${profit:,.0f}/mo profit:")
+        for k, v in split.items():
+            print(f"    {k.replace('_',' '):<22}${v:>8,.0f}")
+        print(f"\n  {note}")
+
+    _hr("MILESTONES")
+    print(f"  {'Profit':>9}{'Clients':>9}   What it means")
+    for m in milestones(me.net_income):
+        here = " ←" if profit >= m["profit"] and profit > 0 else ""
+        profit_col = f"${m['profit']:,.0f}"
+        print(f"  {profit_col:>9}{m['clients']:>9}   {m['meaning']}{here}")
+
+    q = quit_threshold(me.net_income)
+    _hr("LEAVING THE JOB")
+    print(f"  Your take-home                  ${q['job_take_home']:>9,.0f}/mo")
+    print(f"  Profit that truly matches it    ${q['profit_to_match_pay']:>9,.0f}/mo  (profit is pre-tax)")
+    print(f"  Safe to quit at                 ${q['safe_quit_profit']:>9,.0f}/mo")
+    print(f"  ...sustained for                {q['sustained_months']:>10,.0f} months")
+    print(f"  ...with cash banked             ${q['cash_buffer_needed']:>9,.0f}")
+    print("\n  Do not quit early. Business profit is variable and pre-tax;")
+    print("  a wage is neither. Matching them dollar for dollar is a pay cut.")
+    return 0
+
+
+def cmd_expense(args, settings: Settings) -> int:
+    store = _store(settings)
+    entry = LedgerEntry(
+        kind="cost" if not args.revenue else "revenue",
+        category=args.category, amount=args.amount, description=args.note or "",
+    )
+    store.add_ledger(entry)
+    kind = "revenue" if args.revenue else "expense"
+    print(f"Logged {kind}: ${args.amount:,.2f} — {args.category}"
+          + (f" ({args.note})" if args.note else ""))
+    pnl = store.pnl(30)
+    print(f"Last 30 days: revenue ${pnl['revenue']:,.2f}, "
+          f"costs ${pnl['cost']:,.2f}, profit ${pnl['profit']:,.2f}")
+    return 0
+
+
+def cmd_schedule(args, settings: Settings) -> int:
+    start = (datetime.strptime(args.start, "%Y-%m-%d").date()
+             if args.start else datetime.now(timezone.utc).date())
+    ics = build_calendar(start, include_launch=not args.no_launch)
+
+    out = Path(args.out or Path(settings.output_dir) / "answerrank-schedule.ics")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(ics, encoding="utf-8", newline="")
+
+    count = ics.count("BEGIN:VEVENT")
+    print(f"Wrote {out}  ({count} events)")
+    _hr("WHAT IS IN IT")
+    print("  Daily    06:30  Morning ops (20 min) — approve, send, check replies")
+    print("  Daily    12:15  Reply check (10 min)")
+    print("  Tue/Thu  17:30  Sales calls (90 min) — when owners are reachable")
+    print("  Sat      09:00  Deep work (2h) — dashboard, pipeline, fix the funnel")
+    print("  Sun             Rest day. Deliberately empty.")
+    print("  1st Sat  11:15  Monthly close — bill, reconcile, move tax reserve")
+    if not args.no_launch:
+        print("  Plus 14 dated launch tasks over your first 30 days.")
+    _hr("PUT IT ON YOUR PHONE")
+    print("  iPhone:   email the .ics to yourself, open it, tap Add All")
+    print("  Android:  Google Calendar (web) → Settings → Import & export → Import")
+    print("\n  Every event's notes hold the exact commands for that block,")
+    print("  so the calendar entry alone tells you what to do.")
+    return 0
+
+
 # ---------------------------------------------------------------- parser
 
 def build_parser() -> argparse.ArgumentParser:
@@ -462,7 +596,31 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("export", help="export an audit's deliverables")
     s.add_argument("audit_id"); s.add_argument("--out")
     s.set_defaults(func=cmd_export)
+
+    s = sub.add_parser("budget-init", help="write a personal budget template")
+    s.add_argument("--path"); s.add_argument("--force", action="store_true")
+    s.set_defaults(func=cmd_budget_init)
+
+    s = sub.add_parser("budget", help="personal + business budget, runway, milestones")
+    s.add_argument("--path", help="path to budget.yml")
+    s.add_argument("--profit", type=float, help="override monthly profit")
+    s.add_argument("--phase", default="0_test", choices=list(PHASES.keys()))
+    s.set_defaults(func=cmd_budget)
+
+    s = sub.add_parser("expense", help="log a business expense (or --revenue)")
+    s.add_argument("category"); s.add_argument("amount", type=float)
+    s.add_argument("--note"); s.add_argument("--revenue", action="store_true")
+    s.set_defaults(func=cmd_expense)
+
+    s = sub.add_parser("schedule", help="generate an .ics calendar for your phone")
+    s.add_argument("--start", help="launch start date YYYY-MM-DD (default: today)")
+    s.add_argument("--out", help="output path")
+    s.add_argument("--no-launch", action="store_true",
+                   help="recurring rhythm only, skip the 30-day launch tasks")
+    s.set_defaults(func=cmd_schedule)
+
     return ap
+
 
 
 def main(argv: list[str] | None = None) -> int:

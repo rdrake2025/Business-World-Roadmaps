@@ -407,3 +407,149 @@ class TestPipelineIntegration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestBudget(unittest.TestCase):
+    def setUp(self):
+        from answerrank.budget import Personal
+        self.me = Personal(monthly_income=2500.0, income_is_take_home=True, savings=0.0,
+                           expenses={"rent": 250, "food": 350, "phone": 50,
+                                     "transport": 200, "utilities": 120, "other": 200})
+
+    def test_disposable_math(self):
+        self.assertEqual(self.me.total_expenses, 1170.0)
+        self.assertEqual(self.me.disposable, 1330.0)
+
+    def test_gross_income_is_haircut(self):
+        from answerrank.budget import Personal
+        gross = Personal(monthly_income=2500.0, income_is_take_home=False)
+        self.assertLess(gross.net_income, 2500.0)
+
+    def test_runway_indefinite_when_surplus_covers_burn(self):
+        from answerrank.budget import runway_months
+        self.assertEqual(runway_months(0, 12.20, 1330.0), float("inf"))
+
+    def test_runway_eats_savings_only_on_shortfall(self):
+        from answerrank.budget import runway_months
+        # $300 saved, $100/mo burn, $50/mo surplus -> $50 shortfall -> 6 months
+        self.assertEqual(runway_months(300, 100, 50), 6.0)
+
+    def test_runway_zero_when_broke_and_short(self):
+        from answerrank.budget import runway_months
+        self.assertEqual(runway_months(0, 100, 0), 0.0)
+
+    def test_phase_zero_is_affordable(self):
+        from answerrank.budget import phase_cost
+        one_time, monthly = phase_cost("0_test")
+        self.assertLess(one_time, 50)
+        self.assertLess(monthly, 20)
+
+    def test_phases_are_cumulative(self):
+        from answerrank.budget import cumulative_monthly
+        self.assertLess(cumulative_monthly("0_test"), cumulative_monthly("2_scaling"))
+
+    def test_reinvestment_splits_sum_to_profit(self):
+        from answerrank.budget import reinvestment_split
+        for profit in (500, 1400, 3500, 6000):
+            split = reinvestment_split(profit)
+            split.pop("_note", None)
+            self.assertAlmostEqual(sum(split.values()), profit, places=1)
+
+    def test_tax_reserve_is_always_thirty_percent(self):
+        from answerrank.budget import reinvestment_split
+        for profit in (500, 1400, 3500, 6000):
+            self.assertAlmostEqual(reinvestment_split(profit)["tax_reserve"],
+                                   profit * 0.30, places=1)
+
+    def test_early_profit_pays_nothing_out(self):
+        from answerrank.budget import reinvestment_split
+        self.assertEqual(reinvestment_split(500)["to_you"], 0.0)
+
+    def test_zero_profit_splits_to_zero(self):
+        from answerrank.budget import reinvestment_split
+        split = reinvestment_split(0)
+        self.assertEqual(sum(v for k, v in split.items() if not k.startswith("_")), 0.0)
+
+    def test_quit_threshold_exceeds_job_income(self):
+        from answerrank.budget import quit_threshold
+        q = quit_threshold(2500)
+        self.assertGreater(q["profit_to_match_pay"], 2500)
+        self.assertGreater(q["safe_quit_profit"], q["profit_to_match_pay"])
+
+
+class TestSchedule(unittest.TestCase):
+    """The calendar has to import cleanly into a real phone, so these assert
+    on RFC 5545 structure, not just that a file was produced."""
+
+    def _cal(self, start):
+        from answerrank.schedule import build_calendar
+        return build_calendar(start)
+
+    def test_is_wellformed_ics(self):
+        import datetime
+        ics = self._cal(datetime.date(2026, 9, 21))
+        self.assertTrue(ics.startswith("BEGIN:VCALENDAR"))
+        self.assertTrue(ics.rstrip().endswith("END:VCALENDAR"))
+        self.assertEqual(ics.count("BEGIN:VEVENT"), ics.count("END:VEVENT"))
+
+    def test_crlf_line_endings_only(self):
+        import datetime
+        ics = self._cal(datetime.date(2026, 9, 21))
+        self.assertNotIn("\n", ics.replace("\r\n", ""))
+
+    def test_no_line_exceeds_75_octets(self):
+        import datetime
+        ics = self._cal(datetime.date(2026, 9, 21))
+        for line in ics.split("\r\n"):
+            self.assertLessEqual(len(line.encode("utf-8")), 75, f"too long: {line[:40]}")
+
+    def test_escapes_special_characters(self):
+        from answerrank.schedule import _escape
+        self.assertEqual(_escape("a,b;c\\d\ne"), "a\\,b\;c\\\\d\\ne")
+
+    def test_launch_tasks_never_collide_or_reorder(self):
+        import datetime
+        from answerrank.schedule import launch_events
+        for offset in range(7):  # every possible start weekday
+            events = launch_events(datetime.date(2026, 9, 21) + datetime.timedelta(days=offset))
+            starts = [e.start for e in events]
+            self.assertEqual(starts, sorted(starts), "launch tasks out of order")
+            self.assertEqual(len(starts), len(set(starts)), "launch tasks collide")
+
+    def test_nothing_scheduled_on_the_rest_day(self):
+        import datetime
+        from answerrank.schedule import launch_events
+        for offset in range(7):
+            for e in launch_events(datetime.date(2026, 9, 21) + datetime.timedelta(days=offset)):
+                self.assertNotEqual(e.start.weekday(), 6, f"{e.summary} lands on Sunday")
+
+    def test_long_blocks_land_on_saturday(self):
+        import datetime
+        from answerrank.schedule import launch_events
+        for e in launch_events(datetime.date(2026, 9, 21)):
+            if e.minutes >= 90:
+                self.assertEqual(e.start.weekday(), 5, f"{e.summary} needs a Saturday")
+
+    def test_warmup_starts_after_dns_is_configured(self):
+        import datetime
+        from answerrank.schedule import launch_events, warmup_events
+        for offset in range(7):
+            start = datetime.date(2026, 9, 21) + datetime.timedelta(days=offset)
+            events = launch_events(start)
+            dns = next(e.start.date() for e in events if "DNS" in e.summary)
+            send = next(e.start.date() for e in events if "FIRST SEND" in e.summary)
+            warm = warmup_events(dns, send)[0]
+            self.assertGreater(warm.start.date(), dns)
+
+    def test_every_event_carries_instructions(self):
+        import datetime
+        from answerrank.schedule import launch_events, recurring_events
+        for e in launch_events(datetime.date(2026, 9, 21)) + recurring_events(datetime.date(2026, 9, 21)):
+            self.assertTrue(e.description.strip(), f"{e.summary} has no instructions")
+
+    def test_recurring_only_mode_has_no_launch_tasks(self):
+        import datetime
+        from answerrank.schedule import build_calendar
+        ics = build_calendar(datetime.date(2026, 9, 21), include_launch=False)
+        self.assertNotIn("LAUNCH", ics)
+        self.assertIn("Morning ops", ics)

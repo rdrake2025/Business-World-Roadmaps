@@ -95,6 +95,9 @@ and retention at the same time.
 | `dashboard` | KPIs and progress to target |
 | `forecast` | Model the path to the profit target |
 | `export AUDIT_ID` | Export an audit's deliverables |
+| `budget-init` / `budget` | Personal + business budget, runway, milestones |
+| `expense CAT AMOUNT` | Log a business expense |
+| `schedule --start DATE` | Generate an .ics calendar for your phone |
 
 ## Safety rails
 
@@ -124,6 +127,7 @@ the business rather than costing a day:
 | [Legal & compliance](business/03_LEGAL_COMPLIANCE.md) | Entity, CAN-SPAM, 2026 sender rules, contracts, claims |
 | [30-day launch checklist](business/04_LAUNCH_CHECKLIST.md) | Day-by-day to first revenue |
 | [Operations manual](business/05_OPERATIONS.md) | Daily rhythm, systemd, backups, troubleshooting |
+| [Budget & schedule](business/06_BUDGET_AND_SCHEDULE.md) | Phased spending, runway, profit splits, quit threshold |
 
 ## Architecture
 
