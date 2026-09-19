@@ -1,0 +1,17 @@
+# Business data — contains prospect contact details and the ledger. Never commit.
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Local configuration and secrets
+answerrank.yml
+.env
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/

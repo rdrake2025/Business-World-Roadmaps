@@ -1,0 +1,409 @@
+"""Test suite for the AnswerRank platform.
+
+Focus is on the logic that costs money or credibility when it breaks:
+answer parsing, scoring, billing idempotency, outreach compliance gates and
+prospect deduplication.
+
+Run with: python3 -m unittest discover -s tests -v
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from answerrank.agents.bookkeeper import BookkeeperAgent
+from answerrank.agents.fixer import FixerAgent, faq_pairs, faq_schema, localbusiness_schema
+from answerrank.agents.outreach import OutreachAgent, first_touch
+from answerrank.agents.scout import ScoutAgent
+from answerrank.agents.auditor import AuditorAgent
+from answerrank.audit import run_audit
+from answerrank.config import Settings
+from answerrank.engines.base import detect_sentiment, extract_businesses, name_matches, normalize
+from answerrank.mailer import build_message
+from answerrank.models import Audit, Business, Client, LedgerEntry, ProbeResult, Prospect
+from answerrank.orchestrator import Orchestrator
+from answerrank.scoring import (
+    competitor_gap, generate_findings, grade, interpret, prominence_value,
+    score_audit, share_of_voice,
+)
+from answerrank.store import Store
+
+import json
+import logging
+
+SAMPLE_ANSWER = """Here are the top HVAC companies in Austin, TX:
+
+1. **Cool Breeze Air Conditioning** - highly rated, 24/7 emergency service
+2. **Lone Star Heating & Air** (4.8 stars)
+3. **Apex HVAC Services** - family owned since 1998
+
+All three are trusted and well-reviewed."""
+
+
+def make_settings(tmpdir: str) -> Settings:
+    s = Settings()
+    s.demo_mode = True
+    s.database_path = os.path.join(tmpdir, "test.db")
+    s.output_dir = os.path.join(tmpdir, "out")
+    os.makedirs(s.output_dir, exist_ok=True)
+    return s
+
+
+class TestAnswerParsing(unittest.TestCase):
+    def test_extracts_businesses_in_order(self):
+        names = extract_businesses(SAMPLE_ANSWER)
+        self.assertEqual(names[0], "Cool Breeze Air Conditioning")
+        self.assertEqual(len(names), 3)
+
+    def test_strips_trailing_descriptions(self):
+        self.assertNotIn("highly rated", extract_businesses(SAMPLE_ANSWER)[0])
+
+    def test_exact_and_fuzzy_matching(self):
+        self.assertTrue(name_matches("Apex HVAC", SAMPLE_ANSWER))
+        self.assertTrue(name_matches("Cool Breeze AC", SAMPLE_ANSWER))
+
+    def test_rejects_absent_business(self):
+        self.assertFalse(name_matches("Ghost Plumbing Co", SAMPLE_ANSWER))
+
+    def test_stopwords_do_not_cause_false_positives(self):
+        # "The Services Company" is all stopwords; must not match everything.
+        self.assertFalse(name_matches("The Services Company", SAMPLE_ANSWER))
+
+    def test_normalize_handles_accents_and_punctuation(self):
+        self.assertEqual(normalize("Café  Aküt, Inc."), "cafe akut inc")
+
+    def test_sentiment(self):
+        self.assertEqual(detect_sentiment(SAMPLE_ANSWER, "Apex HVAC"), "positive")
+        self.assertEqual(detect_sentiment(SAMPLE_ANSWER, "Nobody Inc"), "absent")
+        neg = "Avoid **Shady Roofing** — numerous complaints and poor reviews."
+        self.assertEqual(detect_sentiment(neg, "Shady Roofing"), "negative")
+
+    def test_empty_input_is_safe(self):
+        self.assertEqual(extract_businesses(""), [])
+        self.assertFalse(name_matches("Anything", ""))
+        self.assertFalse(name_matches("", "some text"))
+
+
+class TestScoring(unittest.TestCase):
+    def test_prominence_decays_with_rank(self):
+        vals = [prominence_value(i, 5) for i in (1, 2, 3, 4)]
+        self.assertEqual(vals[0], 1.0)
+        self.assertTrue(all(vals[i] > vals[i + 1] for i in range(len(vals) - 1)))
+        self.assertEqual(prominence_value(None, 5), 0.0)
+
+    def test_interpret_finds_position_and_competitors(self):
+        got = interpret(SAMPLE_ANSWER, ["https://apexhvac.com"], "Apex HVAC", "apexhvac.com")
+        self.assertTrue(got["mentioned"])
+        self.assertEqual(got["position"], 3)
+        self.assertTrue(got["cited"])
+        self.assertIn("Cool Breeze Air Conditioning", got["competitors"])
+
+    def test_citation_requires_domain_in_sources(self):
+        got = interpret(SAMPLE_ANSWER, ["https://yelp.com"], "Apex HVAC", "apexhvac.com")
+        self.assertFalse(got["cited"])
+
+    def test_invisible_business_scores_zero(self):
+        audit = Audit(business_id="b", business_name="Ghost Co", market="Austin, TX", vertical="hvac")
+        audit.results = [
+            ProbeResult(probe_id="p", engine="mock", prompt="q", answer_text=SAMPLE_ANSWER,
+                        mentioned=False, cited=False, position=None, sentiment="absent")
+            for _ in range(5)
+        ]
+        score_audit(audit)
+        self.assertEqual(audit.score, 0.0)
+        self.assertEqual(grade(audit.score), "F")
+
+    def test_dominant_business_scores_high(self):
+        audit = Audit(business_id="b", business_name="Apex", market="Austin, TX", vertical="hvac")
+        audit.results = [
+            ProbeResult(probe_id="p", engine="mock", prompt="q", answer_text="x",
+                        mentioned=True, cited=True, position=1, sentiment="positive")
+            for _ in range(5)
+        ]
+        score_audit(audit)
+        self.assertEqual(audit.score, 100.0)
+        self.assertEqual(grade(audit.score), "A")
+
+    def test_score_bounded_and_errors_ignored(self):
+        audit = Audit(business_id="b", business_name="X", market="M", vertical="hvac")
+        audit.results = [
+            ProbeResult(probe_id="p", engine="mock", prompt="q", answer_text="",
+                        mentioned=False, cited=False, position=None, error="HTTP 500"),
+            ProbeResult(probe_id="p", engine="mock", prompt="q", answer_text="x",
+                        mentioned=True, cited=False, position=1, sentiment="neutral"),
+        ]
+        score_audit(audit)
+        self.assertTrue(0.0 <= audit.score <= 100.0)
+        # The errored probe must not drag presence down.
+        self.assertEqual(audit.subscores["presence"], 100.0)
+
+    def test_all_errors_yields_zero_not_crash(self):
+        audit = Audit(business_id="b", business_name="X", market="M", vertical="hvac")
+        audit.results = [ProbeResult(probe_id="p", engine="mock", prompt="q", answer_text="",
+                                     mentioned=False, cited=False, position=None, error="boom")]
+        score_audit(audit)
+        self.assertEqual(audit.score, 0.0)
+        self.assertIn("No answer engines responded", audit.findings[0])
+
+    def test_share_of_voice_sums_to_100(self):
+        audit = Audit(business_id="b", business_name="Apex", market="M", vertical="hvac")
+        audit.results = [ProbeResult(probe_id="p", engine="mock", prompt="q", answer_text="x",
+                                     mentioned=True, cited=False, position=1) for _ in range(3)]
+        audit.competitors = {"Rival A": 5, "Rival B": 2}
+        self.assertAlmostEqual(sum(share_of_voice(audit).values()), 100.0, places=0)
+
+    def test_competitor_gap_positive_when_behind(self):
+        audit = Audit(business_id="b", business_name="Apex", market="M", vertical="hvac")
+        audit.results = [ProbeResult(probe_id="p", engine="mock", prompt="q", answer_text="x",
+                                     mentioned=False, cited=False, position=None) for _ in range(10)]
+        audit.competitors = {"Rival": 8}
+        self.assertEqual(competitor_gap(audit), 80.0)
+
+    def test_findings_are_plain_english(self):
+        audit = Audit(business_id="b", business_name="Apex", market="Austin, TX", vertical="hvac")
+        audit.results = [ProbeResult(probe_id="p", engine="mock", prompt="q", answer_text="x",
+                                     mentioned=False, cited=False, position=None) for _ in range(4)]
+        audit.competitors = {"Rival": 4}
+        audit.subscores = {"presence": 0, "prominence": 0, "citation": 0, "sentiment": 0}
+        findings = generate_findings(audit)
+        self.assertTrue(any("not named in any" in f for f in findings))
+        self.assertTrue(any("Rival" in f for f in findings))
+
+
+class TestStore(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Store(os.path.join(self.tmp.name, "t.db"))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _biz(self, n=1):
+        return Business(name=f"Biz {n}", city="Austin", state="TX", vertical="hvac",
+                        website=f"https://biz{n}.com", email=f"a@biz{n}.com")
+
+    def test_prospect_dedup_by_domain(self):
+        for _ in range(3):
+            self.store.upsert_prospect(Prospect(business=self._biz()))
+        self.assertEqual(sum(self.store.count_prospects_by_stage().values()), 1)
+
+    def test_www_and_scheme_normalised_to_same_domain(self):
+        a = Business(name="A", city="Austin", website="https://www.same.com")
+        b = Business(name="A", city="Austin", website="http://same.com/contact")
+        self.assertEqual(a.domain, b.domain)
+
+    def test_pnl_math(self):
+        self.store.add_ledger(LedgerEntry(kind="revenue", category="subscription", amount=1000))
+        self.store.add_ledger(LedgerEntry(kind="cost", category="api", amount=250))
+        pnl = self.store.pnl(30)
+        self.assertEqual(pnl["profit"], 750.0)
+        self.assertAlmostEqual(pnl["margin"], 0.75, places=3)
+
+    def test_suppression(self):
+        self.store.suppress("Owner@Example.COM ", "unsubscribed")
+        self.assertTrue(self.store.is_suppressed("owner@example.com"))
+        self.assertFalse(self.store.is_suppressed("other@example.com"))
+
+    def test_mrr_excludes_churned(self):
+        self.store.upsert_client(Client(business=self._biz(1), mrr=500, status="active"))
+        self.store.upsert_client(Client(business=self._biz(2), mrr=900, status="churned"))
+        self.assertEqual(self.store.mrr(), 500.0)
+
+
+class TestBilling(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.settings = make_settings(self.tmp.name)
+        self.store = Store(self.settings.database_path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_billing_is_idempotent(self):
+        biz = Business(name="Client A", city="Austin", state="TX", website="https://a.com")
+        self.store.upsert_client(Client(business=biz, plan="growth", mrr=997, status="active"))
+        agent = BookkeeperAgent(self.store, self.settings)
+        first = agent.run()
+        second = agent.run()
+        self.assertEqual(first.items_processed, 1)
+        self.assertEqual(second.items_processed, 0)
+        self.assertEqual(self.store.pnl(30)["revenue"], 997.0)
+
+    def test_six_growth_clients_clear_the_target(self):
+        for i in range(6):
+            biz = Business(name=f"C{i}", city="Austin", state="TX", website=f"https://c{i}.com")
+            self.store.upsert_client(Client(business=biz, plan="growth", mrr=997, status="active"))
+        agent = BookkeeperAgent(self.store, self.settings)
+        agent.run()
+        self.assertGreaterEqual(agent.kpis()["profit"], self.settings.profit_target_monthly)
+
+    def test_kpis_report_clients_needed(self):
+        kpis = BookkeeperAgent(self.store, self.settings).kpis()
+        self.assertGreater(kpis["clients_needed_at_growth"], 0)
+        self.assertEqual(kpis["mrr"], 0.0)
+
+
+class TestOutreachCompliance(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.settings = make_settings(self.tmp.name)
+        self.store = Store(self.settings.database_path)
+        self.agent = OutreachAgent(self.store, self.settings)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_preflight_blocks_without_physical_address(self):
+        problems = self.agent.preflight()
+        self.assertTrue(any("CAN-SPAM" in p for p in problems))
+
+    def test_preflight_passes_once_configured(self):
+        self.settings.physical_address = "123 Main St, Austin, TX 78701"
+        self.assertEqual(OutreachAgent(self.store, self.settings).preflight(), [])
+
+    def test_every_message_carries_unsubscribe_and_address(self):
+        biz = Business(name="Apex HVAC", city="Austin", state="TX", vertical="hvac",
+                       website="https://apex.com", email="o@apex.com")
+        prospect = Prospect(business=biz, score=10.0, competitor_gap=60.0)
+        _subject, body = first_touch(prospect, self.settings)
+        self.assertIn("unsubscribe", body.lower())
+        self.assertIn(self.settings.company_legal_name, body)
+
+    def test_suppressed_prospects_are_never_drafted(self):
+        biz = Business(name="Apex HVAC", city="Austin", state="TX", vertical="hvac",
+                       website="https://apex.com", email="o@apex.com")
+        self.store.upsert_prospect(Prospect(business=biz, stage="audited", score=5.0,
+                                            competitor_gap=80.0))
+        self.store.suppress("o@apex.com", "unsubscribed")
+        self.agent.run()
+        self.assertEqual(len(self.store.get_messages("drafted")), 0)
+
+    def test_prospects_without_evidence_are_not_pitched(self):
+        biz = Business(name="Strong Co", city="Austin", state="TX", vertical="hvac",
+                       website="https://strong.com", email="o@strong.com")
+        self.store.upsert_prospect(Prospect(business=biz, stage="audited", score=90.0,
+                                            competitor_gap=0.0))
+        self.agent.run()
+        self.assertEqual(len(self.store.get_messages("drafted")), 0)
+
+    def test_messages_are_drafted_not_sent(self):
+        biz = Business(name="Apex HVAC", city="Austin", state="TX", vertical="hvac",
+                       website="https://apex.com", email="o@apex.com")
+        self.store.upsert_prospect(Prospect(business=biz, stage="audited", score=10.0,
+                                            competitor_gap=70.0))
+        self.agent.run()
+        msgs = self.store.get_messages()
+        self.assertEqual(len(msgs), 1)
+        self.assertEqual(msgs[0].status, "drafted")
+
+    def test_rfc8058_one_click_headers(self):
+        msg = build_message("a@b.com", "Subject", "Body", self.settings)
+        self.assertIn("List-Unsubscribe", msg)
+        self.assertEqual(msg["List-Unsubscribe-Post"], "List-Unsubscribe=One-Click")
+
+
+class TestDeliverables(unittest.TestCase):
+    def setUp(self):
+        self.biz = Business(name="Apex Heating & Air", city="Austin", state="TX",
+                            vertical="hvac", website="https://apexhvac.com",
+                            phone="+1-512-555-0199")
+
+    def test_localbusiness_schema_is_valid_json_and_typed(self):
+        doc = json.loads(localbusiness_schema(self.biz))
+        self.assertEqual(doc["@type"], "HVACBusiness")
+        self.assertEqual(doc["@context"], "https://schema.org")
+        self.assertEqual(doc["address"]["addressLocality"], "Austin")
+
+    def test_faq_schema_is_valid_faqpage(self):
+        doc = json.loads(faq_schema(faq_pairs(self.biz, None)))
+        self.assertEqual(doc["@type"], "FAQPage")
+        self.assertTrue(all(q["@type"] == "Question" for q in doc["mainEntity"]))
+
+    def test_faq_answers_mention_the_market(self):
+        pairs = faq_pairs(self.biz, None)
+        self.assertTrue(any("Austin" in a for _q, a in pairs))
+
+    def test_verticals_map_to_real_schema_types(self):
+        for vertical, expected in [("plumbing", "Plumber"), ("dental", "Dentist"),
+                                   ("legal", "Attorney"), ("unknown_x", "LocalBusiness")]:
+            biz = Business(name="X", city="Austin", vertical=vertical, website="https://x.com")
+            self.assertEqual(json.loads(localbusiness_schema(biz))["@type"], expected)
+
+
+class TestPipelineIntegration(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.settings = make_settings(self.tmp.name)
+        self.store = Store(self.settings.database_path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_audit_runs_offline_and_scores(self):
+        biz = Business(name="Apex HVAC", city="Austin", state="TX", vertical="hvac",
+                       website="https://apexhvac.com")
+        audit = run_audit(biz, self.settings, depth="teaser")
+        self.assertEqual(len(audit.results), 4)
+        self.assertTrue(0.0 <= audit.score <= 100.0)
+        self.assertTrue(audit.findings)
+
+    def test_scout_to_outreach_end_to_end(self):
+        ScoutAgent(self.store, self.settings, target_per_run=6).run()
+        AuditorAgent(self.store, self.settings).run()
+        OutreachAgent(self.store, self.settings).run()
+        stages = self.store.count_prospects_by_stage()
+        self.assertGreater(stages.get("queued", 0), 0)
+        self.assertGreater(len(self.store.get_messages("drafted")), 0)
+
+    def test_agent_failure_does_not_stop_the_fleet(self):
+        # The agent logs the traceback by design; silence it so test output
+        # stays readable. We assert on the recorded run status instead.
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+
+        class Exploding(ScoutAgent):
+            name = "exploding"
+            def execute(self):
+                raise RuntimeError("boom")
+
+        orch = Orchestrator(self.store, self.settings,
+                            agents=[Exploding(self.store, self.settings),
+                                    BookkeeperAgent(self.store, self.settings)])
+        lines = orch.tick(force=True)
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(any("ERR" in l for l in lines))
+        runs = {r["agent"]: r["status"] for r in self.store.recent_runs(10)}
+        self.assertEqual(runs["exploding"], "error")
+        self.assertEqual(runs["bookkeeper"], "ok")
+
+    def test_scheduler_does_not_rerun_before_interval(self):
+        orch = Orchestrator(self.store, self.settings)
+        self.assertGreater(len(orch.tick(force=True)), 0)
+        self.assertEqual(len(orch.tick()), 0)
+
+    def test_report_renders_with_required_sections(self):
+        from answerrank.agents.reporter import render_report
+        biz = Business(name="Apex HVAC", city="Austin", state="TX", vertical="hvac",
+                       website="https://apexhvac.com")
+        audit = run_audit(biz, self.settings, depth="teaser")
+        deliverables = FixerAgent(self.store, self.settings).build_for(biz, audit)
+        html = render_report(audit, self.settings, [audit], deliverables)
+        for needle in ("Visibility Score", "Apex HVAC", "action plan", "Full test log"):
+            self.assertIn(needle.lower(), html.lower())
+
+    def test_report_escapes_html_in_business_name(self):
+        from answerrank.agents.reporter import render_report
+        biz = Business(name="<script>alert(1)</script> HVAC", city="Austin", state="TX",
+                       vertical="hvac", website="https://x.com")
+        audit = run_audit(biz, self.settings, depth="teaser")
+        html = render_report(audit, self.settings, [audit], [])
+        self.assertNotIn("<script>alert(1)</script>", html)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

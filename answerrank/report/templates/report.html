@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Visibility Report — {{ a.business_name }}</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:#fcfcfb; --plane:#f9f9f7;
+    --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781; --rule:#c3c2b7;
+    --series-1:#2a78d6; --series-2:#eb6834;
+    --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-1:#1a1a19; --plane:#0d0d0d;
+      --ink:#fff; --ink-2:#c3c2b7; --muted:#898781; --rule:#383835;
+      --series-1:#3987e5; --series-2:#d95926;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:#1a1a19; --plane:#0d0d0d;
+    --ink:#fff; --ink-2:#c3c2b7; --muted:#898781; --rule:#383835;
+    --series-1:#3987e5; --series-2:#d95926;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--plane); color:var(--ink);
+    font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+  }
+  .wrap { max-width:880px; margin:0 auto; padding:32px 16px 72px; }
+  header { border-bottom:1px solid var(--rule); padding-bottom:20px; margin-bottom:28px; }
+  .brand { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); }
+  h1 { font-size:26px; margin:10px 0 4px; line-height:1.25; }
+  .sub { color:var(--ink-2); font-size:14px; margin:0; }
+  section { background:var(--surface-1); border:1px solid var(--rule); border-radius:12px;
+            padding:22px; margin-bottom:20px; }
+  h2 { font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted);
+       margin:0 0 16px; font-weight:600; }
+  /* ---- hero ---- */
+  .hero { display:flex; align-items:baseline; gap:18px; flex-wrap:wrap; }
+  .score { font-size:66px; font-weight:700; line-height:1; letter-spacing:-.02em; }
+  .score small { font-size:22px; color:var(--muted); font-weight:500; }
+  .badge { display:inline-flex; align-items:center; gap:7px; padding:5px 12px;
+           border-radius:999px; font-size:13px; font-weight:600; color:var(--ink);
+           border:1.5px solid currentColor; }
+  .badge .dot { width:9px; height:9px; border-radius:50%; background:currentColor; flex:none; }
+  .hero-note { color:var(--ink-2); margin:14px 0 0; max-width:60ch; }
+  /* ---- stat tiles ---- */
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:2px;
+           margin-top:20px; background:var(--rule); border:1px solid var(--rule);
+           border-radius:10px; overflow:hidden; }
+  .tile { background:var(--surface-1); padding:14px 16px; }
+  .tile .k { font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); }
+  .tile .v { font-size:25px; font-weight:650; margin-top:5px; }
+  .tile .n { font-size:12px; color:var(--ink-2); margin-top:2px; }
+  /* ---- bar charts ---- */
+  .chart { display:grid; gap:2px; }
+  .row { display:grid; grid-template-columns:minmax(120px,190px) 1fr auto; align-items:center;
+         gap:12px; padding:3px 0; }
+  .row .lbl { font-size:13px; color:var(--ink-2); text-align:right; overflow-wrap:anywhere; }
+  .track { background:var(--plane); border-radius:4px; height:20px; position:relative; }
+  .bar { height:20px; border-radius:0 4px 4px 0; min-width:2px; }
+  .bar.s1 { background:var(--series-1); }
+  .bar.s2 { background:var(--series-2); }
+  .val { font-size:13px; font-variant-numeric:tabular-nums; color:var(--ink); min-width:42px;
+         text-align:right; font-weight:600; }
+  .legend { display:flex; gap:18px; margin-bottom:14px; font-size:13px; color:var(--ink-2);
+            flex-wrap:wrap; }
+  .legend span { display:inline-flex; align-items:center; gap:7px; }
+  .swatch { width:11px; height:11px; border-radius:3px; flex:none; }
+  /* ---- findings / actions ---- */
+  ul.findings { margin:0; padding-left:20px; }
+  ul.findings li { margin-bottom:11px; color:var(--ink-2); }
+  ul.findings li strong { color:var(--ink); }
+  ol.actions { margin:0; padding-left:20px; }
+  ol.actions li { margin-bottom:12px; }
+  ol.actions b { display:block; }
+  ol.actions span { color:var(--ink-2); font-size:14px; }
+  /* ---- table ---- */
+  details { margin-top:14px; }
+  summary { cursor:pointer; font-size:13px; color:var(--ink-2); }
+  table { width:100%; border-collapse:collapse; margin-top:12px; font-size:13px; }
+  th,td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--rule); vertical-align:top; }
+  th { color:var(--muted); font-size:11px; letter-spacing:.08em; text-transform:uppercase; font-weight:600; }
+  td.num { font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .yes { color:var(--good); font-weight:600; }
+  .no  { color:var(--critical); font-weight:600; }
+  footer { color:var(--muted); font-size:12px; text-align:center; margin-top:28px; line-height:1.7; }
+  @media print {
+    body { background:#fff; } section { break-inside:avoid; border-color:#ddd; }
+    .wrap { padding-top:0; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="brand">{{ brand }} · AI Visibility Report</div>
+  <h1>{{ a.business_name }}</h1>
+  <p class="sub">{{ vertical_label }} · {{ a.market }} · {{ a.created_at[:10] }}</p>
+</header>
+
+<section>
+  <h2>Visibility Score</h2>
+  <div class="hero">
+    <div class="score">{{ a.score }}<small>/100</small></div>
+    <span class="badge" style="color:{{ grade_color }}">
+      <span class="dot"></span>Grade {{ grade }} — {{ grade_label }}
+    </span>
+    {% if trend is not none %}
+    <span class="badge" style="color:{{ trend_color }}">
+      <span class="dot"></span>{{ '+' if trend > 0 else '' }}{{ trend }} vs last report
+    </span>
+    {% endif %}
+  </div>
+  <p class="hero-note">
+    This score reflects how often {{ a.business_name }} is named when real customers
+    ask an AI assistant for a {{ vertical_label|lower }} in {{ a.market }}. It combines how
+    often you appear, how prominently, whether your own site is used as a source, and
+    the tone of the context you appear in.
+  </p>
+
+  <div class="tiles">
+    <div class="tile">
+      <div class="k">Answers won</div>
+      <div class="v">{{ mentions }}<span style="font-size:15px;color:var(--muted)">/{{ total }}</span></div>
+      <div class="n">buyer questions tested</div>
+    </div>
+    <div class="tile">
+      <div class="k">Cited as source</div>
+      <div class="v">{{ a.subscores.citation }}%</div>
+      <div class="n">your site quoted</div>
+    </div>
+    <div class="tile">
+      <div class="k">Top competitor</div>
+      <div class="v" style="font-size:17px;line-height:1.35">{{ top_comp_name }}</div>
+      <div class="n">{{ top_comp_count }} of {{ total }} answers</div>
+    </div>
+    <div class="tile">
+      <div class="k">Gap to close</div>
+      <div class="v">{{ gap }}</div>
+      <div class="n">answers behind leader</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Where you stand against local competitors</h2>
+  <div class="legend">
+    <span><i class="swatch" style="background:var(--series-1)"></i>{{ a.business_name }}</span>
+    <span><i class="swatch" style="background:var(--series-2)"></i>Competitors</span>
+  </div>
+  <div class="chart">
+    {% for name, pct in sov %}
+    <div class="row">
+      <div class="lbl">{{ name }}</div>
+      <div class="track">
+        <div class="bar {{ 's1' if name == a.business_name else 's2' }}"
+             style="width:{{ (pct / sov_max * 100) if sov_max else 0 }}%"
+             title="{{ name }}: {{ pct }}% share of voice"></div>
+      </div>
+      <div class="val">{{ pct }}%</div>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="sub" style="margin-top:14px">
+    Share of voice = the percentage of all business names appearing in these AI answers
+    that were yours.
+  </p>
+</section>
+
+<section>
+  <h2>Presence by AI engine</h2>
+  <div class="chart">
+    {% for eng, pct in engines %}
+    <div class="row">
+      <div class="lbl">{{ eng }}</div>
+      <div class="track">
+        <div class="bar s1" style="width:{{ pct }}%" title="{{ eng }}: named in {{ pct }}% of answers"></div>
+      </div>
+      <div class="val">{{ pct }}%</div>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="sub" style="margin-top:14px">
+    Percentage of tested questions on each engine where {{ a.business_name }} was named.
+  </p>
+</section>
+
+<section>
+  <h2>Score components</h2>
+  <div class="chart">
+    {% for label, pct, note in components %}
+    <div class="row">
+      <div class="lbl">{{ label }}</div>
+      <div class="track">
+        <div class="bar s1" style="width:{{ pct }}%" title="{{ label }}: {{ pct }}/100"></div>
+      </div>
+      <div class="val">{{ pct }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  <details>
+    <summary>What each component means</summary>
+    <table>
+      <tr><th>Component</th><th>Weight</th><th>Meaning</th></tr>
+      {% for label, pct, note in components %}
+      <tr><td>{{ label }}</td><td class="num">{{ weights[loop.index0] }}%</td><td>{{ note }}</td></tr>
+      {% endfor %}
+    </table>
+  </details>
+</section>
+
+<section>
+  <h2>What we found</h2>
+  <ul class="findings">
+    {% for f in a.findings %}<li>{{ f }}</li>{% endfor %}
+  </ul>
+</section>
+
+<section>
+  <h2>Your action plan this cycle</h2>
+  <ol class="actions">
+    {% for act in actions %}
+    <li><b>{{ act.title }}</b><span>{{ act.detail }}</span></li>
+    {% endfor %}
+  </ol>
+  {% if deliverables %}
+  <p class="sub" style="margin-top:16px">
+    Included with this report: {{ deliverables|join(', ') }}.
+  </p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Full test log</h2>
+  <details open>
+    <summary>Every question asked, and what the AI answered</summary>
+    <table>
+      <tr><th>Question</th><th>Engine</th><th>Named?</th><th>Rank</th><th>Who was named instead</th></tr>
+      {% for r in results %}
+      <tr>
+        <td>{{ r.prompt }}</td>
+        <td class="num">{{ r.engine }}</td>
+        <td class="num {{ 'yes' if r.mentioned else 'no' }}">{{ 'Yes' if r.mentioned else 'No' }}</td>
+        <td class="num">{{ r.position or '—' }}</td>
+        <td>{{ r.competitors[:3]|join(', ') or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </details>
+</section>
+
+<footer>
+  {{ brand }} · {{ website }}<br>
+  Report generated {{ a.created_at[:10] }} from {{ total }} live queries across
+  {{ engine_count }} AI {{ 'engine' if engine_count == 1 else 'engines' }}.
+</footer>
+
+</div>
+</body>
+</html>

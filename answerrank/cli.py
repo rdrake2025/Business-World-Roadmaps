@@ -1,0 +1,475 @@
+"""Operator command line — the human's control surface over the agent fleet.
+
+Design rule: the fleet does the work, the operator makes the decisions that
+carry legal, financial, or reputational risk. Everything that sends mail,
+charges money, or commits to a client is an explicit command here.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+from .agents.fixer import FixerAgent
+from .agents.reporter import render_report
+from .audit import estimate_cost, run_audit
+from .config import SETTINGS, Settings, load_settings
+from .mailer import Mailer, check_dns_readiness, throttle
+from .models import Business, Client, LedgerEntry, Prospect, now_iso
+from .orchestrator import Orchestrator, build_fleet, setup_logging
+from .scoring import grade
+from .store import Store
+
+BAR = "─" * 68
+
+
+def _store(settings: Settings) -> Store:
+    return Store(settings.database_path)
+
+
+def _hr(title: str) -> None:
+    print(f"\n{title}\n{BAR}")
+
+
+# ---------------------------------------------------------------- commands
+
+def cmd_init(args, settings: Settings) -> int:
+    path = Path(args.path or "answerrank.yml")
+    if path.exists() and not args.force:
+        print(f"{path} already exists. Use --force to overwrite.")
+        return 1
+    path.write_text(f"""# AnswerRank configuration
+brand: {settings.brand}
+company_legal_name: "YOUR LEGAL ENTITY, LLC"
+from_email: "hello@yourdomain.com"
+website: "https://yourdomain.com"
+
+# REQUIRED before any email is sent (CAN-SPAM). A registered agent address
+# or a mailbox service address is fine; a PO box may not be.
+physical_address: "123 Main St, Suite 100, Austin, TX 78701"
+
+engines: [openai, anthropic, perplexity, google_aio]
+prompts_per_audit: 10
+tick_seconds: 300
+profit_target_monthly: 5000
+
+pricing:
+  audit_one_time: 297
+  starter_monthly: 499
+  growth_monthly: 997
+  managed_monthly: 1997
+
+outreach:
+  max_emails_total_per_day: 120
+  max_emails_per_domain_per_day: 30
+  min_seconds_between_sends: 90
+  max_followups: 3
+  followup_gap_days: 4
+""", encoding="utf-8")
+    print(f"Wrote {path}")
+    print("\nNext:")
+    print("  1. Edit physical_address, from_email and website — sending is blocked until you do.")
+    print("  2. Export provider keys: OPENAI_API_KEY, ANTHROPIC_API_KEY, PERPLEXITY_API_KEY, SERPER_API_KEY")
+    print("  3. Run: python3 run.py tick")
+    return 0
+
+
+def cmd_agents(args, settings: Settings) -> int:
+    store = _store(settings)
+    _hr("AGENT FLEET")
+    for agent in build_fleet(store, settings):
+        hours = agent.interval / 3600
+        print(f"  {agent.name:<12} every {hours:>5.1f}h   {agent.description}")
+    _hr("RECENT RUNS")
+    runs = store.recent_runs(12)
+    if not runs:
+        print("  (none yet — run `tick`)")
+    for r in runs:
+        mark = "ok " if r["status"] == "ok" else "ERR"
+        print(f"  [{mark}] {r['started_at'][11:19]} {r['agent']:<12} {(r['summary'] or r['error'])[:80]}")
+    return 0
+
+
+def cmd_tick(args, settings: Settings) -> int:
+    setup_logging(args.verbose)
+    orch = Orchestrator(_store(settings), settings)
+    lines = orch.tick(force=args.force)
+    _hr("TICK")
+    for line in lines or ["  (nothing due — use --force)"]:
+        print("  " + line)
+    return 0
+
+
+def cmd_run(args, settings: Settings) -> int:
+    setup_logging(args.verbose)
+    Orchestrator(_store(settings), settings).run_forever()
+    return 0
+
+
+def cmd_audit(args, settings: Settings) -> int:
+    store = _store(settings)
+    biz = Business(
+        name=args.name, city=args.city, state=args.state or "",
+        vertical=args.vertical, website=args.website or "", email=args.email or "",
+        phone=args.phone or "",
+    )
+    engines = settings.available_engines()
+    print(f"Auditing {biz.name} ({biz.market}) across {len(engines)} engine(s): {', '.join(engines)}")
+    print(f"Estimated cost: ${estimate_cost(args.depth, len(engines)):.4f}\n")
+
+    audit = run_audit(biz, settings, depth=args.depth)
+    store.save_audit(audit)
+
+    _hr(f"VISIBILITY SCORE: {audit.score}/100  (grade {grade(audit.score)})")
+    for k, v in audit.subscores.items():
+        print(f"  {k:<12} {v:>6.1f}")
+    _hr("FINDINGS")
+    for f in audit.findings:
+        print(f"  • {f}")
+    if audit.competitors:
+        _hr("COMPETITORS NAMED INSTEAD")
+        for name, count in list(audit.competitors.items())[:6]:
+            print(f"  {count:>3}x  {name}")
+
+    if args.report:
+        deliverables = FixerAgent(store, settings).build_for(biz, audit)
+        for d in deliverables:
+            store.save_deliverable(d)
+        out_dir = Path(settings.output_dir) / "reports"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        slug = (biz.domain or biz.id).replace(".", "_")
+        path = out_dir / f"{slug}_{datetime.now(timezone.utc):%Y-%m-%d}.html"
+        path.write_text(render_report(audit, settings, store.audit_history(biz.id), deliverables),
+                        encoding="utf-8")
+        print(f"\n  Report:       {path}")
+
+        asset_dir = Path(settings.output_dir) / "deliverables" / slug
+        asset_dir.mkdir(parents=True, exist_ok=True)
+        for d in deliverables:
+            (asset_dir / d.filename).write_text(d.body, encoding="utf-8")
+        print(f"  Deliverables: {asset_dir}  ({len(deliverables)} files)")
+    return 0
+
+
+def cmd_prospects(args, settings: Settings) -> int:
+    store = _store(settings)
+    _hr("PIPELINE")
+    counts = store.count_prospects_by_stage()
+    if not counts:
+        print("  (empty — run `tick --force`)")
+        return 0
+    for stage, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+        print(f"  {stage:<14} {n:>4}")
+
+    rows = store.get_prospects(args.stage, args.limit)
+    if rows:
+        _hr(f"{'BUSINESS':<28}{'MARKET':<18}{'SCORE':>6}{'GAP':>6}  STAGE")
+        for p in rows:
+            score = f"{p.score:.0f}" if p.score is not None else "—"
+            gap = f"{p.competitor_gap:.0f}" if p.competitor_gap is not None else "—"
+            flag = " HOT" if p.is_hot else ""
+            print(f"  {p.business.name[:26]:<28}{p.business.market[:16]:<18}{score:>6}{gap:>6}  {p.stage}{flag}")
+    return 0
+
+
+def cmd_inbox(args, settings: Settings) -> int:
+    store = _store(settings)
+    msgs = store.get_messages(args.status, args.limit)
+    _hr(f"OUTREACH INBOX — {args.status} ({len(msgs)})")
+    if not msgs:
+        print("  (empty)")
+        return 0
+    for m in msgs:
+        print(f"\n  [{m.id}]  step {m.sequence_step}")
+        print(f"  SUBJECT: {m.subject}")
+        if args.full:
+            print("  " + "\n  ".join(m.body.splitlines()))
+        else:
+            preview = " ".join(m.body.split())[:150]
+            print(f"  {preview}...")
+    return 0
+
+
+def cmd_approve(args, settings: Settings) -> int:
+    store = _store(settings)
+    msgs = store.get_messages("drafted", args.limit)
+    if args.ids:
+        msgs = [m for m in msgs if m.id in set(args.ids)]
+    for m in msgs:
+        m.status = "approved"
+        store.save_message(m)
+    print(f"Approved {len(msgs)} message(s) for sending.")
+    print("Run `send` to deliver them (SMTP required).")
+    return 0
+
+
+def cmd_send(args, settings: Settings) -> int:
+    from .agents.outreach import OutreachAgent
+
+    store = _store(settings)
+    agent = OutreachAgent(store, settings)
+
+    problems = agent.preflight()
+    domain = settings.from_email.split("@")[-1]
+    if not args.skip_dns:
+        problems += check_dns_readiness(domain)
+    if problems:
+        _hr("SENDING BLOCKED")
+        for p in problems:
+            print(f"  ✗ {p}")
+        print("\n  Fix these first. Sending from an unauthenticated domain gets it")
+        print("  filtered permanently, and a burned domain cannot be recovered.")
+        return 1
+
+    mailer = Mailer(settings)
+    pol = settings.outreach
+    remaining = pol.max_emails_total_per_day - store.sends_today()
+    if remaining <= 0:
+        print(f"Daily cap reached ({pol.max_emails_total_per_day}). Try tomorrow.")
+        return 0
+
+    approved = store.get_messages("approved", min(args.limit, remaining))
+    if not approved:
+        print("No approved messages. Run `approve` first.")
+        return 0
+
+    by_id = {p.id: p for p in store.get_prospects(limit=10_000)}
+    sent = failed = 0
+    for m in approved:
+        prospect = by_id.get(m.prospect_id)
+        if not prospect or not prospect.business.email:
+            continue
+        if store.is_suppressed(prospect.business.email):
+            m.status = "suppressed"
+            store.save_message(m)
+            continue
+
+        if args.dry_run:
+            print(f"  [dry-run] would send to {prospect.business.email}: {m.subject}")
+            sent += 1
+            continue
+
+        ok, detail = mailer.send(prospect.business.email, m.subject, m.body)
+        if ok:
+            m.status, m.sent_at = "sent", now_iso()
+            prospect.touches += 1
+            prospect.last_touch_at = now_iso()
+            prospect.stage = "contacted" if m.sequence_step == 1 else "following_up"
+            store.upsert_prospect(prospect)
+            sent += 1
+        else:
+            m.status = "bounced" if "bounce" in detail else "drafted"
+            if "bounce" in detail:
+                store.suppress(prospect.business.email, detail)
+            failed += 1
+            print(f"  ✗ {prospect.business.email}: {detail}")
+        store.save_message(m)
+        throttle(pol.min_seconds_between_sends if not args.fast else 1)
+
+    print(f"\nSent {sent}, failed {failed}. Daily total now {store.sends_today()}/{pol.max_emails_total_per_day}.")
+    return 0
+
+
+def cmd_win(args, settings: Settings) -> int:
+    """Convert a prospect into a paying client."""
+    store = _store(settings)
+    matches = [p for p in store.get_prospects(limit=10_000)
+               if args.prospect.lower() in p.business.name.lower() or p.id == args.prospect]
+    if not matches:
+        print(f"No prospect matching '{args.prospect}'.")
+        return 1
+    if len(matches) > 1 and not args.force:
+        print("Multiple matches — be more specific or pass --force:")
+        for p in matches[:10]:
+            print(f"  {p.id}  {p.business.name} ({p.business.market})")
+        return 1
+
+    prospect = matches[0]
+    mrr = args.mrr if args.mrr is not None else settings.pricing.plan_price(args.plan)
+    client = Client(business=prospect.business, plan=args.plan, mrr=mrr, status="active")
+    store.upsert_client(client)
+
+    prospect.stage = "won"
+    store.upsert_prospect(prospect)
+
+    print(f"✓ {client.business.name} is now a {args.plan} client at ${mrr:,.0f}/mo.")
+    print(f"  MRR is now ${store.mrr():,.0f}.")
+    return 0
+
+
+def cmd_dashboard(args, settings: Settings) -> int:
+    from .agents.bookkeeper import BookkeeperAgent
+
+    store = _store(settings)
+    k = BookkeeperAgent(store, settings).kpis()
+
+    _hr("BUSINESS DASHBOARD")
+    print(f"  MRR                    ${k['mrr']:>10,.0f}      ARR  ${k['arr']:,.0f}")
+    print(f"  Active clients          {k['active_clients']:>10,.0f}      ARPU ${k['arpu']:,.0f}")
+    print(f"  Revenue (30d)          ${k['revenue_30d']:>10,.0f}")
+    print(f"  Costs (30d)            ${k['cost_30d']:>10,.0f}")
+    print(f"  Profit (30d)           ${k['profit']:>10,.0f}      margin {k['margin']*100:.0f}%")
+
+    pct = k["pct_to_target"]
+    filled = max(0, min(30, int(pct * 30 / 100)))
+    print(f"\n  Target ${k['target']:,.0f}/mo  [{'█'*filled}{'░'*(30-filled)}] {pct:.0f}%")
+    if k["profit_gap"] > 0:
+        print(f"  Gap: ${k['profit_gap']:,.0f}/mo  ≈ {k['more_clients_needed']:.0f} more "
+              f"client(s) at ${settings.pricing.growth_monthly:,.0f}/mo")
+    else:
+        print("  TARGET MET.")
+
+    _hr("PIPELINE")
+    for stage, n in sorted(store.count_prospects_by_stage().items(), key=lambda kv: -kv[1]):
+        print(f"  {stage:<14} {n:>4}")
+
+    costs = store.cost_breakdown(30)
+    if costs:
+        _hr("COST BREAKDOWN (30d)")
+        for cat, amt in costs.items():
+            print(f"  {cat:<14} ${amt:>8,.2f}")
+    return 0
+
+
+def cmd_forecast(args, settings: Settings) -> int:
+    """Model the path from where we are to the profit target."""
+    from .agents.bookkeeper import FIXED_COSTS, PROCESSOR_FLAT, PROCESSOR_PCT
+
+    p = settings.pricing
+    fixed = sum(FIXED_COSTS.values())
+    _hr("UNIT ECONOMICS")
+    print(f"  {'Plan':<10}{'Price':>10}{'Delivery':>10}{'Fees':>9}{'Margin':>10}{'To target':>11}")
+    for plan in ("starter", "growth", "managed"):
+        price = p.plan_price(plan)
+        fees = price * PROCESSOR_PCT + PROCESSOR_FLAT
+        margin = price - p.delivery_cost_monthly - fees
+        need = int(-(-(settings.profit_target_monthly + fixed) // margin))
+        print(f"  {plan:<10}{f'${price:,.0f}':>10}{f'${p.delivery_cost_monthly:,.0f}':>10}"
+              f"{f'${fees:,.2f}':>9}{f'${margin:,.0f}':>10}{need:>11,}")
+
+    _hr(f"PATH TO ${settings.profit_target_monthly:,.0f}/MO PROFIT")
+    print(f"  Fixed overhead: ${fixed:,.0f}/mo\n")
+    print(f"  {'Month':<7}{'Clients':>9}{'MRR':>11}{'Costs':>10}{'Profit':>11}")
+
+    clients = float(args.start_clients)
+    adds, churn = args.adds_per_month, args.churn
+    blended = (p.starter_monthly + p.growth_monthly) / 2
+    for month in range(1, args.months + 1):
+        clients = clients * (1 - churn) + adds
+        mrr = clients * blended
+        costs = fixed + clients * (p.delivery_cost_monthly + blended * PROCESSOR_PCT + PROCESSOR_FLAT)
+        profit = mrr - costs
+        flag = "   ← target" if profit >= settings.profit_target_monthly else ""
+        print(f"  {month:<7}{clients:>9.1f}{f'${mrr:,.0f}':>11}{f'${costs:,.0f}':>10}"
+              f"{f'${profit:,.0f}':>11}{flag}")
+
+    print(f"\n  Assumes {adds} new client(s)/month, {churn*100:.0f}% monthly churn,")
+    print(f"  blended price ${blended:,.0f}. Change with --adds-per-month / --churn.")
+    return 0
+
+
+def cmd_export(args, settings: Settings) -> int:
+    store = _store(settings)
+    audit = store.get_audit(args.audit_id)
+    if not audit:
+        print(f"No audit {args.audit_id}")
+        return 1
+    out = Path(args.out or settings.output_dir) / "export" / audit.id
+    out.mkdir(parents=True, exist_ok=True)
+    for d in store.get_deliverables(audit.id):
+        (out / (d.filename or f"{d.kind}.txt")).write_text(d.body, encoding="utf-8")
+    (out / "audit.json").write_text(json.dumps(
+        {"score": audit.score, "subscores": audit.subscores,
+         "findings": audit.findings, "competitors": audit.competitors},
+        indent=2), encoding="utf-8")
+    print(f"Exported to {out}")
+    return 0
+
+
+# ---------------------------------------------------------------- parser
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog="answerrank",
+        description="AnswerRank — AI search visibility, run by an agent fleet.",
+    )
+    ap.add_argument("--config", help="path to answerrank.yml")
+    ap.add_argument("-v", "--verbose", action="store_true")
+    sub = ap.add_subparsers(dest="command", required=True)
+
+    s = sub.add_parser("init", help="write a starter config file")
+    s.add_argument("--path"); s.add_argument("--force", action="store_true")
+    s.set_defaults(func=cmd_init)
+
+    s = sub.add_parser("agents", help="list the fleet and recent runs")
+    s.set_defaults(func=cmd_agents)
+
+    s = sub.add_parser("tick", help="run one cycle of all due agents")
+    s.add_argument("--force", action="store_true", help="run every agent regardless of schedule")
+    s.set_defaults(func=cmd_tick)
+
+    s = sub.add_parser("run", help="run the fleet continuously (24/7)")
+    s.set_defaults(func=cmd_run)
+
+    s = sub.add_parser("audit", help="audit one business now")
+    s.add_argument("name"); s.add_argument("city")
+    s.add_argument("--state", default=""); s.add_argument("--vertical", default="hvac")
+    s.add_argument("--website", default=""); s.add_argument("--email", default="")
+    s.add_argument("--phone", default="")
+    s.add_argument("--depth", choices=["teaser", "full", "deep"], default="full")
+    s.add_argument("--report", action="store_true", help="also render HTML report + deliverables")
+    s.set_defaults(func=cmd_audit)
+
+    s = sub.add_parser("prospects", help="show the pipeline")
+    s.add_argument("--stage"); s.add_argument("--limit", type=int, default=20)
+    s.set_defaults(func=cmd_prospects)
+
+    s = sub.add_parser("inbox", help="review drafted outreach")
+    s.add_argument("--status", default="drafted"); s.add_argument("--limit", type=int, default=10)
+    s.add_argument("--full", action="store_true")
+    s.set_defaults(func=cmd_inbox)
+
+    s = sub.add_parser("approve", help="approve drafts for sending")
+    s.add_argument("ids", nargs="*"); s.add_argument("--limit", type=int, default=50)
+    s.set_defaults(func=cmd_approve)
+
+    s = sub.add_parser("send", help="send approved messages")
+    s.add_argument("--limit", type=int, default=25)
+    s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--fast", action="store_true", help="skip pacing (testing only)")
+    s.add_argument("--skip-dns", action="store_true")
+    s.set_defaults(func=cmd_send)
+
+    s = sub.add_parser("win", help="convert a prospect to a paying client")
+    s.add_argument("prospect"); s.add_argument("--plan", default="growth",
+                                               choices=["starter", "growth", "managed"])
+    s.add_argument("--mrr", type=float); s.add_argument("--force", action="store_true")
+    s.set_defaults(func=cmd_win)
+
+    s = sub.add_parser("dashboard", help="KPIs and progress to target")
+    s.set_defaults(func=cmd_dashboard)
+
+    s = sub.add_parser("forecast", help="model the path to the profit target")
+    s.add_argument("--months", type=int, default=12)
+    s.add_argument("--start-clients", type=float, default=0)
+    s.add_argument("--adds-per-month", type=float, default=2)
+    s.add_argument("--churn", type=float, default=0.05)
+    s.set_defaults(func=cmd_forecast)
+
+    s = sub.add_parser("export", help="export an audit's deliverables")
+    s.add_argument("audit_id"); s.add_argument("--out")
+    s.set_defaults(func=cmd_export)
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    settings = load_settings(args.config) if args.config else SETTINGS
+    return args.func(args, settings)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
