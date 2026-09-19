@@ -1,0 +1,23 @@
+[Unit]
+Description=AnswerRank agent fleet
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=answerrank
+WorkingDirectory=/opt/answerrank
+EnvironmentFile=/opt/answerrank/.env
+ExecStart=/usr/bin/python3 run.py run
+Restart=always
+RestartSec=30
+
+# The fleet only needs its own directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/answerrank/data
+
+[Install]
+WantedBy=multi-user.target

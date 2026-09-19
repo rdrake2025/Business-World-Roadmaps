@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .agents.fixer import FixerAgent
+from . import doctor as doctor_mod
+from . import wizard
 from .budget import (
     PHASES, cumulative_monthly, load_personal, milestones, phase_cost,
     quit_threshold, reinvestment_split, runway_months, write_template,
@@ -523,6 +525,54 @@ def cmd_schedule(args, settings: Settings) -> int:
     return 0
 
 
+def cmd_doctor(args, settings: Settings) -> int:
+    checks = doctor_mod.run_all(settings, probe=args.probe)
+    _hr("PREFLIGHT CHECK")
+    colour = {"PASS": "\033[32m", "WARN": "\033[33m", "FAIL": "\033[31m"}
+    for c in checks:
+        tag = f"{colour[c.status]}{c.icon}\033[0m"
+        block = " \033[31m[BLOCKING]\033[0m" if c.blocking and c.status != "PASS" else ""
+        print(f"  [{tag}] {c.name:<28} {c.detail[:52]}{block}")
+
+    passed, warned, failed, blockers = doctor_mod.summarise(checks)
+    print(f"\n  {passed} passing, {warned} warnings, {failed} failing")
+
+    fixes = [c for c in checks if c.status != "PASS" and c.fix]
+    if fixes:
+        _hr("HOW TO FIX")
+        for c in fixes:
+            print(f"\n  {c.name}")
+            for line in c.fix.split(". "):
+                if line.strip():
+                    print(f"    → {line.strip().rstrip('.')}.")
+
+    _hr("CAN YOU SEND EMAIL?")
+    if blockers:
+        print(f"  NO — {len(blockers)} blocking issue(s) above must be resolved first.")
+        print("  This is enforced in code: `send` will refuse until they are clear.")
+        print("  Sending from an unauthenticated domain burns it permanently.")
+    else:
+        print("  YES — all blocking checks pass. Warm the domain, then start small.")
+    return 1 if blockers else 0
+
+
+def cmd_setup(args, settings: Settings) -> int:
+    return wizard.run(settings, args.path or "answerrank.yml")
+
+
+def cmd_web(args, settings: Settings) -> int:
+    from web.app import serve
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s",
+                        datefmt="%H:%M:%S")
+    print(f"\n  Landing page   http://{args.host}:{args.port}/")
+    print(f"  Unsubscribe    http://{args.host}:{args.port}/unsubscribe")
+    print(f"  Health         http://{args.host}:{args.port}/health")
+    print("\n  Ctrl-C to stop.\n")
+    serve(args.host, args.port, settings)
+    return 0
+
+
 # ---------------------------------------------------------------- parser
 
 def build_parser() -> argparse.ArgumentParser:
@@ -619,7 +669,21 @@ def build_parser() -> argparse.ArgumentParser:
                    help="recurring rhythm only, skip the 30-day launch tasks")
     s.set_defaults(func=cmd_schedule)
 
+    s = sub.add_parser("setup", help="interactive first-run setup")
+    s.add_argument("--path")
+    s.set_defaults(func=cmd_setup)
+
+    s = sub.add_parser("doctor", help="check what is blocking you from operating")
+    s.add_argument("--probe", action="store_true",
+                   help="also probe the live unsubscribe endpoint over the network")
+    s.set_defaults(func=cmd_doctor)
+
+    s = sub.add_parser("web", help="serve the landing page and unsubscribe endpoint")
+    s.add_argument("--host", default="0.0.0.0"); s.add_argument("--port", type=int, default=8000)
+    s.set_defaults(func=cmd_web)
+
     return ap
+
 
 
 

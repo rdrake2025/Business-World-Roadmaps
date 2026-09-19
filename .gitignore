@@ -8,6 +8,8 @@ data/
 answerrank.yml
 budget.yml          # personal financial data
 .env
+.env.local
+backups/
 *.pem
 
 # Python

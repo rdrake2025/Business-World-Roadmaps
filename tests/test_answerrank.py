@@ -25,7 +25,9 @@ from answerrank.audit import run_audit
 from answerrank.config import Settings
 from answerrank.engines.base import detect_sentiment, extract_businesses, name_matches, normalize
 from answerrank.mailer import build_message
-from answerrank.models import Audit, Business, Client, LedgerEntry, ProbeResult, Prospect
+from answerrank.models import (
+    Audit, Business, Client, LedgerEntry, OutreachMessage, ProbeResult, Prospect,
+)
 from answerrank.orchestrator import Orchestrator
 from answerrank.scoring import (
     competitor_gap, generate_findings, grade, interpret, prominence_value,
@@ -553,3 +555,180 @@ class TestSchedule(unittest.TestCase):
         ics = build_calendar(datetime.date(2026, 9, 21), include_launch=False)
         self.assertNotIn("LAUNCH", ics)
         self.assertIn("Morning ops", ics)
+
+
+class TestWebApp(unittest.TestCase):
+    """The unsubscribe endpoint is a legal requirement, not a feature.
+    These tests assert the behaviour CAN-SPAM and RFC 8058 actually demand."""
+
+    def setUp(self):
+        from web.app import Application
+        self.tmp = tempfile.TemporaryDirectory()
+        self.settings = make_settings(self.tmp.name)
+        self.store = Store(self.settings.database_path)
+        self.app = Application(self.settings, self.store)
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def call(self, path, method="GET", form=None, qs=""):
+        import io
+        import urllib.parse
+        from wsgiref.util import setup_testing_defaults
+        env = {}
+        setup_testing_defaults(env)
+        env["PATH_INFO"], env["REQUEST_METHOD"], env["QUERY_STRING"] = path, method, qs
+        if form is not None:
+            body = urllib.parse.urlencode(form).encode()
+            env["wsgi.input"] = io.BytesIO(body)
+            env["CONTENT_LENGTH"] = str(len(body))
+        captured = {}
+        body = b"".join(self.app(env, lambda s, h: captured.update(status=s, headers=dict(h))))
+        return captured["status"], captured.get("headers", {}), body
+
+    def _seed(self, email="owner@apex.com", stage="contacted"):
+        biz = Business(name="Apex HVAC", city="Austin", state="TX", vertical="hvac",
+                       website="https://apex.com", email=email)
+        p = Prospect(business=biz, stage=stage, score=10.0, competitor_gap=70.0)
+        self.store.upsert_prospect(p)
+        return p
+
+    # ---- routing ----
+
+    def test_all_public_routes_serve(self):
+        for path in ("/", "/privacy", "/terms", "/unsubscribe", "/health"):
+            status, _h, body = self.call(path)
+            self.assertTrue(status.startswith("200"), f"{path} -> {status}")
+            self.assertTrue(body)
+
+    def test_unknown_path_is_404_not_500(self):
+        status, _h, _b = self.call("/nope")
+        self.assertTrue(status.startswith("404"))
+
+    def test_security_headers_present(self):
+        _s, headers, _b = self.call("/")
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(headers.get("X-Frame-Options"), "DENY")
+
+    # ---- RFC 8058 one-click ----
+
+    def test_one_click_post_suppresses_and_returns_200(self):
+        self._seed()
+        status, _h, body = self.call("/unsubscribe", "POST",
+                                     {"List-Unsubscribe": "One-Click"}, qs="e=owner@apex.com")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"Unsubscribed", body)
+        self.assertTrue(self.store.is_suppressed("owner@apex.com"))
+
+    def test_one_click_without_address_still_returns_200(self):
+        # A non-2xx here makes mail clients flag the sender.
+        status, _h, _b = self.call("/unsubscribe", "POST", {"List-Unsubscribe": "One-Click"})
+        self.assertTrue(status.startswith("200"))
+
+    def test_unsubscribe_halts_queued_sequence(self):
+        p = self._seed()
+        self.store.save_message(OutreachMessage(prospect_id=p.id, subject="s", body="b",
+                                                status="approved"))
+        self.call("/unsubscribe", "POST", {"email": "owner@apex.com"})
+        self.assertEqual(len(self.store.get_messages("approved")), 0)
+        self.assertEqual(self.store.get_prospects(limit=5)[0].stage, "suppressed")
+
+    def test_unsubscribe_is_case_insensitive(self):
+        self.call("/unsubscribe", "POST", {"email": "  Owner@APEX.com "})
+        self.assertTrue(self.store.is_suppressed("owner@apex.com"))
+
+    def test_invalid_email_does_not_pollute_suppression_list(self):
+        status, _h, _b = self.call("/unsubscribe", "POST", {"email": "not-an-email"})
+        self.assertTrue(status.startswith("200"))
+        self.assertFalse(self.store.is_suppressed("not-an-email"))
+
+    def test_unsubscribe_is_idempotent(self):
+        self._seed()
+        for _ in range(3):
+            status, _h, _b = self.call("/unsubscribe", "POST", {"email": "owner@apex.com"})
+            self.assertTrue(status.startswith("200"))
+        self.assertTrue(self.store.is_suppressed("owner@apex.com"))
+
+    def test_get_prefills_address_from_query(self):
+        _s, _h, body = self.call("/unsubscribe", qs="e=owner@apex.com")
+        self.assertIn(b"owner@apex.com", body)
+
+    # ---- lead capture ----
+
+    def test_inbound_lead_is_captured_and_flagged(self):
+        status, _h, _b = self.call("/audit-request", "POST", {
+            "business": "Summit Plumbing", "city": "Tampa", "state": "FL",
+            "vertical": "plumbing", "email": "info@summit.com",
+            "website": "https://summitplumb.com"})
+        self.assertTrue(status.startswith("200"))
+        leads = [p for p in self.store.get_prospects(limit=50) if "INBOUND" in (p.notes or "")]
+        self.assertEqual(len(leads), 1)
+        self.assertEqual(leads[0].business.name, "Summit Plumbing")
+
+    def test_incomplete_lead_is_rejected(self):
+        status, _h, _b = self.call("/audit-request", "POST",
+                                   {"business": "", "city": "", "email": "bad"})
+        self.assertTrue(status.startswith("400"))
+
+    def test_lead_get_redirects(self):
+        status, _h, _b = self.call("/audit-request", "GET")
+        self.assertTrue(status.startswith("302"))
+
+    def test_landing_escapes_injected_error_text(self):
+        from web.app import render
+        body = render("landing.html", error="<script>alert(1)</script>")
+        self.assertNotIn(b"<script>alert(1)</script>", body)
+
+    def test_unconfigured_address_not_rendered_publicly(self):
+        _s, _h, body = self.call("/")
+        self.assertNotIn(b"SET_YOUR_REGISTERED", body)
+
+
+class TestDoctor(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.settings = make_settings(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_flags_missing_address_as_blocking(self):
+        from answerrank.doctor import check_address
+        c = check_address(self.settings)
+        self.assertEqual(c.status, "FAIL")
+        self.assertTrue(c.blocking)
+
+    def test_accepts_real_address(self):
+        from answerrank.doctor import check_address
+        self.settings.physical_address = "123 Main St, Suite 100, Austin, TX 78701"
+        self.assertEqual(check_address(self.settings).status, "PASS")
+
+    def test_flags_placeholder_identity(self):
+        from answerrank.doctor import check_identity
+        self.assertEqual(check_identity(self.settings).status, "FAIL")
+
+    def test_accepts_real_identity(self):
+        from answerrank.doctor import check_identity
+        self.settings.from_email = "hello@realdomain.com"
+        self.settings.website = "https://realdomain.com"
+        self.assertEqual(check_identity(self.settings).status, "PASS")
+
+    def test_summarise_counts_blockers(self):
+        from answerrank.doctor import run_all, summarise
+        checks = run_all(self.settings)
+        _p, _w, _f, blockers = summarise(checks)
+        self.assertGreater(len(blockers), 0)
+        self.assertTrue(all(c.blocking for c in blockers))
+
+    def test_every_failing_check_offers_a_fix(self):
+        from answerrank.doctor import run_all
+        for c in run_all(self.settings):
+            if c.status != "PASS":
+                self.assertTrue(c.fix.strip(), f"{c.name} has no fix instruction")
+
+    def test_python_and_dependencies_pass_here(self):
+        from answerrank.doctor import check_dependencies, check_python
+        self.assertEqual(check_python().status, "PASS")
+        self.assertEqual(check_dependencies().status, "PASS")

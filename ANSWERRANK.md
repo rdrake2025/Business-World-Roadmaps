@@ -30,7 +30,8 @@ python3 run.py audit "Apex Heating & Air" Austin --state TX \
 Going live:
 
 ```bash
-python3 run.py init                # write answerrank.yml, then edit it
+python3 run.py setup               # interactive configuration
+python3 run.py doctor              # what is still blocking you
 export OPENAI_API_KEY=...          # ChatGPT
 export ANTHROPIC_API_KEY=...       # Claude
 export PERPLEXITY_API_KEY=...      # Perplexity
@@ -98,6 +99,9 @@ and retention at the same time.
 | `budget-init` / `budget` | Personal + business budget, runway, milestones |
 | `expense CAT AMOUNT` | Log a business expense |
 | `schedule --start DATE` | Generate an .ics calendar for your phone |
+| `setup` | Interactive first-run configuration |
+| `doctor [--probe]` | What is blocking you from operating |
+| `web` | Serve the landing page and unsubscribe endpoint |
 
 ## Safety rails
 
@@ -128,6 +132,9 @@ the business rather than costing a day:
 | [30-day launch checklist](business/04_LAUNCH_CHECKLIST.md) | Day-by-day to first revenue |
 | [Operations manual](business/05_OPERATIONS.md) | Daily rhythm, systemd, backups, troubleshooting |
 | [Budget & schedule](business/06_BUDGET_AND_SCHEDULE.md) | Phased spending, runway, profit splits, quit threshold |
+| [Deployment](business/07_DEPLOYMENT.md) | Laptop, VPS, Docker, backups, monitoring |
+| [Service agreement](business/contracts/SERVICE_AGREEMENT.md) | Client contract template |
+| [Client onboarding](business/contracts/CLIENT_WELCOME_EMAIL.md) | Welcome sequence and retention emails |
 
 ## Architecture
 
@@ -145,7 +152,17 @@ answerrank/
 ├── engines/           ChatGPT, Claude, Perplexity, Google AI Overviews, mock
 │   └── base.py        Answer parsing — the core IP
 ├── agents/            The seven workers
-└── report/templates/  Client-facing HTML report
+├── report/templates/  Client-facing HTML report
+├── doctor.py          Preflight checks — what is blocking you
+├── wizard.py          Interactive setup
+├── budget.py          Runway, profit policy, quit threshold
+└── schedule.py        .ics calendar generation
+
+web/                   Public surface
+├── app.py             WSGI: landing, RFC 8058 unsubscribe, lead capture
+└── templates/         Landing, unsubscribe, privacy, terms
+
+deploy/                systemd units, backup script
 ```
 
 ## Requirements

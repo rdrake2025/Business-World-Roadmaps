@@ -1,0 +1,25 @@
+# Two services, one shared database. The fleet does the work; the web service
+# serves the landing page and the legally-required unsubscribe endpoint.
+#
+#   docker compose up -d
+#   docker compose logs -f fleet
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./answerrank.yml:/app/answerrank.yml:ro
+    env_file: [.env]
+
+  fleet:
+    build: .
+    restart: unless-stopped
+    command: ["python3", "run.py", "run"]
+    volumes:
+      - ./data:/app/data
+      - ./answerrank.yml:/app/answerrank.yml:ro
+    env_file: [.env]
+    depends_on: [web]
