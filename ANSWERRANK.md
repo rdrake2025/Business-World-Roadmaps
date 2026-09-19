@@ -52,6 +52,33 @@ With no keys present, every engine falls back to a deterministic simulator, so
 the whole system is demonstrable offline. Add keys and the same code paths hit
 live engines.
 
+## Run it from your phone
+
+The fleet runs on your laptop; you manage it from your pocket.
+
+```bash
+./start.sh        # prints a link (and a QR code if `qrencode` is installed)
+```
+
+Open that link once on a phone on the same Wi-Fi. It stays signed in, and
+"Add to Home Screen" makes it open like a native app.
+
+| Tab | What it's for |
+| --- | --- |
+| **Today** | What needs you now, fleet health, and the three actions |
+| **Inbox** | Every draft with its evidence line — Approve or Skip with a thumb |
+| **Pipeline** | Prospects by stage, and the hot leads |
+| **Money** | Profit against the $5k target, MRR, clients, reports |
+
+**The console cannot bypass a compliance gate.** Sending from the phone runs
+the same preflight as the command line: no postal address or failing DNS means
+the button refuses, and says why.
+
+Access is a single long token, minted on first run and held in the database.
+It arrives once in the URL, is exchanged for an `HttpOnly` cookie, and never
+appears in a URL again. Anyone on your network holding that link can approve
+outreach — treat it like a password; restarting issues a new one.
+
 ## The agent fleet
 
 | Agent | Every | Does |
@@ -110,7 +137,7 @@ and retention at the same time.
 | `schedule --start DATE` | Generate an .ics calendar for your phone |
 | `setup` | Interactive first-run configuration |
 | `doctor [--probe]` | What is blocking you from operating |
-| `web` | Serve the landing page and unsubscribe endpoint |
+| `web` | Serve the site and the phone console |
 
 ## Safety rails
 

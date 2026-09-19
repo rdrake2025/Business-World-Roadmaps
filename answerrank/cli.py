@@ -562,14 +562,38 @@ def cmd_setup(args, settings: Settings) -> int:
 
 
 def cmd_web(args, settings: Settings) -> int:
-    from web.app import serve
     import logging
+
+    from web.app import create_app, lan_ip, qr_or_url, serve
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s",
                         datefmt="%H:%M:%S")
-    print(f"\n  Landing page   http://{args.host}:{args.port}/")
-    print(f"  Unsubscribe    http://{args.host}:{args.port}/unsubscribe")
-    print(f"  Health         http://{args.host}:{args.port}/health")
+
+    app = create_app(settings)
+    ip = lan_ip()
+    phone_url = f"http://{ip}:{args.port}/app?t={app.token}"
+
+    _hr("ON THIS LAPTOP")
+    print(f"  Console        http://localhost:{args.port}/app?t={app.token}")
+    print(f"  Landing page   http://localhost:{args.port}/")
+    print(f"  Unsubscribe    http://localhost:{args.port}/unsubscribe")
+
+    _hr("ON YOUR PHONE")
+    print("  Same Wi-Fi as this laptop, then open:\n")
+    print(f"    {phone_url}\n")
+    qr = qr_or_url(phone_url)
+    if qr:
+        print(qr)
+    else:
+        print("  (install `qrencode` to get a scannable code here)")
+    print("  Open it once — it stays signed in, and you can add it to your")
+    print("  home screen so it opens like an app.")
+
+    _hr("NOTE")
+    print("  Anyone on this network who has that link can approve outreach,")
+    print("  so treat it like a password. Restart to issue a new one.")
     print("\n  Ctrl-C to stop.\n")
+
     serve(args.host, args.port, settings)
     return 0
 
@@ -679,7 +703,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also probe the live unsubscribe endpoint over the network")
     s.set_defaults(func=cmd_doctor)
 
-    s = sub.add_parser("web", help="serve the landing page and unsubscribe endpoint")
+    s = sub.add_parser("web", help="serve the site and the phone console")
     s.add_argument("--host", default="0.0.0.0"); s.add_argument("--port", type=int, default=8000)
     s.set_defaults(func=cmd_web)
 

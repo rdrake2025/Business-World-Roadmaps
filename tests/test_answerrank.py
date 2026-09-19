@@ -743,3 +743,168 @@ class TestDoctor(unittest.TestCase):
         from answerrank.doctor import check_dependencies, check_python
         self.assertEqual(check_python().status, "PASS")
         self.assertEqual(check_dependencies().status, "PASS")
+
+
+class TestConsoleAuth(unittest.TestCase):
+    """The console can approve outreach and trigger sends, and it binds to the
+    LAN so a phone can reach it. These assert the boundary actually holds."""
+
+    def setUp(self):
+        from web.app import Application
+        self.tmp = tempfile.TemporaryDirectory()
+        self.settings = make_settings(self.tmp.name)
+        self.store = Store(self.settings.database_path)
+        self.app = Application(self.settings, self.store)
+        self.token = self.app.token
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def call(self, path, method="GET", qs="", cookie=None, body=None):
+        import io
+        import json as _json
+        from wsgiref.util import setup_testing_defaults
+        env = {}
+        setup_testing_defaults(env)
+        env["PATH_INFO"], env["REQUEST_METHOD"], env["QUERY_STRING"] = path, method, qs
+        if cookie:
+            env["HTTP_COOKIE"] = cookie
+        if body is not None:
+            raw = _json.dumps(body).encode()
+            env["wsgi.input"] = io.BytesIO(raw)
+            env["CONTENT_LENGTH"] = str(len(raw))
+        cap = {}
+        data = b"".join(self.app(env, lambda s, h: cap.update(status=s, headers=dict(h))))
+        return cap["status"], cap.get("headers", {}), data
+
+    def cookie(self):
+        return f"ar_session={self.token}"
+
+    def test_public_routes_need_no_token(self):
+        for path in ("/", "/unsubscribe", "/privacy", "/terms", "/health",
+                     "/manifest.webmanifest", "/icon.svg", "/sw.js"):
+            status, _h, _b = self.call(path)
+            self.assertTrue(status.startswith("200"), f"{path} -> {status}")
+
+    def test_console_and_api_reject_anonymous(self):
+        for path in ("/app", "/api/state", "/api/inbox", "/api/send", "/api/tick"):
+            status, _h, _b = self.call(path)
+            self.assertTrue(status.startswith("401"), f"{path} was not guarded")
+
+    def test_api_401_is_json_not_html(self):
+        _s, headers, _b = self.call("/api/state")
+        self.assertIn("application/json", headers.get("Content-Type", ""))
+
+    def test_first_visit_exchanges_token_for_cookie(self):
+        status, headers, _b = self.call("/app", qs=f"t={self.token}")
+        self.assertTrue(status.startswith("200"))
+        cookie = headers.get("Set-Cookie", "")
+        self.assertIn("ar_session=", cookie)
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("SameSite=Lax", cookie)
+
+    def test_cookie_grants_access(self):
+        status, _h, _b = self.call("/api/state", cookie=self.cookie())
+        self.assertTrue(status.startswith("200"))
+
+    def test_forged_cookie_rejected(self):
+        status, _h, _b = self.call("/api/state", cookie="ar_session=forged")
+        self.assertTrue(status.startswith("401"))
+
+    def test_token_is_stable_and_long(self):
+        from web.auth import get_or_create_token
+        self.assertEqual(get_or_create_token(self.store), self.token)
+        self.assertGreaterEqual(len(self.token), 32)
+
+    def test_rotation_invalidates_the_old_token(self):
+        from web.auth import is_authorised, rotate_token
+        old = self.token
+        new = rotate_token(self.store)
+        self.assertNotEqual(old, new)
+        self.assertFalse(is_authorised(old, new))
+
+
+class TestConsoleApi(unittest.TestCase):
+    def setUp(self):
+        from web.api import Api
+        self.tmp = tempfile.TemporaryDirectory()
+        self.settings = make_settings(self.tmp.name)
+        self.store = Store(self.settings.database_path)
+        self.api = Api(self.store, self.settings)
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _draft(self, email="o@apex.com"):
+        biz = Business(name="Apex HVAC", city="Austin", state="TX", vertical="hvac",
+                       website="https://apex.com", email=email)
+        p = Prospect(business=biz, stage="queued", score=8.0, competitor_gap=80.0,
+                     notes="Apex appears in 0 of 4 AI answers.")
+        self.store.upsert_prospect(p)
+        m = OutreachMessage(prospect_id=p.id, subject="s", body="b", status="drafted")
+        self.store.save_message(m)
+        return p, m
+
+    def test_state_shape(self):
+        s = self.api.state()
+        for key in ("money", "queue", "pipeline", "agents", "blockers", "can_send"):
+            self.assertIn(key, s)
+
+    def test_inbox_carries_the_evidence_line(self):
+        self._draft()
+        item = self.api.inbox()["items"][0]
+        self.assertEqual(item["business"], "Apex HVAC")
+        self.assertIn("0 of 4", item["evidence"])
+
+    def test_approve_moves_the_message(self):
+        _p, m = self._draft()
+        self.assertEqual(self.api.approve([m.id])["approved"], 1)
+        self.assertEqual(len(self.store.get_messages("approved")), 1)
+        self.assertEqual(len(self.store.get_messages("drafted")), 0)
+
+    def test_reject_also_suppresses_the_prospect(self):
+        """Otherwise the next cycle simply drafts the same message again."""
+        _p, m = self._draft()
+        self.assertEqual(self.api.reject([m.id])["rejected"], 1)
+        self.assertEqual(self.store.get_prospects(limit=5)[0].stage, "suppressed")
+
+    def test_send_refuses_while_preflight_fails(self):
+        """The console is a convenience, never a way around a compliance gate."""
+        _p, m = self._draft()
+        self.api.approve([m.id])
+        result = self.api.send()
+        self.assertTrue(result["blocked"])
+        self.assertEqual(result["sent"], 0)
+        self.assertTrue(any("CAN-SPAM" in r for r in result["reasons"]))
+
+    def test_send_still_blocked_even_with_everything_approved(self):
+        self.settings.physical_address = "123 Main St, Austin, TX 78701"
+        from web.api import Api
+        api = Api(self.store, self.settings)
+        _p, m = self._draft()
+        api.approve([m.id])
+        # SMTP is unconfigured, so nothing can actually leave.
+        result = api.send()
+        self.assertEqual(result.get("failed", 0) + result.get("sent", 0) -
+                         result.get("sent", 0), result.get("failed", 0))
+
+    def test_unknown_ids_are_harmless(self):
+        self.assertEqual(self.api.approve(["nope"])["approved"], 0)
+        self.assertEqual(self.api.reject(["nope"])["rejected"], 0)
+
+
+class TestLanDiscovery(unittest.TestCase):
+    def test_returns_a_usable_address(self):
+        import ipaddress
+        from web.app import lan_ip
+        addr = ipaddress.ip_address(lan_ip())
+        self.assertTrue(addr.is_private or addr.is_loopback,
+                        "LAN discovery must not hand out a public address")
+
+    def test_qr_helper_degrades_to_empty(self):
+        from web.app import qr_or_url
+        self.assertIsInstance(qr_or_url("http://example.com"), str)

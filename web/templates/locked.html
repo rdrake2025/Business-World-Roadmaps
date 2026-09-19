@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Locked — {{ brand }}{% endblock %}
+{% block body %}
+<h1>This console is locked.</h1>
+<p class="lead">
+  You need the link from your laptop. It is printed in the terminal when you
+  start the server, and it looks like this:
+</p>
+<section>
+  <p style="font-family:ui-monospace,monospace;font-size:14px;margin:0">
+    http://192.168.x.x:8000/app?t=&lt;your&nbsp;token&gt;
+  </p>
+</section>
+<p style="font-size:14px;color:var(--muted)">
+  Open it once on your phone and it will stay signed in. If you lost it, restart
+  the server on your laptop — the link is printed again each time.
+</p>
+{% endblock %}

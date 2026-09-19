@@ -76,6 +76,10 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_run_agent ON agent_runs(agent, started_at);
 
+CREATE TABLE IF NOT EXISTS kv (
+    key TEXT PRIMARY KEY, value TEXT, created_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS suppression (
     email TEXT PRIMARY KEY, reason TEXT, created_at TEXT
 );
@@ -302,6 +306,20 @@ class Store:
             return cx.execute(
                 "SELECT 1 FROM suppression WHERE email = ?", (email.lower().strip(),)
             ).fetchone() is not None
+
+    # ---------------- key/value ----------------
+
+    def kv_get(self, key: str) -> str | None:
+        with self.conn() as cx:
+            row = cx.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def kv_set(self, key: str, value: str) -> None:
+        with self.conn() as cx:
+            cx.execute(
+                "INSERT OR REPLACE INTO kv (key,value,created_at) VALUES (?,?,?)",
+                (key, value, datetime.now(timezone.utc).isoformat(timespec="seconds")),
+            )
 
     # ---------------- ledger ----------------
 

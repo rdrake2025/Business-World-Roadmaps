@@ -99,6 +99,9 @@ cat <<BANNER
     python run.py budget
     python run.py forecast
 
+  ${BOLD}On your phone:${OFF} same Wi-Fi as this laptop, open the link below,
+  then add it to your home screen — it runs like an app.
+
   ${BOLD}Docs:${OFF} ANSWERRANK.md · business/04_LAUNCH_CHECKLIST.md
 
 BANNER
@@ -107,13 +110,22 @@ if [ "$DOCTOR" -ne 0 ]; then
     warn "Sending email is blocked until the items above are fixed. That is deliberate."
 fi
 
-step "Starting the web server on http://localhost:8000"
-printf '  %sLanding page, and the unsubscribe endpoint you need before sending.%s\n' "$DIM" "$OFF"
-printf '  %sCtrl-C to stop.%s\n\n' "$DIM" "$OFF"
+step "Starting the server"
+printf '  %sThe link for your phone is printed below — scan or open it once.%s\n\n' "$DIM" "$OFF"
 
+# Open the console on this laptop once the server is listening.
 ( sleep 2
+  TOKEN="$(python - <<'PY' 2>/dev/null
+import sys
+sys.path.insert(0, ".")
+from web.app import create_app
+print(create_app().token)
+PY
+)"
+  [ -n "$TOKEN" ] || exit 0
   for o in open xdg-open; do
-      command -v "$o" >/dev/null 2>&1 && "$o" "http://localhost:8000" >/dev/null 2>&1 && break
+      command -v "$o" >/dev/null 2>&1 && \
+          "$o" "http://localhost:8000/app?t=$TOKEN" >/dev/null 2>&1 && break
   done ) &
 
 exec python run.py web --port 8000
