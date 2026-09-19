@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1">
+<meta name="theme-color" content="#0E1211">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="{{ brand }}">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon.svg">
+<title>{{ brand }} Console</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#F4F6F6; --card:#FFFFFF; --sunk:#EAEEED;
+    --ink:#10171A; --ink2:#566461; --muted:#7C8987;
+    --rule:#DDE3E2; --rule2:#C8D1CF;
+    --mark:#0086A8; --mark-ink:#FFFFFF; --mark-soft:#0086A814;
+    --accent:#A05F00; --accent-soft:#A05F0014;
+    --good:#0B8A0B; --bad:#C43535; --warn:#B4800E;
+    --tabh:58px;
+    --safe-b:env(safe-area-inset-bottom,0px);
+    --safe-t:env(safe-area-inset-top,0px);
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#0E1211; --card:#1A1F1E; --sunk:#151A19;
+    --ink:#EEF2F2; --ink2:#9FAEAC; --muted:#7C8987;
+    --rule:#262D2B; --rule2:#39423F;
+    --mark:#1B93A8; --mark-soft:#1B93A826;
+    --accent:#E5A63E; --accent-soft:#E5A63E1A;
+    --good:#3DBE5A; --bad:#E66767; --warn:#E0A83E;
+  }}
+  :root[data-theme="dark"]{
+    color-scheme:dark;
+    --bg:#0E1211; --card:#1A1F1E; --sunk:#151A19;
+    --ink:#EEF2F2; --ink2:#9FAEAC; --muted:#7C8987;
+    --rule:#262D2B; --rule2:#39423F;
+    --mark:#1B93A8; --mark-soft:#1B93A826;
+    --accent:#E5A63E; --accent-soft:#E5A63E1A;
+    --good:#3DBE5A; --bad:#E66767; --warn:#E0A83E;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
+    padding-top:var(--safe-t);overscroll-behavior-y:contain}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+
+  header{position:sticky;top:var(--safe-t);z-index:20;background:var(--bg);
+    padding:12px 16px 10px;border-bottom:1px solid var(--rule);
+    display:flex;align-items:center;justify-content:space-between;gap:12px}
+  header h1{font-size:17px;margin:0;font-weight:650;letter-spacing:-.01em}
+  header .sub{font-size:11.5px;color:var(--muted);margin-top:2px}
+  .refresh{background:var(--sunk);border:1px solid var(--rule);color:var(--ink2);
+    width:38px;height:38px;border-radius:10px;font-size:16px;cursor:pointer;flex:none}
+  .refresh:active{background:var(--rule)}
+  .refresh.spin{animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  main{padding:14px 16px calc(var(--tabh) + var(--safe-b) + 24px)}
+  .pane{display:none}.pane.on{display:block}
+
+  .card{background:var(--card);border:1px solid var(--rule);border-radius:13px;
+    padding:15px;margin-bottom:11px}
+  .card h2{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
+    margin:0 0 11px;font-weight:650}
+
+  .banner{border-radius:13px;padding:14px 15px;margin-bottom:11px;font-size:14px;line-height:1.5}
+  .banner.block{background:var(--accent-soft);border:1px solid var(--accent);color:var(--ink)}
+  .banner.ok{background:var(--mark-soft);border:1px solid var(--mark);color:var(--ink)}
+  .banner b{display:block;margin-bottom:5px;font-size:14.5px}
+  .banner ul{margin:7px 0 0;padding-left:18px;color:var(--ink2);font-size:13px}
+  .banner li{margin-bottom:4px}
+
+  .big{font-size:38px;font-weight:700;line-height:1;letter-spacing:-.025em}
+  .big small{font-size:15px;color:var(--muted);font-weight:500;letter-spacing:0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+  .stat{background:var(--card);border:1px solid var(--rule);border-radius:13px;padding:14px}
+  .stat .v{font-size:25px;font-weight:700;line-height:1;letter-spacing:-.02em}
+  .stat .k{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);
+    margin-top:7px}
+
+  .bar{height:9px;background:var(--sunk);border-radius:99px;overflow:hidden;margin:13px 0 7px}
+  .bar i{display:block;height:100%;background:var(--mark);border-radius:99px;
+    transition:width .5s ease}
+  .barnote{font-size:12.5px;color:var(--ink2)}
+
+  .row{display:flex;justify-content:space-between;align-items:center;gap:12px;
+    padding:11px 0;border-bottom:1px solid var(--rule)}
+  .row:last-child{border-bottom:0;padding-bottom:0}
+  .row:first-of-type{padding-top:0}
+  .row .l{font-size:14px;color:var(--ink2)}
+  .row .r{font-size:14px;font-weight:600}
+
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:8px;flex:none}
+  .dot.ok{background:var(--good)}.dot.err{background:var(--bad)}
+
+  /* actions */
+  .acts{display:grid;gap:9px;margin-top:3px}
+  button.act{width:100%;padding:15px;border-radius:12px;border:1px solid var(--rule2);
+    background:var(--card);color:var(--ink);font-size:15.5px;font-weight:600;
+    cursor:pointer;font-family:inherit;display:flex;align-items:center;
+    justify-content:center;gap:9px;min-height:52px}
+  button.act:active{background:var(--sunk)}
+  button.act.primary{background:var(--mark);border-color:var(--mark);color:var(--mark-ink)}
+  button.act.primary:disabled{opacity:.42}
+  button.act:disabled{cursor:not-allowed}
+
+  /* inbox */
+  .msg{background:var(--card);border:1px solid var(--rule);border-radius:13px;
+    padding:14px;margin-bottom:11px}
+  .msg .biz{font-weight:650;font-size:15.5px;letter-spacing:-.01em}
+  .msg .mkt{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .msg .ev{font-size:13px;color:var(--ink2);background:var(--sunk);padding:9px 11px;
+    border-radius:9px;margin:11px 0;line-height:1.45}
+  .msg .subj{font-size:13.5px;color:var(--ink);margin-bottom:9px;font-weight:500}
+  .msg details{margin-bottom:11px}
+  .msg summary{font-size:12.5px;color:var(--mark);cursor:pointer;padding:4px 0;
+    list-style:none;font-weight:600}
+  .msg summary::-webkit-details-marker{display:none}
+  .msg pre{white-space:pre-wrap;font-size:12.5px;color:var(--ink2);margin:9px 0 0;
+    font-family:inherit;line-height:1.5;max-height:280px;overflow:auto;
+    background:var(--sunk);padding:11px;border-radius:9px}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .pair button{padding:13px;border-radius:11px;font-size:14.5px;font-weight:650;
+    border:1px solid var(--rule2);cursor:pointer;font-family:inherit;min-height:48px}
+  .pair .yes{background:var(--mark);border-color:var(--mark);color:var(--mark-ink)}
+  .pair .no{background:var(--card);color:var(--ink2)}
+  .pair button:active{opacity:.75}
+  .badge{display:inline-block;font-size:10.5px;padding:2px 7px;border-radius:5px;
+    background:var(--accent-soft);color:var(--accent);font-weight:650;margin-left:7px;
+    letter-spacing:.03em;vertical-align:1px}
+
+  .empty{text-align:center;padding:48px 20px;color:var(--muted)}
+  .empty .ic{font-size:34px;margin-bottom:12px;opacity:.5}
+  .empty p{margin:0;font-size:14px}
+
+  .stagerow{display:flex;justify-content:space-between;padding:10px 0;
+    border-bottom:1px solid var(--rule);font-size:14px}
+  .stagerow:last-child{border-bottom:0}
+  .stagerow .s{color:var(--ink2);text-transform:capitalize}
+
+  /* tabs */
+  nav{position:fixed;left:0;right:0;bottom:0;z-index:30;display:grid;
+    grid-template-columns:repeat(4,1fr);background:var(--card);
+    border-top:1px solid var(--rule);padding-bottom:var(--safe-b)}
+  nav button{position:relative;background:none;border:0;padding:8px 4px 7px;cursor:pointer;
+    color:var(--muted);font-family:inherit;font-size:10.5px;font-weight:600;
+    display:flex;flex-direction:column;align-items:center;gap:3px;
+    height:var(--tabh);justify-content:center;letter-spacing:.02em}
+  nav button .ic{font-size:19px;line-height:1}
+  nav button[aria-current="true"]{color:var(--mark)}
+  nav .pip{position:absolute;top:5px;left:50%;margin-left:6px;min-width:18px;height:18px;
+    border-radius:99px;background:var(--accent);color:#141414;font-size:10.5px;
+    font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 5px;
+    border:2px solid var(--card);box-sizing:content-box}
+
+  .toast{position:fixed;left:16px;right:16px;bottom:calc(var(--tabh) + var(--safe-b) + 14px);
+    background:var(--ink);color:var(--bg);padding:13px 16px;border-radius:12px;
+    font-size:14px;z-index:60;box-shadow:0 8px 26px rgba(0,0,0,.24);
+    transform:translateY(16px);opacity:0;visibility:hidden;pointer-events:none;
+    transition:transform .26s cubic-bezier(.2,.9,.3,1),opacity .2s ease,visibility .26s}
+  .toast.up{transform:translateY(0);opacity:1;visibility:visible}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1 id="hTitle">{{ brand }}</h1>
+    <div class="sub" id="hSub">loading…</div>
+  </div>
+  <button class="refresh" id="btnRefresh" aria-label="Refresh">&#8635;</button>
+</header>
+
+<main>
+  <!-- ============ TODAY ============ -->
+  <section class="pane on" id="pane-today">
+    <div id="todayBanner"></div>
+
+    <div class="card">
+      <h2>Needs you now</h2>
+      <div class="row"><span class="l">Drafts to review</span><span class="r mono" id="tDraft">–</span></div>
+      <div class="row"><span class="l">Approved, ready to send</span><span class="r mono" id="tAppr">–</span></div>
+      <div class="row"><span class="l">Sent today</span><span class="r mono" id="tSent">–</span></div>
+      <div class="row"><span class="l">Hot leads waiting</span><span class="r mono" id="tHot">–</span></div>
+    </div>
+
+    <div class="acts">
+      <button class="act primary" id="btnGoInbox">Review drafts</button>
+      <button class="act" id="btnSend">Send approved</button>
+      <button class="act" id="btnTick">Run a full cycle</button>
+    </div>
+
+    <div class="card" style="margin-top:11px">
+      <h2>Fleet</h2>
+      <div id="agentList"></div>
+    </div>
+  </section>
+
+  <!-- ============ INBOX ============ -->
+  <section class="pane" id="pane-inbox">
+    <div id="inboxList"></div>
+  </section>
+
+  <!-- ============ PIPELINE ============ -->
+  <section class="pane" id="pane-pipe">
+    <div class="grid2" style="margin-bottom:11px">
+      <div class="stat"><div class="v mono" id="pTotal">–</div><div class="k">Prospects</div></div>
+      <div class="stat"><div class="v mono" id="pHot">–</div><div class="k">Hot leads</div></div>
+    </div>
+    <div class="card">
+      <h2>By stage</h2>
+      <div id="stageList"></div>
+    </div>
+    <div class="card">
+      <h2>Hot leads</h2>
+      <div id="hotList"></div>
+    </div>
+  </section>
+
+  <!-- ============ MONEY ============ -->
+  <section class="pane" id="pane-money">
+    <div class="card">
+      <h2>Monthly profit</h2>
+      <div class="big mono" id="mProfit">–</div>
+      <div class="bar"><i id="mBar" style="width:0%"></i></div>
+      <div class="barnote" id="mNote">–</div>
+    </div>
+    <div class="grid2">
+      <div class="stat"><div class="v mono" id="mMrr">–</div><div class="k">MRR</div></div>
+      <div class="stat"><div class="v mono" id="mClients">–</div><div class="k">Clients</div></div>
+      <div class="stat"><div class="v mono" id="mArpu">–</div><div class="k">Avg / client</div></div>
+      <div class="stat"><div class="v mono" id="mMargin">–</div><div class="k">Margin</div></div>
+    </div>
+    <div class="card" style="margin-top:11px">
+      <h2>Reports</h2>
+      <div id="reportList"></div>
+    </div>
+  </section>
+</main>
+
+<nav>
+  <button data-p="today" aria-current="true"><span class="ic">&#9673;</span>Today</button>
+  <button data-p="inbox"><span class="ic">&#9993;</span>Inbox<span class="pip" id="pip" hidden>0</span></button>
+  <button data-p="pipe"><span class="ic">&#9776;</span>Pipeline</button>
+  <button data-p="money"><span class="ic">&#9650;</span>Money</button>
+</nav>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+  var S = null, busy = false;
+  var $ = function(id){ return document.getElementById(id); };
+
+  function money(v){ return "$" + Math.round(v).toLocaleString("en-US"); }
+
+  function toast(msg, ms){
+    var t = $("toast");
+    t.textContent = msg; t.classList.add("up");
+    clearTimeout(t._h);
+    t._h = setTimeout(function(){ t.classList.remove("up"); }, ms || 2600);
+  }
+
+  function api(path, body){
+    var opt = { headers: { "Accept": "application/json" }, credentials: "same-origin" };
+    if(body){
+      opt.method = "POST";
+      opt.headers["Content-Type"] = "application/json";
+      opt.body = JSON.stringify(body);
+    }
+    return fetch(path, opt).then(function(r){
+      if(r.status === 401){ location.href = "/app?needauth=1"; throw new Error("auth"); }
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    });
+  }
+
+  // ---------------------------------------------------------------- render
+  function renderToday(){
+    var q = S.queue, p = S.pipeline;
+    $("tDraft").textContent = q.drafted;
+    $("tAppr").textContent = q.approved;
+    $("tSent").textContent = q.sent_today + " / " + q.daily_cap;
+    $("tHot").textContent = p.hot;
+
+    var b = $("todayBanner");
+    if(S.blockers.length){
+      b.innerHTML = '<div class="banner block"><b>Sending is blocked</b>' +
+        'You can review and approve, but nothing will go out until these are fixed ' +
+        'on the laptop.<ul>' +
+        S.blockers.map(function(x){ return "<li>" + esc(x) + "</li>"; }).join("") +
+        '</ul></div>';
+    } else if(q.drafted){
+      b.innerHTML = '<div class="banner ok"><b>' + q.drafted + ' draft' +
+        (q.drafted === 1 ? "" : "s") + ' waiting</b>Read each one before approving — ' +
+        'they go out under your name.</div>';
+    } else {
+      b.innerHTML = '<div class="banner ok"><b>Nothing waiting</b>' +
+        'The fleet will draft more on its next cycle.</div>';
+    }
+
+    $("btnSend").disabled = !q.approved || !S.can_send;
+    $("btnSend").textContent = q.approved
+      ? "Send " + q.approved + " approved" : "Nothing approved to send";
+
+    $("agentList").innerHTML = S.agents.length ? S.agents.map(function(a){
+      return '<div class="row"><span class="l"><span class="dot ' +
+        (a.status === "ok" ? "ok" : "err") + '"></span>' + esc(a.name) +
+        '</span><span class="r mono" style="font-size:12px;color:var(--muted)">' +
+        esc(a.when) + '</span></div>';
+    }).join("") : '<div class="barnote">No runs yet. Tap “Run a full cycle”.</div>';
+  }
+
+  function renderMoney(){
+    var m = S.money;
+    $("mProfit").textContent = money(m.profit) + " ";
+    $("mBar").style.width = Math.max(0, Math.min(100, m.pct)) + "%";
+    $("mNote").textContent = m.pct >= 100
+      ? "Target met — " + money(m.target) + " a month."
+      : Math.round(m.pct) + "% of " + money(m.target) + " · about " +
+        m.more_needed + " more client" + (m.more_needed === 1 ? "" : "s");
+    $("mMrr").textContent = money(m.mrr);
+    $("mClients").textContent = m.clients;
+    $("mArpu").textContent = money(m.arpu);
+    $("mMargin").textContent = m.margin + "%";
+  }
+
+  function renderPipe(){
+    var p = S.pipeline;
+    $("pTotal").textContent = p.total;
+    $("pHot").textContent = p.hot;
+    var keys = Object.keys(p.stages).sort(function(a,b){ return p.stages[b] - p.stages[a]; });
+    $("stageList").innerHTML = keys.length ? keys.map(function(k){
+      return '<div class="stagerow"><span class="s">' + esc(k.replace(/_/g," ")) +
+        '</span><span class="mono">' + p.stages[k] + '</span></div>';
+    }).join("") : '<div class="barnote">Empty. Run a cycle to find prospects.</div>';
+
+    api("/api/prospects?limit=40").then(function(d){
+      var hot = d.items.filter(function(x){ return x.hot; }).slice(0, 12);
+      $("hotList").innerHTML = hot.length ? hot.map(function(x){
+        return '<div class="row"><span class="l">' + esc(x.name) +
+          '<br><span style="font-size:12px;color:var(--muted)">' + esc(x.market) +
+          '</span></span><span class="r mono" style="color:var(--mark)">' +
+          (x.score === null ? "–" : Math.round(x.score)) + '</span></div>';
+      }).join("") : '<div class="barnote">None yet.</div>';
+    }).catch(function(){});
+  }
+
+  function renderInbox(d){
+    var el = $("inboxList");
+    if(!d.items.length){
+      el.innerHTML = '<div class="empty"><div class="ic">&#9993;</div>' +
+        '<p>No drafts waiting.<br>The fleet writes more each cycle.</p></div>';
+      return;
+    }
+    el.innerHTML = d.items.map(function(m){
+      return '<div class="msg" data-id="' + m.id + '">' +
+        '<div class="biz">' + esc(m.business) +
+          (m.step > 1 ? '<span class="badge">follow-up ' + m.step + '</span>' : '') +
+        '</div>' +
+        '<div class="mkt">' + esc(m.market) + (m.email ? " · " + esc(m.email) : "") + '</div>' +
+        (m.evidence ? '<div class="ev">' + esc(m.evidence) + '</div>' : '') +
+        '<div class="subj">' + esc(m.subject) + '</div>' +
+        '<details><summary>Read the full email</summary><pre>' + esc(m.body) + '</pre></details>' +
+        '<div class="pair">' +
+          '<button class="no" data-a="reject">Skip</button>' +
+          '<button class="yes" data-a="approve">Approve</button>' +
+        '</div></div>';
+    }).join("");
+  }
+
+  function esc(s){
+    return String(s === null || s === undefined ? "" : s).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+
+  // ---------------------------------------------------------------- load
+  function load(quiet){
+    var btn = $("btnRefresh");
+    if(!quiet) btn.classList.add("spin");
+    return api("/api/state").then(function(d){
+      S = d;
+      $("hTitle").textContent = d.brand + " Console";
+      $("hSub").textContent = d.money.clients + " client" +
+        (d.money.clients === 1 ? "" : "s") + " · " + money(d.money.mrr) + " MRR";
+      var pip = $("pip");
+      if(d.queue.drafted){ pip.hidden = false; pip.textContent = d.queue.drafted; }
+      else pip.hidden = true;
+      renderToday(); renderMoney(); renderPipe();
+      if($("pane-inbox").classList.contains("on")) loadInbox();
+    }).catch(function(e){
+      if(e.message !== "auth") toast("Could not reach the laptop. Is it awake?", 4000);
+    }).then(function(){ btn.classList.remove("spin"); });
+  }
+
+  function loadInbox(){
+    return api("/api/inbox").then(renderInbox).catch(function(){});
+  }
+
+  function loadReports(){
+    api("/api/reports").then(function(d){
+      $("reportList").innerHTML = d.items.length ? d.items.slice(0,10).map(function(r){
+        return '<div class="row"><span class="l" style="font-size:13px">' + esc(r.name) +
+          '</span><span class="r mono" style="font-size:12px;color:var(--muted)">' +
+          esc(r.when) + '</span></div>';
+      }).join("") : '<div class="barnote">None generated yet.</div>';
+    }).catch(function(){});
+  }
+
+  // ---------------------------------------------------------------- events
+  Array.prototype.forEach.call(document.querySelectorAll("nav button"), function(b){
+    b.addEventListener("click", function(){
+      var p = b.dataset.p;
+      Array.prototype.forEach.call(document.querySelectorAll("nav button"), function(o){
+        o.setAttribute("aria-current", o === b ? "true" : "false");
+      });
+      Array.prototype.forEach.call(document.querySelectorAll(".pane"), function(s){
+        s.classList.toggle("on", s.id === "pane-" + p);
+      });
+      window.scrollTo(0, 0);
+      if(p === "inbox") loadInbox();
+      if(p === "money") loadReports();
+    });
+  });
+
+  $("btnGoInbox").addEventListener("click", function(){
+    document.querySelector('nav button[data-p="inbox"]').click();
+  });
+
+  $("inboxList").addEventListener("click", function(e){
+    var btn = e.target.closest("button[data-a]");
+    if(!btn || busy) return;
+    var card = btn.closest(".msg"), id = card.dataset.id, act = btn.dataset.a;
+    busy = true;
+    card.style.opacity = ".45";
+    api("/api/" + act, { ids: [id] }).then(function(){
+      card.remove();
+      toast(act === "approve" ? "Approved" : "Skipped — won't be contacted");
+      return load(true);
+    }).catch(function(){
+      card.style.opacity = "1";
+      toast("That didn't go through");
+    }).then(function(){ busy = false; });
+  });
+
+  $("btnSend").addEventListener("click", function(){
+    if(busy || !S || !S.queue.approved) return;
+    if(!confirm("Send " + S.queue.approved + " approved email" +
+                (S.queue.approved === 1 ? "" : "s") + " now?")) return;
+    busy = true;
+    var b = this; b.disabled = true; b.textContent = "Sending…";
+    api("/api/send", { limit: 25 }).then(function(r){
+      if(r.blocked) toast(r.reasons[0] || "Blocked", 5000);
+      else toast("Sent " + r.sent + (r.failed ? ", " + r.failed + " failed" : ""), 4000);
+      return load(true);
+    }).catch(function(){ toast("Send failed"); })
+      .then(function(){ busy = false; });
+  });
+
+  $("btnTick").addEventListener("click", function(){
+    if(busy) return;
+    busy = true;
+    var b = this; b.disabled = true; b.textContent = "Running…";
+    toast("Running the fleet — this takes a moment", 6000);
+    api("/api/tick", {}).then(function(r){
+      toast(r.ran + " agent" + (r.ran === 1 ? "" : "s") + " ran", 3500);
+      return load(true);
+    }).catch(function(){ toast("Cycle failed"); })
+      .then(function(){
+        busy = false; b.disabled = false; b.textContent = "Run a full cycle";
+      });
+  });
+
+  $("btnRefresh").addEventListener("click", function(){ load(); });
+
+  // Refresh when the app comes back to the foreground — a phone console is
+  // opened, glanced at, and backgrounded, so stale numbers are the norm.
+  document.addEventListener("visibilitychange", function(){
+    if(!document.hidden) load(true);
+  });
+
+  load();
+  setInterval(function(){ if(!document.hidden && !busy) load(true); }, 60000);
+
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("/sw.js").catch(function(){});
+  }
+})();
+</script>
+</body>
+</html>
