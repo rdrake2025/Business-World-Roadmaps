@@ -19,7 +19,11 @@ import hashlib
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 
-PRODID = "-//AnswerRank//Operator Schedule//EN"
+DEFAULT_BRAND = "AnswerRank"
+
+
+def _prodid(brand: str) -> str:
+    return f"-//{brand}//Operator Schedule//EN"
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +76,7 @@ class Event:
     description: str = ""
     rrule: str = ""
     alarm_minutes: int = 10
-    categories: str = "AnswerRank"
+    categories: str = DEFAULT_BRAND
 
     def to_ics(self, stamp: str) -> list[str]:
         end = self.start + timedelta(minutes=self.minutes)
@@ -200,7 +204,8 @@ needs the year."""
 
 
 def recurring_events(start: date, ops_from: date | None = None,
-                     deep_from: date | None = None) -> list[Event]:
+                     deep_from: date | None = None,
+                     brand: str = DEFAULT_BRAND) -> list[Event]:
     """The permanent weekly rhythm.
 
     ``ops_from`` is when daily operations become meaningful (first send) and
@@ -218,37 +223,37 @@ def recurring_events(start: date, ops_from: date | None = None,
 
     return [
         Event(
-            "AnswerRank: Morning ops",
+            f"{brand}: Morning ops",
             datetime.combine(monday, time(6, 30)), 20,
-            MORNING_OPS, "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR", alarm_minutes=5,
+            MORNING_OPS, "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR", categories=brand, alarm_minutes=5,
         ),
         Event(
-            "AnswerRank: Reply check",
+            f"{brand}: Reply check",
             datetime.combine(monday, time(12, 15)), 10,
-            LUNCH_CHECK, "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR", alarm_minutes=5,
+            LUNCH_CHECK, "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR", categories=brand, alarm_minutes=5,
         ),
         Event(
-            "AnswerRank: Sales calls",
+            f"{brand}: Sales calls",
             datetime.combine(monday + timedelta(days=1), time(17, 30)), 90,
-            SALES_WINDOW, "FREQ=WEEKLY;BYDAY=TU,TH", alarm_minutes=15,
+            SALES_WINDOW, "FREQ=WEEKLY;BYDAY=TU,TH", categories=brand, alarm_minutes=15,
         ),
         Event(
-            "AnswerRank: Weekly deep work",
+            f"{brand}: Weekly deep work",
             datetime.combine(saturday, time(9, 0)), 120,
-            DEEP_WORK, "FREQ=WEEKLY;BYDAY=SA", alarm_minutes=30,
+            DEEP_WORK, "FREQ=WEEKLY;BYDAY=SA", categories=brand, alarm_minutes=30,
         ),
         Event(
-            "AnswerRank: Rest day - no business work",
+            f"{brand}: Rest day - no business work",
             datetime.combine(sunday, time(10, 0)), 30,
-            REST, "FREQ=WEEKLY;BYDAY=SU", alarm_minutes=0,
+            REST, "FREQ=WEEKLY;BYDAY=SU", categories=brand, alarm_minutes=0,
         ),
         Event(
             # First Saturday, not the 1st: BYMONTHDAY=1 lands on the rest day
             # one month in seven, and a block scheduled on a rest day is a
             # block that gets skipped.
-            "AnswerRank: Monthly close + tax reserve",
+            f"{brand}: Monthly close + tax reserve",
             datetime.combine(first_saturday, time(11, 15)), 45,
-            MONTHLY_CLOSE, "FREQ=MONTHLY;BYDAY=1SA", alarm_minutes=60,
+            MONTHLY_CLOSE, "FREQ=MONTHLY;BYDAY=1SA", categories=brand, alarm_minutes=60,
         ),
     ]
 
@@ -438,7 +443,7 @@ SATURDAY_SLOTS = (time(9, 0), time(13, 0))
 WEEKDAY_EVENING = time(18, 0)
 
 
-def launch_events(start: date) -> list[Event]:
+def launch_events(start: date, brand: str = DEFAULT_BRAND) -> list[Event]:
     """Assign real dates sequentially so nothing collides or runs out of order.
 
     Rules: long blocks (>=90 min) need a Saturday; short ones take a weekday
@@ -479,11 +484,12 @@ def launch_events(start: date) -> list[Event]:
         used.add((placed.date(), placed.time()))
         cursor = placed.date()
         events.append(Event(summary, placed, minutes, desc,
-                            alarm_minutes=30, categories="AnswerRank Launch"))
+                            alarm_minutes=30, categories=f"{brand} Launch"))
     return events
 
 
-def warmup_events(dns_done: date, first_send: date) -> list[Event]:
+def warmup_events(dns_done: date, first_send: date,
+                  brand: str = DEFAULT_BRAND) -> list[Event]:
     """Daily warmup reminders, from the day after DNS until the first send.
 
     Warming a domain before SPF/DKIM/DMARC exist trains the wrong reputation,
@@ -491,37 +497,38 @@ def warmup_events(dns_done: date, first_send: date) -> list[Event]:
     """
     begin = dns_done + timedelta(days=1)
     return [Event(
-        "AnswerRank: Email warmup (10 min)",
+        f"{brand}: Email warmup (10 min)",
         datetime.combine(begin, time(19, 30)), 10, WARMUP,
         f"FREQ=DAILY;UNTIL={_dt(first_send, time(19, 30))}",
-        alarm_minutes=5, categories="AnswerRank Launch",
+        alarm_minutes=5, categories=f"{brand} Launch",
     )]
 
 
-def build_calendar(start: date, include_launch: bool = True) -> str:
+def build_calendar(start: date, include_launch: bool = True,
+                   brand: str = DEFAULT_BRAND) -> str:
     stamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
-        f"PRODID:{PRODID}",
+        f"PRODID:{_prodid(brand)}",
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
-        _fold("X-WR-CALNAME:AnswerRank - Business Schedule"),
+        _fold(f"X-WR-CALNAME:{brand} - Business Schedule"),
         _fold("X-WR-CALDESC:Daily operating rhythm and 30-day launch plan."),
     ]
     if include_launch:
-        launch = launch_events(start)
+        launch = launch_events(start, brand)
         first_send = next(e.start.date() for e in launch if "FIRST SEND" in e.summary)
         dns_done = next(e.start.date() for e in launch if "DNS" in e.summary)
         last_launch = max(e.start.date() for e in launch)
         events = (
             launch
-            + warmup_events(dns_done, first_send)
+            + warmup_events(dns_done, first_send, brand)
             + recurring_events(start, ops_from=first_send,
-                               deep_from=last_launch + timedelta(days=1))
+                               deep_from=last_launch + timedelta(days=1), brand=brand)
         )
     else:
-        events = list(recurring_events(start))
+        events = list(recurring_events(start, brand=brand))
     for ev in events:
         lines += ev.to_ics(stamp)
     lines.append("END:VCALENDAR")

@@ -50,7 +50,7 @@ def run(settings: Settings, config_path: str = "answerrank.yml") -> int:
     print("\n  Six questions. You can change any of it later by editing")
     print("  answerrank.yml, and nothing here costs money.")
 
-    brand = ask("Business name", "AnswerRank",
+    brand = ask("Business name", settings.brand,
                 why="What clients will see. Keep it short.")
 
     legal = ask("Legal entity name", f"{brand} LLC",
