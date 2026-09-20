@@ -135,6 +135,99 @@ class Api:
                                                     timezone.utc).isoformat()),
         } for f in files[:30]]}
 
+    # ------------------------------------------------------------ telemetry
+
+    def telemetry(self) -> dict[str, Any]:
+        """Execution traces for the ops panel.
+
+        The research on agent observability is consistent: what matters is not
+        a prettier number but the ability to see what an agent actually did —
+        its inputs, its duration, its decision, its failures — and to spot
+        drift before it costs you. So this returns real traces, not a summary:
+        every recorded run, with wall-clock duration and the agent's own
+        account of what it processed.
+        """
+        from answerrank.orchestrator import AGENT_ORDER
+
+        runs = self.store.recent_runs(80)
+        now = datetime.now(timezone.utc)
+
+        def dur(r) -> float | None:
+            if not (r["started_at"] and r["finished_at"]):
+                return None
+            try:
+                a = datetime.fromisoformat(r["started_at"])
+                b = datetime.fromisoformat(r["finished_at"])
+            except ValueError:
+                return None
+            return round(max(0.0, (b - a).total_seconds()), 2)
+
+        # Per-agent rollup, in the order the fleet actually executes them.
+        specs = {cls.name: cls for cls in AGENT_ORDER}
+        agents: list[dict[str, Any]] = []
+        for name, cls in specs.items():
+            mine = [r for r in runs if r["agent"] == name]
+            last = mine[0] if mine else None
+            oks = sum(1 for r in mine if r["status"] == "ok")
+            since = None
+            if last and last["started_at"]:
+                try:
+                    started = datetime.fromisoformat(last["started_at"])
+                    if started.tzinfo is None:
+                        started = started.replace(tzinfo=timezone.utc)
+                    since = round((now - started).total_seconds())
+                except ValueError:
+                    since = None
+            agents.append({
+                "name": name,
+                "role": cls.description,
+                "interval": cls.interval,
+                "status": last["status"] if last else "idle",
+                "summary": (last["summary"] or last["error"] or "") if last else "never run",
+                "items": last["items_processed"] if last else 0,
+                "duration": dur(last) if last else None,
+                "seconds_since": since,
+                "due_in": (max(0, cls.interval - since) if since is not None else 0),
+                "runs": len(mine),
+                "reliability": round(100 * oks / len(mine)) if mine else None,
+                # Sparkline of items processed, oldest to newest.
+                "history": [r["items_processed"] or 0 for r in reversed(mine[:14])],
+            })
+
+        feed = [{
+            "agent": r["agent"],
+            "status": r["status"],
+            "text": (r["summary"] or r["error"] or "")[:160],
+            "at": r["started_at"][11:19] if r["started_at"] else "",
+            "duration": dur(r),
+            "items": r["items_processed"] or 0,
+        } for r in runs[:40]]
+
+        # Throughput and spend, straight off the ledger and the run records.
+        today = now.date().isoformat()
+        todays = [r for r in runs if (r["started_at"] or "").startswith(today)]
+        costs = self.store.cost_breakdown(30)
+
+        return {
+            "agents": agents,
+            "feed": feed,
+            "throughput": {
+                "runs_today": len(todays),
+                "items_today": sum(r["items_processed"] or 0 for r in todays),
+                "errors_today": sum(1 for r in todays if r["status"] == "error"),
+                "avg_duration": round(
+                    sum(d for d in (dur(r) for r in runs[:30]) if d is not None)
+                    / max(1, sum(1 for r in runs[:30] if dur(r) is not None)), 2),
+            },
+            "spend": {
+                "api_30d": costs.get("api", 0.0),
+                "total_30d": round(sum(costs.values()), 2),
+                "breakdown": costs,
+            },
+            "pipeline": self.store.count_prospects_by_stage(),
+            "clock": now.isoformat(timespec="seconds"),
+        }
+
     # ------------------------------------------------------------ writes
 
     def approve(self, ids: list[str]) -> dict[str, Any]:

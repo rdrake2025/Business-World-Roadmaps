@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#070C0D">
+<title>{{ brand }} — Operations</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  /* A deliberately single-theme surface: this is a command deck, and it
+     commits to one visual world. Every colour is painted explicitly so it
+     never borrows the host theme. */
+  :root{
+    color-scheme:dark;
+    --void:#070C0D; --panel:#0C1315; --raised:#111A1C; --sunk:#050809;
+    --line:#16262A; --line-hot:#1E3A40;
+    --ink:#DCEEF1; --ink-2:#7E9DA3; --ink-3:#4A6469;
+    --cy:#22C8E0; --cy-dim:#22C8E033; --cy-glow:#22C8E01F;
+    --ok:#37D67A; --warn:#F5A524; --bad:#F05252;
+    --hud:'Chakra Petch',ui-sans-serif,system-ui,sans-serif;
+    --data:'IBM Plex Mono',ui-monospace,SFMono-Regular,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%}
+  body{
+    background:var(--void);color:var(--ink);font-family:var(--data);font-size:13px;
+    line-height:1.5;-webkit-font-smoothing:antialiased;
+    padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0);
+    background-image:
+      linear-gradient(var(--line) 1px,transparent 1px),
+      linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:44px 44px;
+    background-position:-1px -1px;
+  }
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
+    background:radial-gradient(ellipse at 50% 0%,transparent 40%,rgba(3,6,7,.82) 100%);
+  }
+  .deck{position:relative;z-index:2;max-width:1440px;margin:0 auto;
+    padding:0 16px 40px}
+
+  /* ---------- frame ---------- */
+  .panel{position:relative;background:linear-gradient(180deg,var(--panel),var(--sunk));
+    border:1px solid var(--line-hot);padding:15px 16px}
+  .panel::before,.panel::after{content:"";position:absolute;width:9px;height:9px;
+    border:1px solid var(--cy);opacity:.75}
+  .panel::before{top:-1px;left:-1px;border-right:0;border-bottom:0}
+  .panel::after{bottom:-1px;right:-1px;border-left:0;border-top:0}
+  .ptitle{font-family:var(--hud);font-size:11px;font-weight:600;letter-spacing:.2em;
+    text-transform:uppercase;color:var(--cy);margin:0 0 13px;display:flex;
+    align-items:center;gap:9px}
+  .ptitle::after{content:"";flex:1;height:1px;
+    background:linear-gradient(90deg,var(--cy-dim),transparent)}
+
+  /* ---------- header ---------- */
+  header{display:flex;justify-content:space-between;align-items:center;gap:16px;
+    padding:18px 0 14px;border-bottom:1px solid var(--line-hot);margin-bottom:16px;
+    flex-wrap:wrap}
+  .mark{font-family:var(--hud);font-size:21px;font-weight:700;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--ink);display:flex;align-items:center;gap:11px}
+  .mark i{width:9px;height:9px;background:var(--ok);border-radius:50%;
+    box-shadow:0 0 11px var(--ok);animation:beat 2.4s ease-in-out infinite}
+  @keyframes beat{0%,100%{opacity:1}50%{opacity:.32}}
+  .hstats{display:flex;gap:26px;font-size:11px;letter-spacing:.09em;flex-wrap:wrap}
+  .hstats b{display:block;font-size:17px;font-weight:600;color:var(--cy);
+    letter-spacing:.02em;margin-top:2px}
+  .hstats span{color:var(--ink-3);text-transform:uppercase}
+
+  /* ---------- layout ---------- */
+  .grid{display:grid;grid-template-columns:1.55fr 1fr;gap:12px;align-items:start}
+  @media(max-width:980px){.grid{grid-template-columns:1fr}}
+
+  /* ---------- agents ---------- */
+  .fleet{display:grid;gap:9px}
+  .unit{position:relative;background:var(--raised);border:1px solid var(--line);
+    border-left:2px solid var(--ink-3);padding:12px 14px;
+    display:grid;grid-template-columns:1fr auto;gap:10px;align-items:start;
+    transition:border-color .3s,background .3s}
+  .unit.ok{border-left-color:var(--ok)}
+  .unit.error{border-left-color:var(--bad);background:#160C0D}
+  .unit.idle{border-left-color:var(--ink-3);opacity:.62}
+  .unit.live{border-left-color:var(--cy);background:#0D1B1E}
+  .unit.live::after{content:"";position:absolute;inset:0;pointer-events:none;
+    background:linear-gradient(90deg,transparent,var(--cy-glow),transparent);
+    animation:sweep 2.2s linear infinite}
+  @keyframes sweep{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+  .uname{font-family:var(--hud);font-size:14px;font-weight:600;letter-spacing:.13em;
+    text-transform:uppercase;color:var(--ink);display:flex;align-items:center;gap:9px}
+  .uname em{font-style:normal;font-size:9.5px;letter-spacing:.11em;padding:1px 6px;
+    border:1px solid currentColor;border-radius:2px;font-family:var(--data)}
+  .uname em.ok{color:var(--ok)} .uname em.error{color:var(--bad)}
+  .uname em.idle{color:var(--ink-3)} .uname em.live{color:var(--cy)}
+  .urole{font-size:11px;color:var(--ink-3);margin-top:3px;line-height:1.45}
+  .usum{font-size:11.5px;color:var(--ink-2);margin-top:8px;padding-top:8px;
+    border-top:1px dashed var(--line-hot);line-height:1.5;overflow-wrap:anywhere}
+  .umeta{text-align:right;font-size:10.5px;color:var(--ink-3);white-space:nowrap;
+    display:grid;gap:5px;justify-items:end}
+  .umeta b{color:var(--cy);font-size:13px;font-weight:600}
+  .spark{display:flex;align-items:flex-end;gap:2px;height:22px}
+  .spark i{width:3px;background:var(--cy);opacity:.55;min-height:1px}
+  .spark i:last-child{opacity:1}
+  .rel{width:58px;height:3px;background:var(--line-hot);overflow:hidden}
+  .rel i{display:block;height:100%;background:var(--ok)}
+  @media(max-width:560px){
+    .unit{grid-template-columns:1fr}
+    .umeta{text-align:left;justify-items:start;flex-direction:row}
+  }
+
+  /* ---------- feed ---------- */
+  .feed{max-height:430px;overflow-y:auto;display:grid;gap:0;
+    scrollbar-width:thin;scrollbar-color:var(--line-hot) transparent}
+  .ev{display:grid;grid-template-columns:58px 98px 1fr;gap:9px;padding:7px 0;
+    border-bottom:1px solid var(--line);font-size:11px;align-items:baseline}
+  .ev:last-child{border-bottom:0}
+  .ev .t{color:var(--ink-3)}
+  .ev .a{font-family:var(--hud);font-weight:600;letter-spacing:.08em;
+    text-transform:uppercase;font-size:10.5px}
+  .ev.ok .a{color:var(--cy)} .ev.error .a{color:var(--bad)}
+  .ev .m{color:var(--ink-2);overflow-wrap:anywhere;line-height:1.45}
+  @media(max-width:560px){
+    .ev{grid-template-columns:52px 1fr}
+    .ev .m{grid-column:1/-1;padding-left:52px}
+  }
+
+  /* ---------- readouts ---------- */
+  .readout{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line)}
+  .ro{background:var(--raised);padding:11px 12px}
+  .ro .v{font-family:var(--hud);font-size:22px;font-weight:600;color:var(--cy);
+    line-height:1;letter-spacing:.02em}
+  .ro .v.warn{color:var(--warn)} .ro .v.bad{color:var(--bad)}
+  .ro .k{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--ink-3);margin-top:6px}
+
+  .flow{display:grid;gap:5px}
+  .fl{display:grid;grid-template-columns:96px 1fr 38px;gap:9px;align-items:center;
+    font-size:11px}
+  .fl .s{color:var(--ink-2);text-transform:capitalize;letter-spacing:.04em}
+  .fl .track{height:6px;background:var(--sunk);border:1px solid var(--line)}
+  .fl .track i{display:block;height:100%;background:var(--cy);opacity:.8}
+  .fl .n{text-align:right;color:var(--cy);font-weight:600}
+
+  footer{margin-top:16px;padding-top:12px;border-top:1px solid var(--line);
+    display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;
+    font-size:10.5px;color:var(--ink-3);letter-spacing:.08em}
+  footer a{color:var(--cy);text-decoration:none}
+  .stack{display:grid;gap:12px}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="deck">
+
+  <header>
+    <div class="mark"><i id="pulse"></i>{{ brand }} <span style="color:var(--ink-3);font-size:12px;letter-spacing:.2em">OPS</span></div>
+    <div class="hstats">
+      <div><span>Uplink</span><b id="hClock">--:--:--</b></div>
+      <div><span>Runs today</span><b id="hRuns">--</b></div>
+      <div><span>Processed</span><b id="hItems">--</b></div>
+      <div><span>Faults</span><b id="hErr">--</b></div>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="stack">
+      <section class="panel">
+        <h2 class="ptitle">Agent fleet</h2>
+        <div class="fleet" id="fleet"></div>
+      </section>
+    </div>
+
+    <div class="stack">
+      <section class="panel">
+        <h2 class="ptitle">Telemetry</h2>
+        <div class="readout">
+          <div class="ro"><div class="v" id="tApi">--</div><div class="k">API spend 30d</div></div>
+          <div class="ro"><div class="v" id="tCost">--</div><div class="k">Total cost 30d</div></div>
+          <div class="ro"><div class="v" id="tDur">--</div><div class="k">Avg run time</div></div>
+          <div class="ro"><div class="v" id="tRel">--</div><div class="k">Fleet reliability</div></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="ptitle">Pipeline</h2>
+        <div class="flow" id="flow"></div>
+      </section>
+
+      <section class="panel">
+        <h2 class="ptitle">Activity stream</h2>
+        <div class="feed" id="feed"></div>
+      </section>
+    </div>
+  </div>
+
+  <footer>
+    <span>LOCAL // <span id="fHost">--</span> // POLL 3s</span>
+    <span><a href="/app">CONSOLE →</a></span>
+  </footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var $ = function(id){ return document.getElementById(id); };
+
+  function esc(s){
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+  function ago(sec){
+    if(sec == null) return "--";
+    if(sec < 60) return sec + "s";
+    if(sec < 3600) return Math.floor(sec/60) + "m";
+    if(sec < 86400) return Math.floor(sec/3600) + "h";
+    return Math.floor(sec/86400) + "d";
+  }
+  function money(v){ return "$" + (v < 10 ? v.toFixed(2) : Math.round(v).toLocaleString("en-US")); }
+
+  function spark(vals){
+    if(!vals || !vals.length) return "";
+    var max = Math.max.apply(null, vals) || 1;
+    return '<div class="spark">' + vals.map(function(v){
+      return '<i style="height:' + Math.max(1, Math.round((v/max) * 22)) + 'px"></i>';
+    }).join("") + '</div>';
+  }
+
+  function renderFleet(agents){
+    $("fleet").innerHTML = agents.map(function(a){
+      // "live" = ran within the last 45s; the sweep marks genuine recent work,
+      // never decoration.
+      var state = a.status === "error" ? "error"
+                : (a.seconds_since != null && a.seconds_since < 45) ? "live"
+                : a.status === "ok" ? "ok" : "idle";
+      var label = state === "live" ? "ACTIVE"
+                : state === "error" ? "FAULT"
+                : state === "ok" ? "READY" : "IDLE";
+      return '<article class="unit ' + state + '">' +
+        '<div>' +
+          '<div class="uname">' + esc(a.name) +
+            '<em class="' + state + '">' + label + '</em></div>' +
+          '<div class="urole">' + esc(a.role) + '</div>' +
+          '<div class="usum">' + esc(a.summary || "no activity recorded") + '</div>' +
+        '</div>' +
+        '<div class="umeta">' +
+          '<div><b>' + (a.items || 0) + '</b> processed</div>' +
+          '<div>ran ' + ago(a.seconds_since) + ' ago' +
+            (a.duration != null ? ' · ' + a.duration + 's' : '') + '</div>' +
+          '<div>next in ' + ago(a.due_in) + '</div>' +
+          spark(a.history) +
+          (a.reliability != null
+            ? '<div class="rel"><i style="width:' + a.reliability + '%"></i></div>' : '') +
+        '</div>' +
+      '</article>';
+    }).join("");
+  }
+
+  function renderFeed(feed){
+    $("feed").innerHTML = feed.length ? feed.map(function(e){
+      return '<div class="ev ' + (e.status === "error" ? "error" : "ok") + '">' +
+        '<span class="t">' + esc(e.at) + '</span>' +
+        '<span class="a">' + esc(e.agent) + '</span>' +
+        '<span class="m">' + esc(e.text || "—") + '</span></div>';
+    }).join("") : '<div class="ev ok"><span class="t">--</span>' +
+      '<span class="a">SYS</span><span class="m">No activity yet. ' +
+      'Run a cycle from the console.</span></div>';
+  }
+
+  function renderFlow(stages){
+    var keys = Object.keys(stages).sort(function(a,b){ return stages[b]-stages[a]; });
+    var max = Math.max.apply(null, keys.map(function(k){ return stages[k]; }).concat([1]));
+    $("flow").innerHTML = keys.length ? keys.map(function(k){
+      return '<div class="fl"><span class="s">' + esc(k.replace(/_/g," ")) + '</span>' +
+        '<span class="track"><i style="width:' +
+        Math.round((stages[k]/max)*100) + '%"></i></span>' +
+        '<span class="n">' + stages[k] + '</span></div>';
+    }).join("") : '<div class="fl"><span class="s">empty</span>' +
+      '<span class="track"></span><span class="n">0</span></div>';
+  }
+
+  function load(){
+    fetch("/api/telemetry", { credentials: "same-origin" })
+      .then(function(r){
+        if(r.status === 401){ location.href = "/app"; throw new Error("auth"); }
+        return r.json();
+      })
+      .then(function(d){
+        renderFleet(d.agents);
+        renderFeed(d.feed);
+        renderFlow(d.pipeline);
+
+        $("hRuns").textContent  = d.throughput.runs_today;
+        $("hItems").textContent = d.throughput.items_today;
+        var err = $("hErr");
+        err.textContent = d.throughput.errors_today;
+        err.style.color = d.throughput.errors_today ? "var(--bad)" : "var(--cy)";
+
+        $("tApi").textContent  = money(d.spend.api_30d);
+        $("tCost").textContent = money(d.spend.total_30d);
+        $("tDur").textContent  = d.throughput.avg_duration + "s";
+
+        var rels = d.agents.map(function(a){ return a.reliability; })
+                           .filter(function(v){ return v != null; });
+        var rel = rels.length
+          ? Math.round(rels.reduce(function(a,b){ return a+b; }, 0) / rels.length) : null;
+        var re = $("tRel");
+        re.textContent = rel == null ? "--" : rel + "%";
+        re.className = "v" + (rel == null ? "" : rel >= 95 ? "" : rel >= 80 ? " warn" : " bad");
+
+        $("pulse").style.background = d.throughput.errors_today ? "var(--bad)" : "var(--ok)";
+        $("pulse").style.boxShadow  = "0 0 11px " +
+          (d.throughput.errors_today ? "var(--bad)" : "var(--ok)");
+      })
+      .catch(function(){});
+  }
+
+  function clock(){
+    $("hClock").textContent = new Date().toTimeString().slice(0, 8);
+  }
+
+  $("fHost").textContent = location.host;
+  clock(); setInterval(clock, 1000);
+  load();  setInterval(function(){ if(!document.hidden) load(); }, 3000);
+  document.addEventListener("visibilitychange", function(){ if(!document.hidden) load(); });
+})();
+</script>
+</body>
+</html>

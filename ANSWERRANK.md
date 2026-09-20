@@ -68,6 +68,16 @@ The fleet runs on your laptop; you manage it from your pocket.
 Open that link once on a phone on the same Wi-Fi. It stays signed in, and
 "Add to Home Screen" makes it open like a native app.
 
+### Two surfaces
+
+**`/app`** — the console you operate: approve drafts, send, watch the number.
+
+**`/ops`** — a live command deck showing what every agent is actually doing:
+execution traces, durations, reliability, spend, and a streaming activity log.
+Built on the principle that agent observability is about seeing real decisions
+and real failures, not a prettier summary — so every line on it is a recorded
+run, never decoration.
+
 | Tab | What it's for |
 | --- | --- |
 | **Today** | What needs you now, fleet health, and the three actions |
