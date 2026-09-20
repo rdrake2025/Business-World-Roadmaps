@@ -17,8 +17,9 @@ Four factors, weighted by how much each actually predicts a close.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
-from . import knowledge
+from . import knowledge, playbook
 
 # Metros large enough to sustain the query volume the revenue model assumes,
 # without the competitive density of a top-5 city.
@@ -72,7 +73,7 @@ def score_fit(business, visibility_score: float | None = None,
         points += 8
         blockers.append(
             f"At ${monthly_price:,.0f}/mo the economics are hard to defend for "
-            f"{v.label}s. Price lower or skip.")
+            f"{knowledge.plural(v.label)}. Price lower or skip.")
 
     # --- 2. Do they look like they already spend on marketing? (25%) ---
     domain = business.domain
@@ -119,14 +120,65 @@ def score_fit(business, visibility_score: float | None = None,
 
 
 def priority(business, visibility_score: float | None, competitor_gap: float | None,
-             monthly_price: float = 997.0) -> float:
-    """Ordering key for the outreach queue: fit first, then pain.
+             monthly_price: float = 997.0, month: int | None = None) -> float:
+    """Ordering key for the outreach queue: fit, qualification, then pain.
 
     A perfect-fit business with a moderate gap beats a poor-fit business with
     a catastrophic one, because the second will not buy at any level of pain.
+    BANT sits between the two because it captures the thing fit alone misses —
+    a well-suited business three months from its peak season is reachable in a
+    way the same business mid-season is not.
     """
     fit = score_fit(business, visibility_score, monthly_price)
     if not fit.worth_pitching:
         return 0.0
+    this_month = month or datetime.now(timezone.utc).month
+    b = playbook.bant(business, visibility_score, competitor_gap,
+                      monthly_price, this_month)
     pain = min(100.0, (competitor_gap or 0.0))
-    return round(fit.score * 0.7 + pain * 0.3, 1)
+    return round(fit.score * 0.50 + b.score * 0.30 + pain * 0.20, 1)
+
+
+def brief(business, visibility_score: float | None = None,
+          competitor_gap: float | None = None, monthly_price: float = 997.0,
+          month: int | None = None) -> dict[str, object]:
+    """Everything known about one prospect, in the order a seller needs it.
+
+    One call produces what previously took four: whether they fit, whether
+    they qualify, what price their trade actually defends, what they will
+    object to, and what to ask. This is what the console shows and what the
+    Concierge reasons from.
+    """
+    this_month = month or datetime.now(timezone.utc).month
+    fit = score_fit(business, visibility_score, monthly_price)
+    b = playbook.bant(business, visibility_score, competitor_gap,
+                      monthly_price, this_month)
+    rec = knowledge.recommended_price(business.vertical)
+    v = knowledge.get(business.vertical)
+
+    return {
+        "business": business.name,
+        "vertical": business.vertical,
+        "trade": v.label,
+        "fit_score": fit.score,
+        "tier": fit.tier,
+        "worth_pitching": fit.worth_pitching,
+        "reasons": fit.reasons,
+        "blockers": fit.blockers,
+        "bant_score": b.score,
+        "bant_verdict": b.verdict,
+        "bant": {"budget": b.budget, "authority": b.authority,
+                 "need": b.need, "timeline": b.timeline},
+        "bant_evidence": b.evidence,
+        "next_question": b.next_question,
+        "quoted_price": monthly_price,
+        "recommended_price": rec["price"],
+        "price_note": rec["line"],
+        "priority": priority(business, visibility_score, competitor_gap,
+                             monthly_price, this_month),
+        "seasonality": knowledge.seasonal_note(business.vertical, this_month),
+        "objections": playbook.objection_brief(business.vertical, monthly_price),
+        "discovery": [q.replace("{city}", business.city or "your area")
+                      for q in playbook.discovery_questions(business.vertical)],
+        "decision_maker": v.decision_maker,
+    }

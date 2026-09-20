@@ -25,7 +25,7 @@ from .budget import (
 from .agents.reporter import render_report
 from .audit import estimate_cost, run_audit
 from .config import SETTINGS, Settings, load_settings
-from .mailer import Mailer, check_dns_readiness, throttle
+from .mailer import check_dns_readiness
 from .models import Business, Client, LedgerEntry, Prospect, now_iso
 from .orchestrator import Orchestrator, build_fleet, setup_logging
 from .schedule import build_calendar
@@ -217,69 +217,36 @@ def cmd_approve(args, settings: Settings) -> int:
 
 
 def cmd_send(args, settings: Settings) -> int:
-    from .agents.outreach import OutreachAgent
+    """Deliver approved messages. All the guard rails live in `sending`."""
+    from .sending import send_batch
 
     store = _store(settings)
-    agent = OutreachAgent(store, settings)
-
-    problems = agent.preflight()
-    domain = settings.from_email.split("@")[-1]
+    extra = []
     if not args.skip_dns:
-        problems += check_dns_readiness(domain)
-    if problems:
+        extra = check_dns_readiness(settings.from_email.split("@")[-1])
+
+    result = send_batch(
+        store, settings, limit=args.limit, dry_run=args.dry_run,
+        throttle_seconds=1 if args.fast else None,
+        extra_checks=extra, on_event=print,
+    )
+
+    if result["blocked"]:
         _hr("SENDING BLOCKED")
-        for p in problems:
-            print(f"  ✗ {p}")
+        for reason in result["reasons"]:
+            print(f"  \u2717 {reason}")
         print("\n  Fix these first. Sending from an unauthenticated domain gets it")
         print("  filtered permanently, and a burned domain cannot be recovered.")
         return 1
 
-    mailer = Mailer(settings)
-    pol = settings.outreach
-    remaining = pol.max_emails_total_per_day - store.sends_today()
-    if remaining <= 0:
-        print(f"Daily cap reached ({pol.max_emails_total_per_day}). Try tomorrow.")
+    if result["reasons"]:
+        print(result["reasons"][0])
         return 0
 
-    approved = store.get_messages("approved", min(args.limit, remaining))
-    if not approved:
-        print("No approved messages. Run `approve` first.")
-        return 0
-
-    by_id = {p.id: p for p in store.get_prospects(limit=10_000)}
-    sent = failed = 0
-    for m in approved:
-        prospect = by_id.get(m.prospect_id)
-        if not prospect or not prospect.business.email:
-            continue
-        if store.is_suppressed(prospect.business.email):
-            m.status = "suppressed"
-            store.save_message(m)
-            continue
-
-        if args.dry_run:
-            print(f"  [dry-run] would send to {prospect.business.email}: {m.subject}")
-            sent += 1
-            continue
-
-        ok, detail = mailer.send(prospect.business.email, m.subject, m.body)
-        if ok:
-            m.status, m.sent_at = "sent", now_iso()
-            prospect.touches += 1
-            prospect.last_touch_at = now_iso()
-            prospect.stage = "contacted" if m.sequence_step == 1 else "following_up"
-            store.upsert_prospect(prospect)
-            sent += 1
-        else:
-            m.status = "bounced" if "bounce" in detail else "drafted"
-            if "bounce" in detail:
-                store.suppress(prospect.business.email, detail)
-            failed += 1
-            print(f"  ✗ {prospect.business.email}: {detail}")
-        store.save_message(m)
-        throttle(pol.min_seconds_between_sends if not args.fast else 1)
-
-    print(f"\nSent {sent}, failed {failed}. Daily total now {store.sends_today()}/{pol.max_emails_total_per_day}.")
+    for err in result["errors"]:
+        print(f"  \u2717 {err}")
+    print(f"\nSent {result['sent']}, failed {result['failed']}. "
+          f"Daily total now {result['sends_today']}/{result['daily_cap']}.")
     return 0
 
 
@@ -601,19 +568,17 @@ def cmd_web(args, settings: Settings) -> int:
     return 0
 
 
-def _plural(label: str) -> str:
-    """"agency" -> "agencies", not "agencys"."""
-    if label.endswith("y") and label[-2:-1] not in "aeiou":
-        return label[:-1] + "ies"
-    if label.endswith(("s", "x", "ch", "sh")):
-        return label + "es"
-    return label + "s"
+#: One pluraliser for the whole system, so the CLI and the outreach copy
+#: can never disagree about what a garage door company is called in the plural.
+_plural = knowledge.plural
 
 
-def _wrap(text: str, width: int = 66, indent: str = "  ") -> str:
+def _wrap(text: str, width: int = 66, indent: str = "  ", hang: bool = False) -> str:
+    """Wrap for a terminal. ``hang`` aligns continuations under a bullet."""
     import textwrap
+    following = indent + ("  " if hang else "")
     return "\n".join(textwrap.wrap(text, width=width,
-                                   initial_indent=indent, subsequent_indent=indent))
+                                   initial_indent=indent, subsequent_indent=following))
 
 
 def cmd_verticals(args, settings: Settings) -> int:
@@ -642,8 +607,19 @@ def cmd_verticals(args, settings: Settings) -> int:
     weak = [r for r in rows if r["verdict"] == "weak"]
     if weak:
         names = ", ".join(_plural(knowledge.get(str(r["vertical"])).label) for r in weak)
-        print(_wrap(f"Avoid at this price: {names}. Price lower, or spend the "
-                    f"outreach where the maths works."))
+        print(_wrap(f"Not defensible at ${price:,.0f}: {names}. That is a pricing "
+                    f"problem, not a market problem \u2014 see the tier below."))
+
+    _hr("WHERE EACH TRADE SHOULD BE PRICED")
+    print(_wrap("A trade that fails at one tier is not a trade to drop. It is a "
+                "trade to quote differently, and this is the highest tier each "
+                "one's own economics defend."))
+    print()
+    print(f"  {'Trade':<26}{'Sell at':>10}  Basis")
+    for r in knowledge.priced_verticals():
+        label = knowledge.get(str(r["vertical"])).label
+        tier = f"${float(r['price']):,.0f}" if r["price"] else "none"
+        print(f"  {label[:25]:<26}{tier:>10}  {r['basis']}")
 
     top = rows[0]
     v = knowledge.get(str(top["vertical"]))
@@ -705,6 +681,209 @@ def cmd_markets(args, settings: Settings) -> int:
 
 
 # ---------------------------------------------------------------- parser
+
+def _find_prospect(store, needle: str):
+    matches = [p for p in store.get_prospects(limit=10_000)
+               if needle.lower() in p.business.name.lower() or p.id == needle]
+    if not matches:
+        print(f"No prospect matching {needle!r}. Try `prospects` to see the pipeline.")
+        return None
+    if len(matches) > 1:
+        print(f"{len(matches)} prospects match {needle!r}:")
+        for p in matches[:8]:
+            print(f"  {p.id}  {p.business.name} ({p.business.city})")
+        print("\nUse the id.")
+        return None
+    return matches[0]
+
+
+def cmd_brief(args, settings: Settings) -> int:
+    """Everything known about one prospect, in the order a seller needs it."""
+    from . import qualify
+
+    store = _store(settings)
+    prospect = _find_prospect(store, args.prospect)
+    if not prospect:
+        return 1
+
+    price = args.price or settings.pricing.growth_monthly
+    b = qualify.brief(prospect.business, prospect.score, prospect.competitor_gap, price)
+
+    _hr(f"{str(b['business']).upper()} \u2014 {b['trade']}")
+    print(f"  Priority            {b['priority']}/100")
+    print(f"  ICP fit             {b['fit_score']}/100  (tier {b['tier']})")
+    print(f"  BANT                {b['bant_score']}/100  ({b['bant_verdict']})")
+    bant = b["bant"]
+    print(f"    budget {bant['budget']:.0%}   authority {bant['authority']:.0%}   "
+          f"need {bant['need']:.0%}   timeline {bant['timeline']:.0%}")
+    print(f"  Decision maker      {b['decision_maker']}")
+    quoted, rec = float(b["quoted_price"]), b["recommended_price"]
+    if rec and float(rec) != quoted:
+        print(f"  Price               quoting ${quoted:,.0f} \u2014 this trade supports "
+              f"${float(rec):,.0f}")
+    else:
+        print(f"  Price               ${quoted:,.0f}")
+
+    _hr("THE EVIDENCE")
+    for key in ("budget", "authority", "need", "timeline"):
+        print(_wrap(f"{key.title()}: {b['bant_evidence'][key]}"))
+
+    if b["blockers"]:
+        _hr("BLOCKERS")
+        for x in b["blockers"]:
+            print(_wrap(f"\u2717 {x}"))
+
+    _hr("TIMING")
+    print(_wrap(str(b["seasonality"])))
+
+    _hr("WHAT THEY WILL SAY, AND THE ANSWER")
+    for row in b["objections"]:
+        print(f'\n  \u201c{row["objection"]}\u201d')
+        print(_wrap(str(row["answer"]), indent="    "))
+
+    _hr("ASK THESE")
+    for q in b["discovery"]:
+        print(_wrap(f"\u2022 {q}", hang=True))
+
+    _hr("NEXT")
+    print(_wrap(str(b["next_question"])))
+    return 0
+
+
+def cmd_reply(args, settings: Settings) -> int:
+    """Log an inbound reply. The Concierge classifies it and drafts the answer."""
+    from .agents.concierge import ConciergeAgent
+
+    store = _store(settings)
+    prospect = _find_prospect(store, args.prospect)
+    if not prospect:
+        return 1
+
+    text = " ".join(args.text)
+    result = ConciergeAgent(store, settings).handle_reply(prospect, text)
+
+    _hr(f"REPLY FROM {prospect.business.name.upper()}")
+    print(_wrap(f"\u201c{text}\u201d"))
+    print(f"\n  Read as       {result['intent']}")
+    print(f"  Action        {result['action']}")
+    print(f"  Stage now     {prospect.stage}")
+
+    if result["intent"] in {"unsubscribe", "hostile"}:
+        print(_wrap("\nSuppressed permanently. Nothing further will be sent to them, "
+                    "and no draft was written."))
+        return 0
+
+    draft = next((m for m in store.get_messages("drafted", 200)
+                  if m.id == result.get("message_id")), None)
+    if draft:
+        _hr("DRAFTED RESPONSE \u2014 read it before you send it")
+        print(draft.body)
+        print(f"\n  Approve with:  answerrank approve --id {draft.id}")
+    return 0
+
+
+def cmd_clients(args, settings: Settings) -> int:
+    """Client health, worst first. That is the order to work them in."""
+    from .agents.retention import RetentionAgent
+
+    store = _store(settings)
+    rows = RetentionAgent(store, settings).portfolio()
+    if not rows:
+        _hr("CLIENTS")
+        print(_wrap("No active clients yet. Convert one with `win` once a prospect "
+                    "says yes."))
+        return 0
+
+    mrr = sum(h.mrr for h in rows)
+    at_risk = [h for h in rows if h.band == "act_now"]
+    _hr(f"{len(rows)} CLIENTS \u2014 ${mrr:,.0f}/MO")
+    print(f"  {'Client':<26}{'MRR':>9}{'Health':>9}  Band")
+    for h in rows:
+        print(f"  {h.name[:25]:<26}${h.mrr:>8,.0f}{h.score:>9.0f}  {h.band}")
+    if at_risk:
+        print(f"\n  ${sum(h.mrr for h in at_risk):,.0f}/mo sits in accounts that need "
+              f"action now.")
+
+    for h in rows:
+        _hr(f"{h.name.upper()} \u2014 {h.score:.0f}/100 ({h.band})")
+        for s in h.signals:
+            print(_wrap(f"\u2022 {s}", hang=True))
+        print(_wrap(f"\u2192 {h.action}", hang=True))
+    return 0
+
+
+def cmd_learn(args, settings: Settings) -> int:
+    """What the outcomes actually say. Refuses to conclude on thin data."""
+    from .agents.analyst import AnalystAgent
+
+    store = _store(settings)
+    analyst = AnalystAgent(store, settings)
+    days = args.days
+
+    _hr(f"WHAT THE LAST {days} DAYS SHOW")
+    for line in analyst.learnings(days):
+        print(_wrap(f"\u2022 {line}", hang=True))
+
+    rows = [r for r in analyst.by_vertical(days) if r["sent"]]
+    if rows:
+        _hr("BY TRADE")
+        print(f"  {'Trade':<26}{'Sent':>7}{'Replied':>9}{'Rate':>8}  Confidence")
+        for r in rows:
+            rate = f"{r['reply_rate']:.1%}" if r["reply_rate"] is not None else "\u2014"
+            print(f"  {str(r['label'])[:25]:<26}{r['sent']:>7}{r['replied']:>9}"
+                  f"{rate:>8}  {r['confidence']}")
+
+    steps = [r for r in analyst.by_step(days) if r["sent"]]
+    if steps:
+        _hr("BY SEQUENCE STEP")
+        for r in steps:
+            rate = f"{r['reply_rate']:.1%}" if r["reply_rate"] is not None else "\u2014"
+            print(f"  step {r['step']}: {r['sent']:>5} sent, {r['replied']:>4} replied "
+                  f"({rate})")
+
+    vol = analyst.required_volume(settings.profit_target_monthly,
+                                  settings.pricing.growth_monthly,
+                                  settings.pricing.delivery_cost_monthly, days)
+    _hr("WHAT THE TARGET REQUIRES")
+    print(_wrap(str(vol["line"])))
+    print(f"\n  About {vol['sends_per_day']} emails a working day, every day, "
+          f"for {vol['ramp_months']} months.")
+    return 0
+
+
+def cmd_playbook(args, settings: Settings) -> int:
+    """The sales method for one trade: positioning, objections, questions."""
+    from . import playbook
+
+    vertical = args.vertical
+    if vertical not in knowledge.VERTICALS:
+        print(f"Unknown trade {vertical!r}. Known: "
+              f"{', '.join(sorted(knowledge.VERTICALS))}")
+        return 1
+    price = args.price or float(knowledge.recommended_price(vertical)["price"] or
+                                settings.pricing.growth_monthly)
+    v = knowledge.get(vertical)
+
+    _hr(f"PLAYBOOK \u2014 {v.label.upper()} AT ${price:,.0f}/MO")
+    print(_wrap(playbook.value_proposition(vertical, price, settings.brand)))
+    print(f"\n  Decision maker   {v.decision_maker}")
+    print(f"  Peak season      {v.peak_label()}")
+    print(_wrap(knowledge.seasonal_note(vertical, datetime.now(timezone.utc).month)))
+
+    _hr("OBJECTIONS AND ANSWERS")
+    for row in playbook.objection_brief(vertical, price):
+        print(f'\n  \u201c{row["objection"]}\u201d')
+        print(_wrap(str(row["answer"]), indent="    "))
+
+    _hr("DISCOVERY QUESTIONS")
+    for q in playbook.discovery_questions(vertical):
+        print(_wrap(f"\u2022 {q.replace('{city}', 'their city')}", hang=True))
+
+    _hr("THE SEQUENCE")
+    for step, intent in sorted(playbook.SEQUENCE_INTENT.items()):
+        print(_wrap(f"{step}. {intent}"))
+    return 0
+
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
@@ -808,6 +987,28 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--probe", action="store_true",
                    help="also probe the live unsubscribe endpoint over the network")
     s.set_defaults(func=cmd_doctor)
+
+    s = sub.add_parser("brief", help="full qualification brief for one prospect")
+    s.add_argument("prospect", help="name fragment or id")
+    s.add_argument("--price", type=float)
+    s.set_defaults(func=cmd_brief)
+
+    s = sub.add_parser("reply", help="log an inbound reply and draft the answer")
+    s.add_argument("prospect", help="name fragment or id")
+    s.add_argument("text", nargs="+", help="what they wrote")
+    s.set_defaults(func=cmd_reply)
+
+    s = sub.add_parser("clients", help="client health scores and the action for each")
+    s.set_defaults(func=cmd_clients)
+
+    s = sub.add_parser("learn", help="what the recorded outcomes actually show")
+    s.add_argument("--days", type=int, default=90)
+    s.set_defaults(func=cmd_learn)
+
+    s = sub.add_parser("playbook", help="how to sell one trade")
+    s.add_argument("vertical")
+    s.add_argument("--price", type=float)
+    s.set_defaults(func=cmd_playbook)
 
     s = sub.add_parser("verticals", help="which trades justify which price")
     s.add_argument("--price", type=float, help="monthly retainer to test")

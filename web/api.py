@@ -262,57 +262,107 @@ class Api:
         return {"rejected": n}
 
     def send(self, limit: int = 25, dry_run: bool = False) -> dict[str, Any]:
-        from answerrank.agents.outreach import OutreachAgent
-        from answerrank.mailer import Mailer
-        from answerrank.models import now_iso
+        """One tap from the phone. Same guard rails as the CLI, by construction."""
+        from answerrank.sending import send_batch
 
-        agent = OutreachAgent(self.store, self.settings)
-        blockers = agent.preflight()
-        if blockers:
-            # The console is a convenience, never an override.
-            return {"sent": 0, "blocked": True, "reasons": blockers}
+        return send_batch(self.store, self.settings, limit=limit, dry_run=dry_run)
 
-        cap = self.settings.outreach.max_emails_total_per_day - self.store.sends_today()
-        if cap <= 0:
-            return {"sent": 0, "blocked": True,
-                    "reasons": ["Daily sending cap reached. Try tomorrow."]}
+    def clients(self) -> dict[str, Any]:
+        """Client health, worst first — the order to work them in."""
+        from answerrank.agents.retention import RetentionAgent
 
-        mailer = Mailer(self.settings)
-        by_id = {p.id: p for p in self.store.get_prospects(limit=5000)}
-        sent = failed = 0
-        errors: list[str] = []
+        rows = RetentionAgent(self.store, self.settings).portfolio()
+        return {
+            "count": len(rows),
+            "mrr": round(sum(h.mrr for h in rows), 2),
+            "at_risk_mrr": round(sum(h.mrr for h in rows if h.band == "act_now"), 2),
+            "clients": [{"id": h.client_id, "name": h.name, "mrr": h.mrr,
+                         "score": h.score, "band": h.band, "action": h.action,
+                         "signals": h.signals, "tenure_days": h.tenure_days}
+                        for h in rows],
+        }
 
-        for m in self.store.get_messages("approved", min(limit, cap)):
-            p = by_id.get(m.prospect_id)
-            if not p or not p.business.email or self.store.is_suppressed(p.business.email):
-                continue
-            if dry_run:
-                sent += 1
-                continue
-            ok, detail = mailer.send(p.business.email, m.subject, m.body)
-            if ok:
-                m.status, m.sent_at = "sent", now_iso()
-                p.touches += 1
-                p.last_touch_at = now_iso()
-                p.stage = "contacted" if m.sequence_step == 1 else "following_up"
-                self.store.upsert_prospect(p)
-                sent += 1
-            else:
-                failed += 1
-                errors.append(f"{p.business.email}: {detail}")
-                if "bounce" in detail:
-                    m.status = "bounced"
-                    self.store.suppress(p.business.email, detail)
-            self.store.save_message(m)
+    def intelligence(self) -> dict[str, Any]:
+        """What the fleet has worked out: findings, volume, the next move."""
+        from answerrank.agents.analyst import AnalystAgent
+        from answerrank.agents.strategist import StrategistAgent
 
-        return {"sent": sent, "failed": failed, "blocked": False,
-                "errors": errors[:5], "dry_run": dry_run}
+        analyst = AnalystAgent(self.store, self.settings)
+        try:
+            move = StrategistAgent(self.store, self.settings).recommend()
+        except Exception:  # noqa: BLE001 - a panel must never fail to render
+            move = None
+
+        return {
+            "learnings": analyst.learnings(),
+            "funnel": analyst.funnel().__dict__,
+            "by_vertical": [r for r in analyst.by_vertical() if r["sent"]],
+            "by_step": [r for r in analyst.by_step() if r["sent"]],
+            "volume": analyst.required_volume(
+                self.settings.profit_target_monthly,
+                self.settings.pricing.growth_monthly,
+                self.settings.pricing.delivery_cost_monthly),
+            "next_move": move,
+            "pricing": [
+                {"vertical": r["vertical"],
+                 "label": _knowledge().get(str(r["vertical"])).label,
+                 "price": r["price"], "basis": r["basis"]}
+                for r in _knowledge().priced_verticals()],
+        }
+
+    def brief(self, prospect_id: str) -> dict[str, Any]:
+        """The full qualification read for one prospect."""
+        from answerrank import qualify
+
+        prospect = next((p for p in self.store.get_prospects(limit=10_000)
+                         if p.id == prospect_id), None)
+        if not prospect:
+            return {"error": "no such prospect"}
+        out = qualify.brief(prospect.business, prospect.score, prospect.competitor_gap,
+                            self.settings.pricing.growth_monthly)
+        out["prospect_id"] = prospect.id
+        out["stage"] = prospect.stage
+        out["market"] = prospect.business.market
+        out["email"] = prospect.business.email
+        return out
+
+    def log_reply(self, prospect_id: str, text: str) -> dict[str, Any]:
+        """Record an inbound reply from the phone and draft the response.
+
+        The most valuable thing the operator can do in a spare minute is paste
+        in a reply that arrived on their phone, so this is one tap from the
+        pipeline rather than a CLI command on a laptop they may not have.
+        """
+        from answerrank.agents.concierge import ConciergeAgent
+
+        prospect = next((p for p in self.store.get_prospects(limit=10_000)
+                         if p.id == prospect_id), None)
+        if not prospect:
+            return {"error": "no such prospect"}
+        if not (text or "").strip():
+            return {"error": "nothing to record"}
+
+        result = ConciergeAgent(self.store, self.settings).handle_reply(prospect, text)
+        draft = next((m for m in self.store.get_messages("drafted", 200)
+                      if m.id == result.get("message_id")), None)
+        return {
+            "intent": result["intent"],
+            "action": result["action"],
+            "stage": prospect.stage,
+            "draft": ({"id": draft.id, "subject": draft.subject, "body": draft.body}
+                      if draft else None),
+        }
 
     def tick(self) -> dict[str, Any]:
         from answerrank.orchestrator import Orchestrator
 
         lines = Orchestrator(self.store, self.settings).tick(force=True)
         return {"ran": len(lines), "lines": lines}
+
+
+def _knowledge():
+    from answerrank import knowledge
+    return knowledge
 
 
 def json_response(payload: Any, status: str = "200 OK") -> tuple[str, bytes]:

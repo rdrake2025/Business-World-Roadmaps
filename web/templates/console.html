@@ -146,9 +146,49 @@
   .stagerow:last-child{border-bottom:0}
   .stagerow .s{color:var(--ink2);text-transform:capitalize}
 
+  /* health */
+  .hrow{display:flex;align-items:center;gap:11px;padding:11px 0;
+    border-bottom:1px solid var(--rule);cursor:pointer}
+  .hrow:last-child{border-bottom:0}
+  .hrow .dot{width:9px;height:9px;border-radius:99px;flex:0 0 auto}
+  .hrow .dot.healthy{background:var(--mark)}
+  .hrow .dot.monitor{background:var(--accent)}
+  .hrow .dot.act_now{background:#d94b4b}
+  .hrow .nm{flex:1;font-size:14px;font-weight:600;letter-spacing:-.01em}
+  .hrow .nm small{display:block;font-weight:400;font-size:12px;color:var(--muted);
+    margin-top:2px;letter-spacing:0}
+  .hrow .sc{font-size:14px;font-weight:700}
+  .finding{font-size:13px;color:var(--ink2);padding:9px 11px;background:var(--sunk);
+    border-radius:9px;margin-bottom:8px;line-height:1.5}
+  .finding:last-child{margin-bottom:0}
+  .tap{cursor:pointer}
+  .tap:active{opacity:.6}
+
+  /* sheet */
+  .scrim{position:fixed;inset:0;background:rgba(0,0,0,.42);z-index:70;opacity:0;
+    visibility:hidden;transition:opacity .22s ease,visibility .22s}
+  .scrim.up{opacity:1;visibility:visible}
+  .sheet{position:fixed;left:0;right:0;bottom:0;z-index:71;background:var(--bg);
+    border-radius:18px 18px 0 0;max-height:88vh;overflow:auto;
+    padding:18px 16px calc(20px + var(--safe-b));
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.2,.9,.3,1)}
+  .sheet.up{transform:translateY(0)}
+  .sheet .grab{width:38px;height:4px;border-radius:99px;background:var(--rule2);
+    margin:0 auto 14px}
+  .sheet h3{margin:0 0 3px;font-size:18px;letter-spacing:-.02em}
+  .sheet .who{font-size:12.5px;color:var(--muted);margin-bottom:14px}
+  .sheet textarea{width:100%;box-sizing:border-box;min-height:88px;padding:11px;
+    border-radius:11px;border:1px solid var(--rule2);background:var(--card);
+    color:var(--ink);font-family:inherit;font-size:14px;line-height:1.5;resize:vertical}
+  .meter{display:flex;gap:6px;margin:10px 0 2px}
+  .meter div{flex:1;text-align:center;background:var(--sunk);border-radius:9px;padding:8px 4px}
+  .meter .mv{font-size:15px;font-weight:700}
+  .meter .mk{font-size:10px;color:var(--muted);text-transform:uppercase;
+    letter-spacing:.06em;margin-top:2px}
+
   /* tabs */
   nav{position:fixed;left:0;right:0;bottom:0;z-index:30;display:grid;
-    grid-template-columns:repeat(4,1fr);background:var(--card);
+    grid-template-columns:repeat(5,1fr);background:var(--card);
     border-top:1px solid var(--rule);padding-bottom:var(--safe-b)}
   nav button{position:relative;background:none;border:0;padding:8px 4px 7px;cursor:pointer;
     color:var(--muted);font-family:inherit;font-size:10.5px;font-weight:600;
@@ -229,8 +269,50 @@
     </div>
   </section>
 
+  <!-- ============ CLIENTS ============ -->
+  <section class="pane" id="pane-clients">
+    <div class="grid2" style="margin-bottom:11px">
+      <div class="stat"><div class="v mono" id="cCount">–</div><div class="k">Clients</div></div>
+      <div class="stat"><div class="v mono" id="cRisk">–</div><div class="k">At risk / mo</div></div>
+    </div>
+    <div class="card">
+      <h2>Health — worst first</h2>
+      <div id="clientList"><div class="barnote">Loading…</div></div>
+    </div>
+  </section>
+
+  <!-- ============ BRAIN ============ -->
+  <section class="pane" id="pane-brain">
+    <div class="card">
+      <h2>The next move</h2>
+      <div id="nextMove"><div class="barnote">Loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>What the outcomes show</h2>
+      <div id="learnList"><div class="barnote">Loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>What the target requires</h2>
+      <div id="volNote"><div class="barnote">Loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>Reply rate by trade</h2>
+      <div id="vertList"><div class="barnote">Loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>Where each trade should be priced</h2>
+      <div id="priceList"><div class="barnote">Loading…</div></div>
+    </div>
+    <div class="acts">
+      <button class="act" id="btnGoMoney">Open the money view</button>
+    </div>
+  </section>
+
   <!-- ============ MONEY ============ -->
   <section class="pane" id="pane-money">
+    <div class="acts" style="margin-bottom:11px">
+      <button class="act" id="btnBackBrain">&#8592; Back</button>
+    </div>
     <div class="card">
       <h2>Monthly profit</h2>
       <div class="big mono" id="mProfit">–</div>
@@ -254,8 +336,15 @@
   <button data-p="today" aria-current="true"><span class="ic">&#9673;</span>Today</button>
   <button data-p="inbox"><span class="ic">&#9993;</span>Inbox<span class="pip" id="pip" hidden>0</span></button>
   <button data-p="pipe"><span class="ic">&#9776;</span>Pipeline</button>
-  <button data-p="money"><span class="ic">&#9650;</span>Money</button>
+  <button data-p="clients"><span class="ic">&#9679;</span>Clients<span class="pip" id="pipRisk" hidden>0</span></button>
+  <button data-p="brain"><span class="ic">&#9788;</span>Brain</button>
 </nav>
+
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Prospect">
+  <div class="grab"></div>
+  <div id="sheetBody"></div>
+</div>
 
 <div class="toast" id="toast"></div>
 
@@ -351,7 +440,8 @@
     api("/api/prospects?limit=40").then(function(d){
       var hot = d.items.filter(function(x){ return x.hot; }).slice(0, 12);
       $("hotList").innerHTML = hot.length ? hot.map(function(x){
-        return '<div class="row"><span class="l">' + esc(x.name) +
+        return '<div class="row tap" data-pid="' + esc(x.id) + '"><span class="l">' +
+          esc(x.name) +
           '<br><span style="font-size:12px;color:var(--muted)">' + esc(x.market) +
           '</span></span><span class="r mono" style="color:var(--mark)">' +
           (x.score === null ? "–" : Math.round(x.score)) + '</span></div>';
@@ -380,6 +470,135 @@
           '<button class="yes" data-a="approve">Approve</button>' +
         '</div></div>';
     }).join("");
+  }
+
+  function pct(v){ return Math.round(v * 100) + "%"; }
+
+  // ---------------------------------------------------------------- clients
+  function loadClients(){
+    return api("/api/clients").then(function(d){
+      $("cCount").textContent = d.count;
+      $("cRisk").textContent = d.at_risk_mrr ? money(d.at_risk_mrr) : "$0";
+      var pip = $("pipRisk");
+      var n = d.clients.filter(function(c){ return c.band === "act_now"; }).length;
+      if(n){ pip.hidden = false; pip.textContent = n; } else pip.hidden = true;
+
+      if(!d.clients.length){
+        $("clientList").innerHTML = '<div class="barnote">No clients yet. ' +
+          'The first one is the whole game.</div>';
+        return;
+      }
+      $("clientList").innerHTML = d.clients.map(function(c, i){
+        return '<div class="hrow" data-cid="' + i + '">' +
+          '<span class="dot ' + esc(c.band) + '"></span>' +
+          '<span class="nm">' + esc(c.name) +
+            '<small>' + esc(c.action) + '</small></span>' +
+          '<span class="sc mono">' + Math.round(c.score) + '</span></div>';
+      }).join("");
+      $("clientList")._data = d.clients;
+    }).catch(function(){});
+  }
+
+  // ---------------------------------------------------------------- brain
+  function loadBrain(){
+    return api("/api/intelligence").then(function(d){
+      var m = d.next_move;
+      $("nextMove").innerHTML = m
+        ? '<div style="font-size:15px;font-weight:650;letter-spacing:-.01em;' +
+          'margin-bottom:7px">' + esc(m.move || m.headline || "") + '</div>' +
+          '<div class="finding">' + esc(m.why || m.reason || "") + '</div>'
+        : '<div class="barnote">Nothing yet — run a cycle.</div>';
+
+      $("learnList").innerHTML = d.learnings.length
+        ? d.learnings.map(function(l){
+            return '<div class="finding">' + esc(l) + '</div>';
+          }).join("")
+        : '<div class="barnote">Nothing measurable yet.</div>';
+
+      var v = d.volume;
+      $("volNote").innerHTML = '<div class="finding">' + esc(v.line) + '</div>' +
+        '<div class="meter">' +
+          '<div><div class="mv mono">' + v.sends_per_day + '</div>' +
+            '<div class="mk">a day</div></div>' +
+          '<div><div class="mv mono">' + v.sends_per_week + '</div>' +
+            '<div class="mk">a week</div></div>' +
+          '<div><div class="mv mono">' + v.clients_needed + '</div>' +
+            '<div class="mk">clients</div></div>' +
+        '</div>';
+
+      $("vertList").innerHTML = d.by_vertical.length
+        ? d.by_vertical.map(function(r){
+            return '<div class="row"><span class="l">' + esc(r.label) +
+              '<br><span style="font-size:11.5px;color:var(--muted)">' +
+              r.sent + ' sent · ' + esc(r.confidence) + '</span></span>' +
+              '<span class="r mono">' +
+              (r.reply_rate === null ? "–" : pct(r.reply_rate)) + '</span></div>';
+          }).join("")
+        : '<div class="barnote">No sends recorded yet.</div>';
+
+      $("priceList").innerHTML = d.pricing.map(function(r){
+        return '<div class="row"><span class="l">' + esc(r.label) +
+          '<br><span style="font-size:11.5px;color:var(--muted)">' +
+          esc(r.basis) + '</span></span><span class="r mono">' +
+          (r.price ? money(r.price) : "–") + '</span></div>';
+      }).join("");
+    }).catch(function(){});
+  }
+
+  // ---------------------------------------------------------------- sheet
+  function closeSheet(){
+    $("sheet").classList.remove("up");
+    $("scrim").classList.remove("up");
+  }
+
+  function openSheet(html){
+    $("sheetBody").innerHTML = html;
+    $("sheet").classList.add("up");
+    $("scrim").classList.add("up");
+    $("sheet").scrollTop = 0;
+  }
+
+  function clientSheet(c){
+    openSheet('<h3>' + esc(c.name) + '</h3>' +
+      '<div class="who">' + money(c.mrr) + '/mo · day ' + c.tenure_days +
+      ' · health ' + Math.round(c.score) + '/100 (' + esc(c.band) + ')</div>' +
+      '<div class="finding" style="background:var(--accent-soft);color:var(--ink)">' +
+        esc(c.action) + '</div>' +
+      c.signals.map(function(s){
+        return '<div class="finding">' + esc(s) + '</div>';
+      }).join(""));
+  }
+
+  function prospectSheet(b){
+    if(b.error){ toast(b.error); return; }
+    var price = b.recommended_price && b.recommended_price !== b.quoted_price
+      ? '<div class="finding">Quoting ' + money(b.quoted_price) +
+        ' — this trade supports ' + money(b.recommended_price) + '.</div>'
+      : '';
+    openSheet('<h3>' + esc(b.business) + '</h3>' +
+      '<div class="who">' + esc(b.trade) + ' · ' + esc(b.market) +
+      ' · ' + esc(b.stage) + '</div>' +
+      '<div class="meter">' +
+        '<div><div class="mv mono">' + Math.round(b.priority) + '</div>' +
+          '<div class="mk">priority</div></div>' +
+        '<div><div class="mv mono">' + b.tier + '</div><div class="mk">fit</div></div>' +
+        '<div><div class="mv mono">' + Math.round(b.bant_score) + '</div>' +
+          '<div class="mk">bant</div></div>' +
+      '</div>' +
+      price +
+      ["budget","authority","need","timeline"].map(function(k){
+        return '<div class="finding"><b>' + k + '</b> — ' +
+          esc(b.bant_evidence[k]) + '</div>';
+      }).join("") +
+      '<div class="finding" style="background:var(--accent-soft);color:var(--ink)">' +
+        esc(b.next_question) + '</div>' +
+      '<h2 style="font-size:11px;letter-spacing:.09em;text-transform:uppercase;' +
+        'color:var(--muted);margin:18px 0 8px">If they reply, paste it here</h2>' +
+      '<textarea id="replyText" placeholder="Paste what they wrote…"></textarea>' +
+      '<div class="acts" style="margin-top:10px">' +
+        '<button class="act primary" id="btnLogReply" data-pid="' +
+          esc(b.prospect_id) + '">Log the reply</button></div>' +
+      '<div id="replyOut"></div>');
   }
 
   function esc(s){
@@ -422,24 +641,28 @@
   }
 
   // ---------------------------------------------------------------- events
-  Array.prototype.forEach.call(document.querySelectorAll("nav button"), function(b){
-    b.addEventListener("click", function(){
-      var p = b.dataset.p;
-      Array.prototype.forEach.call(document.querySelectorAll("nav button"), function(o){
-        o.setAttribute("aria-current", o === b ? "true" : "false");
-      });
-      Array.prototype.forEach.call(document.querySelectorAll(".pane"), function(s){
-        s.classList.toggle("on", s.id === "pane-" + p);
-      });
-      window.scrollTo(0, 0);
-      if(p === "inbox") loadInbox();
-      if(p === "money") loadReports();
+
+  // Money has no tab of its own — five is the most a phone nav carries
+  // legibly — so panes are switched by name and the nav simply calls this.
+  function showPane(p){
+    Array.prototype.forEach.call(document.querySelectorAll("nav button"), function(o){
+      o.setAttribute("aria-current", o.dataset.p === p ? "true" : "false");
     });
+    Array.prototype.forEach.call(document.querySelectorAll(".pane"), function(s){
+      s.classList.toggle("on", s.id === "pane-" + p);
+    });
+    window.scrollTo(0, 0);
+    if(p === "inbox") loadInbox();
+    if(p === "money") loadReports();
+    if(p === "clients") loadClients();
+    if(p === "brain") loadBrain();
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll("nav button"), function(b){
+    b.addEventListener("click", function(){ showPane(b.dataset.p); });
   });
 
-  $("btnGoInbox").addEventListener("click", function(){
-    document.querySelector('nav button[data-p="inbox"]').click();
-  });
+  $("btnGoInbox").addEventListener("click", function(){ showPane("inbox"); });
 
   $("inboxList").addEventListener("click", function(e){
     var btn = e.target.closest("button[data-a]");
@@ -465,10 +688,13 @@
     var b = this; b.disabled = true; b.textContent = "Sending…";
     api("/api/send", { limit: 25 }).then(function(r){
       if(r.blocked) toast(r.reasons[0] || "Blocked", 5000);
+      else if(r.reasons && r.reasons.length) toast(r.reasons[0], 4000);
       else toast("Sent " + r.sent + (r.failed ? ", " + r.failed + " failed" : ""), 4000);
       return load(true);
     }).catch(function(){ toast("Send failed"); })
-      .then(function(){ busy = false; });
+      .then(function(){
+        busy = false; b.disabled = false; b.textContent = "Send approved";
+      });
   });
 
   $("btnTick").addEventListener("click", function(){
@@ -485,6 +711,83 @@
       });
   });
 
+  $("btnGoMoney").addEventListener("click", function(){ showPane("money"); });
+  $("btnBackBrain").addEventListener("click", function(){ showPane("brain"); });
+
+  // Tapping a hot lead opens the full qualification read. This is the one
+  // screen that turns a name into a decision, so it is one tap from the
+  // pipeline rather than a laptop command.
+  $("hotList").addEventListener("click", function(e){
+    var row = e.target.closest("[data-pid]");
+    if(!row || busy) return;
+    row.style.opacity = ".5";
+    api("/api/brief?id=" + encodeURIComponent(row.dataset.pid))
+      .then(prospectSheet)
+      .catch(function(){ toast("Could not load that one"); })
+      .then(function(){ row.style.opacity = "1"; });
+  });
+
+  $("clientList").addEventListener("click", function(e){
+    var row = e.target.closest("[data-cid]");
+    var data = $("clientList")._data;
+    if(!row || !data) return;
+    clientSheet(data[Number(row.dataset.cid)]);
+  });
+
+  // The reply box lives inside the sheet, which is rebuilt each time, so the
+  // handler is delegated rather than bound to the button.
+  $("sheetBody").addEventListener("click", function(e){
+    var btn = e.target.closest("#btnLogReply");
+    if(!btn || busy) return;
+    var text = ($("replyText") && $("replyText").value || "").trim();
+    if(!text){ toast("Paste what they wrote first"); return; }
+    busy = true;
+    btn.disabled = true; btn.textContent = "Reading it…";
+    api("/api/reply", { id: btn.dataset.pid, text: text }).then(function(r){
+      if(r.error){ toast(r.error); return; }
+      var out = '<div class="finding" style="background:var(--accent-soft);' +
+        'color:var(--ink)">Read as <b>' + esc(r.intent) + '</b> \u2014 ' +
+        esc(r.action.replace(/_/g, " ")) + '. They are now <b>' +
+        esc(r.stage) + '</b>.</div>';
+      if(r.draft){
+        out += '<div class="msg" style="margin-top:10px"><div class="subj">' +
+          esc(r.draft.subject) + '</div><pre>' + esc(r.draft.body) + '</pre>' +
+          '<div class="acts" style="margin-top:11px">' +
+          '<button class="act primary" data-a="approve" data-mid="' +
+          esc(r.draft.id) + '">Approve this reply</button></div></div>';
+      } else {
+        out += '<div class="finding">Suppressed permanently. Nothing further ' +
+          'will be sent, and no draft was written.</div>';
+      }
+      $("replyOut").innerHTML = out;
+      $("replyText").value = "";
+      return load(true);
+    }).catch(function(){ toast("Could not record that"); })
+      .then(function(){
+        busy = false; btn.disabled = false; btn.textContent = "Log the reply";
+      });
+  });
+
+  // Approving the drafted reply straight from the sheet.
+  $("sheetBody").addEventListener("click", function(e){
+    var btn = e.target.closest("button[data-mid]");
+    if(!btn || busy) return;
+    busy = true;
+    btn.disabled = true; btn.textContent = "Approving\u2026";
+    api("/api/approve", { ids: [btn.dataset.mid] }).then(function(){
+      btn.textContent = "Approved \u2014 send from the Today tab";
+      return load(true);
+    }).catch(function(){
+      btn.disabled = false; btn.textContent = "Approve this reply";
+      toast("That didn't go through");
+    }).then(function(){ busy = false; });
+  });
+
+  $("scrim").addEventListener("click", closeSheet);
+  document.addEventListener("keydown", function(e){
+    if(e.key === "Escape") closeSheet();
+  });
+
   $("btnRefresh").addEventListener("click", function(){ load(); });
 
   // Refresh when the app comes back to the foreground — a phone console is
@@ -493,8 +796,18 @@
     if(!document.hidden) load(true);
   });
 
+  function refreshVisible(){
+    var on = document.querySelector(".pane.on");
+    if(!on) return;
+    if(on.id === "pane-clients") loadClients();
+    if(on.id === "pane-brain") loadBrain();
+  }
+
   load();
-  setInterval(function(){ if(!document.hidden && !busy) load(true); }, 60000);
+  setInterval(function(){
+    if(document.hidden || busy) return;
+    load(true).then(refreshVisible);
+  }, 60000);
 
   if("serviceWorker" in navigator){
     navigator.serviceWorker.register("/sw.js").catch(function(){});

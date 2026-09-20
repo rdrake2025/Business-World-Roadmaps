@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -75,6 +76,13 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     finished_at TEXT, items_processed INTEGER, summary TEXT, error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_run_agent ON agent_runs(agent, started_at);
+
+CREATE TABLE IF NOT EXISTS outcomes (
+    id TEXT PRIMARY KEY, prospect_id TEXT, message_id TEXT, vertical TEXT,
+    step INTEGER, kind TEXT, sentiment TEXT, note TEXT, occurred_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_outcome_kind ON outcomes(kind, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_outcome_vertical ON outcomes(vertical, kind);
 
 CREATE TABLE IF NOT EXISTS market_findings (
     id TEXT PRIMARY KEY, market TEXT, label TEXT, sampled INTEGER,
@@ -313,6 +321,75 @@ class Store:
             return cx.execute(
                 "SELECT 1 FROM suppression WHERE email = ?", (email.lower().strip(),)
             ).fetchone() is not None
+
+    # ---------------- outcomes ----------------
+
+    def record_outcome(self, *, prospect_id: str = "", message_id: str = "",
+                       vertical: str = "", step: int = 0, kind: str = "",
+                       sentiment: str = "", note: str = "") -> str:
+        """Log what actually happened. Nothing learns without this.
+
+        ``kind`` is one of: sent, replied, call_booked, won, lost, churned.
+        """
+        oid = f"out_{uuid.uuid4().hex[:12]}"
+        with self.conn() as cx:
+            cx.execute(
+                """INSERT INTO outcomes
+                   (id,prospect_id,message_id,vertical,step,kind,sentiment,note,occurred_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (oid, prospect_id, message_id, vertical, step, kind, sentiment, note,
+                 datetime.now(timezone.utc).isoformat(timespec="seconds")),
+            )
+        return oid
+
+    def outcome_counts(self, days: int = 90) -> dict[str, int]:
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        with self.conn() as cx:
+            rows = cx.execute(
+                "SELECT kind, COUNT(*) c FROM outcomes WHERE occurred_at >= ? GROUP BY kind",
+                (since,),
+            ).fetchall()
+        return {r["kind"]: r["c"] for r in rows}
+
+    def outcomes_by(self, field: str, days: int = 90) -> dict[str, dict[str, int]]:
+        """Counts of each outcome kind, grouped by vertical or sequence step."""
+        if field not in {"vertical", "step"}:
+            raise ValueError("group by vertical or step only")
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        with self.conn() as cx:
+            rows = cx.execute(
+                f"""SELECT {field} g, kind, COUNT(*) c FROM outcomes
+                    WHERE occurred_at >= ? AND {field} != '' GROUP BY g, kind""",
+                (since,),
+            ).fetchall()
+        out: dict[str, dict[str, int]] = {}
+        for r in rows:
+            out.setdefault(str(r["g"]), {})[r["kind"]] = r["c"]
+        return out
+
+    def prospects_awaiting_reply(self, limit: int = 200) -> list[Prospect]:
+        return self.get_prospects("replied", limit)
+
+    def outcomes_for(self, subject_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        """Everything recorded against one prospect or client, newest first."""
+        with self.conn() as cx:
+            rows = cx.execute(
+                """SELECT * FROM outcomes WHERE prospect_id = ?
+                   ORDER BY occurred_at DESC LIMIT ?""",
+                (subject_id, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def last_outcome_at(self, subject_id: str, kinds: tuple[str, ...] = ()) -> str | None:
+        """When this prospect or client last did something. Silence is a signal."""
+        sql = "SELECT MAX(occurred_at) t FROM outcomes WHERE prospect_id = ?"
+        args: list[Any] = [subject_id]
+        if kinds:
+            sql += f" AND kind IN ({','.join('?' * len(kinds))})"
+            args.extend(kinds)
+        with self.conn() as cx:
+            row = cx.execute(sql, args).fetchone()
+        return row["t"] if row and row["t"] else None
 
     # ---------------- market findings ----------------
 
