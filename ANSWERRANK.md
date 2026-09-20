@@ -84,6 +84,30 @@ need the lifetime-value argument. The rest do not justify that price and the
 qualifier refuses to pitch them — pitching poor-fit prospects spends
 complaint-rate budget that cannot be bought back.
 
+## Finding the next market
+
+The seven verticals were chosen by hand, which is a ceiling. Two agents lift it.
+
+**Explorer** tests the market model rather than trusting it. It samples real
+businesses in a candidate trade, runs the same audit the paying product runs,
+and reports what it measured. A trade can look ideal on paper — high ticket,
+fragmented, big budgets — and turn out to be perfectly visible already, in
+which case there is nothing to sell. Measuring costs fractions of a cent.
+
+**Strategist** reads that evidence against what is commercially happening and
+returns *one* move. A list of twelve opportunities is a way of avoiding a
+decision.
+
+```bash
+python3 run.py markets      # candidates, measured, and what to do next
+```
+
+It caught a real inconsistency on its first run: the Scout was adding roofing
+prospects at a price roofing cannot justify, which Outreach then filtered out
+— API spend and pipeline noise generated for nothing. Discovery now selects on
+the same economics qualification uses, and per-cycle waste went from ten
+filtered prospects to zero.
+
 ## Run it from your phone
 
 The fleet runs on your laptop; you manage it from your pocket.
@@ -125,12 +149,14 @@ outreach — treat it like a password; restarting issues a new one.
 
 | Agent | Every | Does |
 | --- | --- | --- |
-| `scout` | 6h | Finds local businesses, dedupes by domain |
+| `scout` | 6h | Finds local businesses in defensible verticals, dedupes by domain |
 | `auditor` | 1h | Teaser audits on prospects, full audits for clients |
 | `fixer` | 6h | Generates JSON-LD schema, FAQ copy, GBP and citation plans |
 | `reporter` | 12h | Renders branded monthly client reports |
 | `outreach` | 4h | Drafts evidence-backed, CAN-SPAM-compliant email |
 | `bookkeeper` | 24h | Bills clients, books costs, tracks the target |
+| `explorer` | 12h | Samples candidate markets to find the next vertical worth entering |
+| `strategist` | 24h | Reads the evidence and recommends the single next move |
 
 The orchestrator runs them on independent schedules in one process. An agent
 that crashes is recorded as a failed run; the fleet keeps going. "Due" is
@@ -180,6 +206,7 @@ and retention at the same time.
 | `setup` | Interactive first-run configuration |
 | `doctor [--probe]` | What is blocking you from operating |
 | `verticals [--price N]` | Which trades justify which retainer, and why |
+| `markets [--price N]` | Candidate markets, measured, and the next move |
 | `web` | Serve the site and the phone console |
 
 ## Safety rails

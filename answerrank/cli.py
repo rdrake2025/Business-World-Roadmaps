@@ -16,6 +16,7 @@ from pathlib import Path
 from .agents.fixer import FixerAgent
 from . import doctor as doctor_mod
 from . import knowledge
+from . import markets
 from . import wizard
 from .budget import (
     PHASES, cumulative_monthly, load_personal, milestones, phase_cost,
@@ -663,6 +664,46 @@ def cmd_verticals(args, settings: Settings) -> int:
     return 0
 
 
+def cmd_markets(args, settings: Settings) -> int:
+    """Candidate markets, measured where the Explorer has been."""
+    from .agents.strategist import StrategistAgent
+
+    store = _store(settings)
+    price = args.price or settings.pricing.growth_monthly
+    findings = {f["market"]: f for f in store.latest_findings()}
+
+    _hr(f"CANDIDATE MARKETS AT ${price:,.0f}/MO")
+    print(f"  {'Market':<30}{'Prior':>7}{'Measured':>10}{'Invisible':>11}  Verdict")
+    for c in markets.ranked(price):
+        f = findings.get(c.key)
+        measured = f"{f['opportunity']}" if f else "\u2014"
+        invisible = f"{f['invisible_share']:.0f}%" if f else "\u2014"
+        verdict = f["verdict"] if f else c.verdict(price)
+        flag = " ?" if c.needs_research else ""
+        print(f"  {c.label + flag:<30}{c.score(price):>7}{measured:>10}"
+              f"{invisible:>11}  {verdict}")
+    print("\n  ? = economics estimated, not sourced.  Measured = sampled by the")
+    print("  Explorer; blank means nobody has audited a business there yet.")
+
+    top = markets.ranked(price)[0]
+    _hr(f"BEST CANDIDATE: {top.label.upper()}")
+    print(f"  Average ticket        ${top.avg_ticket:>9,.0f}")
+    print(f"  Their marketing spend ${top.monthly_marketing_spend:>9,.0f} / month")
+    share = price / top.monthly_marketing_spend * 100 if top.monthly_marketing_spend else 0
+    print(f"  This retainer is      {share:>10.0f}% of that budget")
+    print(f"\n  Basis: {top.basis}")
+    for n in top.notes:
+        print(_wrap(f"\u2022 {n}"))
+
+    rec = StrategistAgent(store, settings).recommend()
+    _hr("WHAT TO DO NEXT")
+    print(f"  {rec['move']}")
+    print()
+    print(_wrap(rec["why"]))
+    print(f"\n  Confidence: {rec['confidence']}")
+    return 0
+
+
 # ---------------------------------------------------------------- parser
 
 def build_parser() -> argparse.ArgumentParser:
@@ -771,6 +812,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("verticals", help="which trades justify which price")
     s.add_argument("--price", type=float, help="monthly retainer to test")
     s.set_defaults(func=cmd_verticals)
+
+    s = sub.add_parser("markets", help="candidate markets and the next move")
+    s.add_argument("--price", type=float)
+    s.set_defaults(func=cmd_markets)
 
     s = sub.add_parser("web", help="serve the site and the phone console")
     s.add_argument("--host", default="0.0.0.0"); s.add_argument("--port", type=int, default=8000)
