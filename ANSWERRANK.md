@@ -16,12 +16,17 @@ being named, and does the work to change it.
 
 ## Quick start
 
-One command does everything — isolated environment, dependencies, tests,
-configuration, diagnostics, and the web server:
+**Windows** — double-click **`start.bat`** in the project folder. No terminal
+needed.
+
+**Mac / Linux** — one command:
 
 ```bash
 ./start.sh
 ```
+
+Either does everything: isolated environment, dependencies, tests,
+configuration, diagnostics, and the server.
 
 Or step by step:
 

@@ -1,0 +1,5 @@
+# Batch files must keep CRLF or Windows misparses them.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+# Shell scripts must keep LF even when checked out on Windows.
+*.sh text eol=lf

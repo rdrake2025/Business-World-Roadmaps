@@ -35,12 +35,22 @@ class Check:
         return {PASS: "✓", WARN: "!", FAIL: "✗"}[self.status]
 
 
+def _dns_tool() -> str | None:
+    """`dig` on macOS and Linux, `nslookup` on Windows. Either is fine."""
+    for tool in ("dig", "nslookup"):
+        if shutil.which(tool):
+            return tool
+    return None
+
+
 def _dig_txt(name: str) -> str:
-    if not shutil.which("dig"):
+    tool = _dns_tool()
+    if not tool:
         return ""
+    cmd = (["dig", "+short", "TXT", name] if tool == "dig"
+           else ["nslookup", "-type=TXT", name])
     try:
-        out = subprocess.run(["dig", "+short", "TXT", name],
-                             capture_output=True, text=True, timeout=10)
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         return out.stdout or ""
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -131,10 +141,10 @@ def check_dns(settings: Settings) -> list[Check]:
     if not domain or "yourdomain" in domain:
         return [Check("DNS (SPF/DKIM/DMARC)", FAIL, "no real sending domain configured",
                       "Set from_email to your sending domain first.", blocking=True)]
-    if not shutil.which("dig"):
-        return [Check("DNS (SPF/DKIM/DMARC)", WARN, "`dig` not available here",
-                      f"Verify manually: dig +short TXT {domain} and "
-                      f"dig +short TXT _dmarc.{domain}", blocking=True)]
+    if not _dns_tool():
+        return [Check("DNS (SPF/DKIM/DMARC)", WARN, "no DNS lookup tool on this machine",
+                      f"Check manually at https://mxtoolbox.com/SuperTool.aspx — "
+                      f"look up TXT for {domain} and _dmarc.{domain}", blocking=True)]
 
     out = []
     spf = _dig_txt(domain)
