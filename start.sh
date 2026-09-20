@@ -116,7 +116,8 @@ cat <<BANNER
     python run.py budget
     python run.py forecast
 
-  ${BOLD}Console:${OFF} http://localhost:8000/app   ${BOLD}Ops panel:${OFF} http://localhost:8000/ops
+  ${BOLD}Dashboard:${OFF} http://localhost:8000/dashboard  (everything, one page)
+  ${BOLD}Console:${OFF}   http://localhost:8000/app        ${BOLD}Ops:${OFF} http://localhost:8000/ops
 
   ${BOLD}On your phone:${OFF} same Wi-Fi as this laptop, open the link below,
   then add it to your home screen — it runs like an app.
@@ -144,7 +145,7 @@ PY
   [ -n "$TOKEN" ] || exit 0
   for o in open xdg-open; do
       command -v "$o" >/dev/null 2>&1 && \
-          "$o" "http://localhost:8000/app?t=$TOKEN" >/dev/null 2>&1 && break
+          "$o" "http://localhost:8000/dashboard?t=$TOKEN" >/dev/null 2>&1 && break
   done ) &
 
 exec python run.py web --port 8000
