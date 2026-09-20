@@ -930,13 +930,27 @@ class TestKnowledge(unittest.TestCase):
         self.assertEqual(get("underwater_basket_weaving"), GENERIC)
 
     def test_revenue_estimates_stay_credible(self):
-        """A roofer told they lose $290k/year dismisses the whole pitch."""
+        """A roofer told they lose $290k/year dismisses the whole pitch.
+
+        Believability is about the *job count*, not the dollar figure. A
+        remodeler hearing $77,600 checks it against a $28,000 ticket, gets
+        under three kitchens a year, and finds it reasonable. A roofer hearing
+        the same share of a $9,000 ticket gets thirty roofs and stops reading.
+        So the ceiling is expressed in jobs a month — the unit the owner
+        actually reasons in, and the one the estimate already reports — with a
+        dollar bound behind it to catch a runaway.
+        """
         from answerrank.knowledge import VERTICALS, revenue_at_risk
         for key in VERTICALS:
             r = revenue_at_risk(key, 10, 10)
-            self.assertLess(float(r["annual_revenue"]), 60_000,
-                            f"{key} revenue-at-risk is too aggressive to be believed")
-            self.assertGreaterEqual(float(r["annual_revenue"]), 0)
+            annual = float(r["annual_revenue"])
+            self.assertGreaterEqual(annual, 0)
+            lost = float(r["lost_jobs_per_month"])
+            self.assertLess(lost, 3.0,
+                            f"{key} claims {lost:.1f} lost jobs a month — past "
+                            f"about three the owner stops believing it")
+            self.assertLess(annual, 150_000,
+                            f"{key} revenue-at-risk has run away")
 
     def test_no_gap_means_no_loss(self):
         from answerrank.knowledge import revenue_at_risk
@@ -955,10 +969,32 @@ class TestKnowledge(unittest.TestCase):
             self.assertIn("Assumes", assumption)
             self.assertIn("%", assumption)
 
-    def test_hvac_is_the_strongest_fit_at_growth_price(self):
-        """The vertical recommendation should follow the arithmetic."""
+    def test_recommendation_follows_the_arithmetic(self):
+        """The top trade must be the one the numbers actually pick.
+
+        This deliberately does not name a trade. The library grows, and a test
+        that pins "hvac" would fail the day a better-suited market is added
+        while the ranking is still perfectly correct \u2014 which is a test
+        reporting its own staleness as a defect.
+        """
         from answerrank.knowledge import best_verticals
-        self.assertEqual(best_verticals(997)[0]["vertical"], "hvac")
+        rows = best_verticals(997)
+        self.assertEqual(rows[0]["verdict"], "strong")
+        strong = [r for r in rows if r["verdict"] == "strong"]
+        self.assertEqual(rows[0]["first_job_ratio"],
+                         max(r["first_job_ratio"] for r in strong),
+                         "the top recommendation is not the best first-job ratio")
+        order = {"strong": 0, "workable": 1, "weak": 2}
+        verdicts = [order[str(r["verdict"])] for r in rows]
+        self.assertEqual(verdicts, sorted(verdicts),
+                         "verdicts are not in descending order of strength")
+
+    def test_hvac_remains_defensible_at_the_growth_price(self):
+        """The founding vertical must still stand on first-job revenue."""
+        from answerrank.knowledge import plan_fit
+        fit = plan_fit("hvac", 997)
+        self.assertEqual(fit["verdict"], "strong")
+        self.assertEqual(fit["basis"], "first-job revenue")
 
     def test_low_ticket_verticals_cannot_claim_first_job_payback(self):
         from answerrank.knowledge import plan_fit
@@ -1288,3 +1324,574 @@ class TestPromotedVerticals(unittest.TestCase):
     def test_scout_now_prospects_restoration(self):
         from answerrank.agents.scout import defensible_verticals
         self.assertIn("restoration", defensible_verticals(997))
+
+
+class TestLanguage(unittest.TestCase):
+    """Copy that reads as machine-generated is copy that gets deleted."""
+
+    def test_articles_agree_with_the_sound_not_the_letter(self):
+        from answerrank.knowledge import a_label, article
+        self.assertEqual(article("HVAC contractor"), "an")
+        self.assertEqual(article("plumber"), "a")
+        self.assertEqual(article("electrician"), "an")
+        self.assertEqual(a_label("hvac"), "an HVAC contractor")
+        self.assertEqual(a_label("plumbing"), "a plumber")
+
+    def test_plurals_are_not_naive(self):
+        from answerrank.knowledge import plural
+        self.assertEqual(plural("garage door company"), "garage door companies")
+        self.assertEqual(plural("insurance agency"), "insurance agencies")
+        self.assertEqual(plural("attorney"), "attorneys")
+        self.assertEqual(plural("medical spa"), "medical spas")
+
+    def test_sentence_case_preserves_acronyms(self):
+        from answerrank.knowledge import sentence_case
+        self.assertEqual(sentence_case("HVAC contractor"), "HVAC contractor")
+        self.assertEqual(sentence_case("plumber"), "Plumber")
+
+    def test_no_trade_label_is_pluralised_badly_anywhere(self):
+        """"attorneys" is right; "agencys" is not. The difference is the
+        letter before the y, so that is what this checks."""
+        from answerrank.knowledge import VERTICALS, plural
+        for key, v in VERTICALS.items():
+            plural_label = plural(v.label)
+            last_word = v.label.rsplit(" ", 1)[-1]
+            if last_word.endswith("y") and last_word[-2].lower() not in "aeiou":
+                self.assertTrue(plural_label.endswith("ies"),
+                                f"{key}: {plural_label}")
+            self.assertFalse(plural_label.endswith("ss"), key)
+
+
+class TestPricingLadder(unittest.TestCase):
+    """A trade that fails at one price is a pricing problem, not a dead market."""
+
+    def test_every_trade_is_sellable_somewhere_on_the_ladder(self):
+        from answerrank.knowledge import VERTICALS, recommended_price
+        for key in VERTICALS:
+            rec = recommended_price(key)
+            self.assertIsNotNone(rec["price"], f"{key} has no defensible tier")
+            self.assertIn(rec["verdict"], {"strong", "workable"}, key)
+
+    def test_the_recommended_tier_is_actually_defensible(self):
+        from answerrank.knowledge import VERTICALS, plan_fit, recommended_price
+        for key in VERTICALS:
+            price = recommended_price(key)["price"]
+            self.assertIn(plan_fit(key, float(price))["verdict"],
+                          {"strong", "workable"}, key)
+
+    def test_no_higher_tier_would_also_have_worked(self):
+        """Recommending $497 when $997 is defensible leaves money on the table."""
+        from answerrank.knowledge import PRICE_LADDER, VERTICALS, plan_fit, recommended_price
+        for key in VERTICALS:
+            price = float(recommended_price(key)["price"])
+            for higher in [p for p in PRICE_LADDER if p > price]:
+                self.assertEqual(plan_fit(key, higher)["verdict"], "weak",
+                                 f"{key} could have been sold at ${higher:,.0f}")
+
+    def test_priced_verticals_covers_the_whole_library(self):
+        from answerrank.knowledge import VERTICALS, priced_verticals
+        self.assertEqual(len(priced_verticals()), len(VERTICALS))
+
+
+class TestPlaybook(unittest.TestCase):
+    """The method the agents are trained on, checked like any other code."""
+
+    def _business(self, vertical="hvac", city="Austin"):
+        return Business(name="Test Co", city=city, state="TX", vertical=vertical,
+                        website="https://testco.com", email="o@testco.com")
+
+    def test_bant_scores_a_strong_prospect_as_qualified(self):
+        from answerrank.playbook import bant
+        r = bant(self._business(), visibility_score=18, competitor_gap=40,
+                 monthly_price=997, month=5)
+        self.assertEqual(r.verdict, "qualified")
+        self.assertGreater(r.score, 72)
+
+    def test_bant_refuses_to_qualify_an_already_visible_business(self):
+        from answerrank.playbook import bant
+        r = bant(self._business(), visibility_score=85, competitor_gap=0,
+                 monthly_price=997, month=5)
+        self.assertLess(r.need, 0.2)
+
+    def test_bant_names_a_cheaper_tier_when_the_price_does_not_fit(self):
+        from answerrank.playbook import bant
+        r = bant(self._business("garage_door"), visibility_score=20,
+                 competitor_gap=30, monthly_price=1997, month=5)
+        self.assertLess(r.budget, 0.5)
+        self.assertIn("$297", r.evidence["budget"])
+
+    def test_every_bant_read_carries_its_evidence(self):
+        from answerrank.knowledge import VERTICALS
+        from answerrank.playbook import bant
+        for key in VERTICALS:
+            r = bant(self._business(key), 20, 30, 997, 6)
+            for dimension in ("budget", "authority", "need", "timeline"):
+                self.assertTrue(r.evidence.get(dimension), f"{key}/{dimension}")
+            self.assertTrue(r.next_question)
+
+    def test_every_recorded_objection_has_an_answer(self):
+        """An objection the agents cannot answer is a deal they cannot close."""
+        from answerrank.knowledge import VERTICALS
+        from answerrank.playbook import rebuttal
+        for key, v in VERTICALS.items():
+            for objection in v.objections:
+                self.assertTrue(rebuttal(objection, key),
+                                f"{key}: no answer to {objection!r}")
+
+    def test_an_unrecognised_objection_routes_to_a_human(self):
+        from answerrank.playbook import rebuttal
+        self.assertEqual(rebuttal("my cousin does this for free", "hvac"), "")
+
+    def test_the_price_rebuttal_offers_the_tier_that_fits(self):
+        from answerrank.playbook import rebuttal
+        answer = rebuttal("too expensive", "garage_door", 997)
+        self.assertIn("$297", answer)
+
+    def test_sequence_check_rejects_a_content_free_nudge(self):
+        from answerrank.playbook import sequence_check
+        problems = sequence_check(2, "Just checking in. Any thoughts? unsubscribe")
+        self.assertTrue(any("nudge" in p for p in problems))
+
+    def test_sequence_check_rejects_an_unwrapped_line(self):
+        from answerrank.playbook import sequence_check
+        problems = sequence_check(1, "x" * 120 + "\nunsubscribe")
+        self.assertTrue(any("columns" in p for p in problems))
+
+    def test_email_body_preserves_a_signature_block(self):
+        from answerrank.playbook import email_body
+        body = email_body("Hi,", "AnswerRank\nhttps://answerrank.io")
+        self.assertIn("AnswerRank\nhttps://answerrank.io", body)
+
+    def test_discovery_questions_name_the_trades_own_work(self):
+        from answerrank.knowledge import VERTICALS, get
+        from answerrank.playbook import discovery_questions
+        for key in VERTICALS:
+            questions = discovery_questions(key)
+            self.assertGreaterEqual(len(questions), 5, key)
+            self.assertIn(get(key).jobs[0], questions[0], key)
+
+
+class TestOutreachDiscipline(unittest.TestCase):
+    """Every draft the system writes must pass the system's own standard."""
+
+    def test_every_draft_in_every_trade_passes_the_playbook(self):
+        from answerrank.agents.outreach import first_touch, followup
+        from answerrank.knowledge import VERTICALS
+        from answerrank.playbook import sequence_check
+        settings = Settings()
+        for key in VERTICALS:
+            for name in ("A Very Long Business Name Company LLC", "Ace"):
+                prospect = Prospect(business=Business(
+                    name=name, city="Oklahoma City", state="OK", vertical=key,
+                    website="https://x.com", email="o@x.com"), score=22,
+                    notes=f"{name} appears in 2 of 10 AI answers.")
+                for step in (1, 2, 3, 4):
+                    subject, body = (first_touch(prospect, settings) if step == 1
+                                     else followup(prospect, step, settings))
+                    self.assertFalse(sequence_check(step, body),
+                                     f"{key} step {step}: "
+                                     f"{sequence_check(step, body)}")
+                    self.assertLessEqual(len(subject), 60, f"{key} step {step}")
+
+    def test_the_sequence_closes_rather_than_nagging(self):
+        """Past step 3 there is nothing new to say, so it says goodbye."""
+        from answerrank.agents.outreach import followup
+        prospect = Prospect(business=Business(name="Ace", city="Tulsa", state="OK",
+                                              vertical="hvac", email="o@x.com"))
+        _subject, body = followup(prospect, 5, Settings())
+        self.assertIn("stop here", body)
+        self.assertNotIn("Just checking", body)
+
+
+class TestConcierge(unittest.TestCase):
+    """The reply is worth more than every audit that preceded it."""
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+        self.prospect = Prospect(business=Business(
+            name="Acme HVAC", city="Austin", state="TX", vertical="hvac",
+            website="https://acme.com", email="mike@acme.com"), stage="contacted")
+        self.store.upsert_prospect(self.prospect)
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def _agent(self):
+        from answerrank.agents.concierge import ConciergeAgent
+        return ConciergeAgent(self.store, self.settings)
+
+    def test_intent_classification(self):
+        from answerrank.agents.concierge import classify
+        for text, expected in [
+            ("yes please send it", "interested"),
+            ("How much does this cost?", "question"),
+            ("Not interested, thanks", "not_interested"),
+            ("please remove me from your list", "unsubscribe"),
+            ("This is spam, stop", "hostile"),
+            ("Talk to my marketing guy", "referral"),
+            ("", "unclear"),
+        ]:
+            self.assertEqual(classify(text), expected, text)
+
+    def test_unsubscribe_beats_every_other_word_in_the_message(self):
+        """"Yes, and also unsubscribe me" must never be read as interest."""
+        from answerrank.agents.concierge import classify
+        self.assertEqual(classify("yes sounds good but please remove me"),
+                         "unsubscribe")
+
+    def test_an_unsubscribe_suppresses_and_writes_no_draft(self):
+        result = self._agent().handle_reply(self.prospect, "remove me")
+        self.assertTrue(self.store.is_suppressed("mike@acme.com"))
+        self.assertEqual(self.prospect.stage, "suppressed")
+        self.assertEqual(result["message_id"], "")
+        self.assertEqual(self.store.get_messages("drafted"), [])
+
+    def test_a_reply_is_recorded_as_an_outcome(self):
+        self._agent().handle_reply(self.prospect, "yes send it over")
+        self.assertEqual(self.store.outcome_counts().get("replied"), 1)
+
+    def test_an_objection_in_a_question_is_answered_directly(self):
+        result = self._agent().handle_reply(
+            self.prospect, "We already pay an SEO guy, what's different?")
+        self.assertEqual(result["action"], "answer_objection")
+        draft = self.store.get_messages("drafted")[0]
+        self.assertIn("structured data", draft.body)
+
+    def test_the_concierge_drafts_and_never_sends(self):
+        self._agent().handle_reply(self.prospect, "yes please")
+        self.assertEqual(self.store.get_messages("sent"), [])
+        self.assertEqual(len(self.store.get_messages("drafted")), 1)
+
+
+class TestAnalyst(unittest.TestCase):
+    """A system that acts without measuring is a system that cannot improve."""
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def _agent(self):
+        from answerrank.agents.analyst import AnalystAgent
+        return AnalystAgent(self.store, self.settings)
+
+    def _record(self, n, kind, vertical="hvac", step=1):
+        for _ in range(n):
+            self.store.record_outcome(prospect_id="p", vertical=vertical,
+                                      step=step, kind=kind)
+
+    def test_it_refuses_to_conclude_on_a_thin_sample(self):
+        self._record(4, "sent")
+        self._record(2, "replied")
+        learnings = self._agent().learnings()
+        self.assertEqual(len(learnings), 1)
+        self.assertIn("measurable", learnings[0])
+
+    def test_a_thin_vertical_is_reported_as_not_yet_known(self):
+        from answerrank.agents.analyst import MIN_SAMPLE
+        self._record(MIN_SAMPLE + 5, "sent", "hvac")
+        self._record(3, "sent", "dental")
+        rows = {r["vertical"]: r["confidence"] for r in self._agent().by_vertical()}
+        self.assertEqual(rows["dental"], "insufficient")
+        self.assertNotEqual(rows["hvac"], "insufficient")
+
+    def test_required_volume_states_which_basis_it_used(self):
+        volume = self._agent().required_volume(5000, 997, 18)
+        self.assertIn("prior", str(volume["basis"]))
+        self.assertGreater(volume["sends_per_week"], 0)
+        self.assertGreaterEqual(volume["clients_needed"], 5)
+
+    def test_required_volume_switches_to_measured_data(self):
+        from answerrank.agents.analyst import CONFIDENT_SAMPLE
+        self._record(CONFIDENT_SAMPLE + 10, "sent")
+        self._record(6, "replied")
+        self._record(2, "won")
+        volume = self._agent().required_volume(5000, 997, 18)
+        self.assertIn("measured", str(volume["basis"]))
+
+    def test_replies_without_wins_points_at_the_close(self):
+        self._record(120, "sent")
+        self._record(12, "replied")
+        learnings = self._agent().learnings()
+        self.assertTrue(any("close" in line for line in learnings), learnings)
+
+    def test_the_funnel_survives_an_empty_database(self):
+        funnel = self._agent().funnel()
+        self.assertEqual(funnel.sent, 0)
+        self.assertEqual(funnel.reply_rate, 0.0)
+        self.assertIn("No sends", funnel.line())
+
+
+class TestRetention(unittest.TestCase):
+    """Replacing a client costs weeks. Keeping one costs a report."""
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def _agent(self):
+        from answerrank.agents.retention import RetentionAgent
+        return RetentionAgent(self.store, self.settings)
+
+    def _client(self, started_days_ago, reported_days_ago=None):
+        from datetime import datetime, timedelta, timezone
+
+        def ago(days):
+            return (datetime.now(timezone.utc)
+                    - timedelta(days=days)).isoformat(timespec="seconds")
+
+        business = Business(name="Held Co", city="Austin", state="TX",
+                            vertical="hvac", website="https://held.com")
+        client = Client(business=business, plan="growth", mrr=997.0, status="active",
+                        started_at=ago(started_days_ago),
+                        last_report_at=("" if reported_days_ago is None
+                                        else ago(reported_days_ago)))
+        self.store.upsert_client(client)
+        return client
+
+    def test_a_silent_long_standing_account_scores_badly(self):
+        health = self._agent().score_client(self._client(150, 70))
+        self.assertEqual(health.band, "act_now")
+        self.assertLess(health.score, 60)
+
+    def test_a_brand_new_account_is_not_punished_for_having_no_history(self):
+        health = self._agent().score_client(self._client(3))
+        self.assertGreater(health.score, 60)
+
+    def test_an_overdue_report_is_the_action_whatever_else_is_wrong(self):
+        health = self._agent().score_client(self._client(150, 70))
+        self.assertIn("report", health.action.lower())
+
+    def test_a_rising_score_becomes_the_referral_moment(self):
+        client = self._client(120, 5)
+        for n, score in enumerate((30, 38, 46)):
+            audit = Audit(business_id=client.business.id, business_name="Held Co",
+                          market="Austin, TX", vertical="hvac", score=score)
+            self.store.save_audit(audit)
+        self.store.record_outcome(prospect_id=client.id, kind="replied")
+        health = self._agent().score_client(client)
+        self.assertIn("referral", health.action.lower())
+
+    def test_the_portfolio_is_ordered_worst_first(self):
+        self._client(150, 70)
+        self._client(20, 5)
+        scores = [h.score for h in self._agent().portfolio()]
+        self.assertEqual(scores, sorted(scores))
+
+    def test_no_clients_is_not_an_error(self):
+        count, summary = self._agent().execute()
+        self.assertEqual(count, 0)
+        self.assertIn("no active clients", summary)
+
+
+class TestSendPath(unittest.TestCase):
+    """One implementation of the path that can burn the sending domain."""
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+        self.settings.physical_address = "PO Box 1, Austin TX 78701"
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def _queue_one(self, email="o@x.com"):
+        prospect = Prospect(business=Business(
+            name="Ace", city="Austin", state="TX", vertical="hvac",
+            website="https://ace.com", email=email))
+        self.store.upsert_prospect(prospect)
+        self.store.save_message(OutreachMessage(
+            prospect_id=prospect.id, subject="s", body="b", status="approved"))
+        return prospect
+
+    def test_a_missing_postal_address_blocks_the_whole_batch(self):
+        from answerrank.sending import send_batch
+        self.settings.physical_address = "SET_YOUR_REGISTERED_BUSINESS_ADDRESS"
+        self._queue_one()
+        result = send_batch(self.store, self.settings, dry_run=True)
+        self.assertTrue(result["blocked"])
+        self.assertEqual(result["sent"], 0)
+
+    def test_a_caller_can_add_a_check_but_not_remove_one(self):
+        from answerrank.sending import send_batch
+        self._queue_one()
+        result = send_batch(self.store, self.settings, dry_run=True,
+                            extra_checks=["DNS is not ready"])
+        self.assertTrue(result["blocked"])
+        self.assertIn("DNS is not ready", result["reasons"])
+
+    def test_a_suppressed_recipient_is_never_sent_to(self):
+        from answerrank.sending import send_batch
+        self._queue_one("blocked@x.com")
+        self.store.suppress("blocked@x.com", "unsubscribed")
+        result = send_batch(self.store, self.settings, dry_run=True)
+        self.assertEqual(result["sent"], 0)
+        self.assertEqual(result["skipped"], 1)
+        self.assertEqual(self.store.get_messages("suppressed")[0].status,
+                         "suppressed")
+
+    def test_a_dry_run_sends_nothing_and_records_nothing(self):
+        from answerrank.sending import send_batch
+        self._queue_one()
+        result = send_batch(self.store, self.settings, dry_run=True)
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(self.store.outcome_counts(), {})
+
+    def test_the_daily_cap_is_enforced_before_anything_is_sent(self):
+        from answerrank.sending import send_batch
+        self.settings.outreach.max_emails_total_per_day = 0
+        self._queue_one()
+        result = send_batch(self.store, self.settings, dry_run=True)
+        self.assertTrue(result["blocked"])
+        self.assertIn("cap", result["reasons"][0].lower())
+
+
+class TestQualificationBrief(unittest.TestCase):
+    def test_a_brief_answers_every_question_a_seller_asks(self):
+        from answerrank import qualify
+        business = Business(name="Ace", city="Austin", state="TX", vertical="hvac",
+                            website="https://ace.com", email="o@ace.com")
+        brief = qualify.brief(business, 18, 40, 997, month=5)
+        for key in ("fit_score", "tier", "bant_score", "bant_verdict", "priority",
+                    "recommended_price", "objections", "discovery", "seasonality",
+                    "next_question", "decision_maker"):
+            self.assertIn(key, brief)
+        self.assertTrue(brief["objections"])
+        self.assertTrue(brief["discovery"])
+        self.assertNotIn("{city}", " ".join(brief["discovery"]))
+
+    def test_priority_is_zero_for_a_business_not_worth_pitching(self):
+        from answerrank import qualify
+        visible = Business(name="Ace", city="Austin", state="TX", vertical="hvac",
+                           website="https://ace.com", email="o@ace.com")
+        self.assertEqual(qualify.priority(visible, 90, 0, 997), 0.0)
+
+
+class TestSendingDomain(unittest.TestCase):
+    """The step between a working system and one that can earn."""
+
+    def test_an_empty_dkim_key_is_not_a_configured_one(self):
+        """A revoked key reported as healthy is the worst failure available.
+
+        `v=DKIM1; p=` with nothing after it means the key is revoked under
+        RFC 6376, and it is published deliberately — sometimes on a wildcard —
+        to say "we sign nothing here". Accepting it would tell the operator
+        their domain is authenticated while it sends unsigned mail.
+        """
+        from answerrank.dns_setup import dkim_key_is_real
+        self.assertFalse(dkim_key_is_real("v=DKIM1; p="))
+        self.assertFalse(dkim_key_is_real("v=DKIM1; k=rsa; p=tooshort"))
+        self.assertFalse(dkim_key_is_real("unrelated txt record"))
+        self.assertTrue(dkim_key_is_real("v=DKIM1; k=rsa; p=" + "A" * 200))
+
+    def test_records_cover_all_four_of_what_a_sender_needs(self):
+        from answerrank.dns_setup import PROVIDERS, records_for
+        for key in PROVIDERS:
+            rows = records_for("example.org", key)
+            kinds = [r.kind for r in rows]
+            hosts = [r.host for r in rows]
+            self.assertIn("MX", kinds, key)
+            self.assertIn("_dmarc", hosts, key)
+            self.assertTrue(any("_domainkey" in h for h in hosts), key)
+            self.assertTrue(any(r.value.startswith("v=spf1") for r in rows), key)
+
+    def test_every_record_explains_why_it_is_there(self):
+        from answerrank.dns_setup import records_for
+        for record in records_for("example.org", "google"):
+            self.assertTrue(record.why.strip())
+
+    def test_the_dmarc_policy_offered_is_never_p_none(self):
+        """p=none has not satisfied bulk-sender rules since 2026."""
+        from answerrank.dns_setup import PROVIDERS, records_for
+        for key in list(PROVIDERS) + [""]:
+            dmarc = next(r for r in records_for("example.org", key)
+                         if r.host == "_dmarc")
+            self.assertIn("p=quarantine", dmarc.value)
+
+    def test_an_unconfigured_domain_is_refused_not_warned(self):
+        from answerrank.dns_setup import readiness
+        result = readiness("yourdomain.com", "google")
+        self.assertFalse(result.ready)
+        self.assertTrue(result.blockers())
+
+    def test_every_provider_has_what_the_operator_needs_to_act(self):
+        from answerrank.dns_setup import PROVIDERS
+        for key, p in PROVIDERS.items():
+            self.assertTrue(p.dkim_where, key)
+            self.assertTrue(p.app_password_where, key)
+            self.assertTrue(p.smtp_host and p.imap_host, key)
+            self.assertTrue(p.spf_include.startswith("include:"), key)
+            self.assertTrue(p.dkim_selectors, key)
+
+
+class TestWarmup(unittest.TestCase):
+    """A new domain opening at full volume is read as a compromised account."""
+
+    def test_day_one_is_heavily_capped(self):
+        policy = Settings().outreach
+        self.assertLessEqual(policy.warmup_cap(0), 10)
+
+    def test_the_ramp_only_ever_increases(self):
+        policy = Settings().outreach
+        caps = [policy.warmup_cap(d) for d in range(0, 45)]
+        self.assertEqual(caps, sorted(caps))
+
+    def test_the_ramp_finishes_at_the_configured_cap(self):
+        policy = Settings().outreach
+        self.assertEqual(policy.warmup_cap(60), policy.max_emails_total_per_day)
+
+    def test_the_ramp_never_exceeds_the_configured_cap(self):
+        policy = Settings().outreach
+        policy.max_emails_total_per_day = 25
+        for day in range(0, 60):
+            self.assertLessEqual(policy.warmup_cap(day), 25)
+
+    def test_a_new_domain_cannot_send_its_whole_queue_on_day_one(self):
+        from answerrank.sending import send_batch
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            store = Store(tmp.name)
+            settings = Settings()
+            settings.physical_address = "PO Box 1, Austin TX 78701"
+            for i in range(40):
+                p = Prospect(business=Business(
+                    name=f"Co {i}", city="Austin", state="TX", vertical="hvac",
+                    website=f"https://c{i}.com", email=f"o{i}@c{i}.com"))
+                store.upsert_prospect(p)
+                store.save_message(OutreachMessage(
+                    prospect_id=p.id, subject="s", body="b", status="approved"))
+            result = send_batch(store, settings, limit=40, dry_run=True)
+            self.assertLessEqual(result["sent"], 10)
+            self.assertEqual(result["warmup_day"], 1)
+        finally:
+            os.unlink(tmp.name)
+
+    def test_the_ramp_clock_starts_on_the_first_real_send_not_the_config(self):
+        """A warm-up that can be reset by editing a file will be reset."""
+        from answerrank.sending import WARMUP_KEY, _days_warming
+        from datetime import date, timedelta
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            store = Store(tmp.name)
+            settings = Settings()
+            settings.warmup_start = (date.today() - timedelta(days=90)).isoformat()
+            store.kv_set(WARMUP_KEY, (date.today() - timedelta(days=5)).isoformat())
+            self.assertEqual(_days_warming(store, settings), 5)
+        finally:
+            os.unlink(tmp.name)

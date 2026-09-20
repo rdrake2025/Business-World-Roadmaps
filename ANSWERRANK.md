@@ -79,14 +79,52 @@ It also makes the system honest about where the business model works:
 python3 run.py verticals          # which trades justify $997/mo, and on what argument
 ```
 
-At $997/mo only HVAC clears on first-job revenue alone. Plumbing and dental
-need the lifetime-value argument. The rest do not justify that price and the
-qualifier refuses to pitch them — pitching poor-fit prospects spends
-complaint-rate budget that cannot be bought back.
+Twenty-two trades are encoded. At $997/mo eleven of them clear — some on
+first-job revenue, some only on lifetime value, and the system says which,
+because selling a dentist on first-job maths is a claim that falls apart the
+moment they check it. The qualifier refuses to pitch the rest at that price:
+pitching poor-fit prospects spends complaint-rate budget that cannot be bought
+back.
+
+A trade that fails at $997 is a pricing problem, not a dead market. Every one
+of the twenty-two is sellable somewhere on the ladder, and `recommended_price`
+finds the highest tier its own economics defend — $1,997 for a remodeler,
+$297 for a garage door company. That turned eleven viable trades into
+twenty-two.
+
+## How the agents are trained
+
+`answerrank/playbook.py` encodes the method, so the same discipline applies on
+the four-hundredth prospect as on the fourth. It is drawn from this
+repository's own `Sales_Business_Development_README.md`, which specifies BANT
+as the qualification framework and names the two pitfalls this implementation
+is built to avoid — broad targeting and weak follow-ups.
+
+- **BANT**, scored from measured things rather than assumed ones: Budget from
+  whether the trade's economics defend the price, Authority from how many
+  people have to agree, Need from the audit, Timeline from seasonality. Every
+  dimension returns the evidence behind it.
+- **Objection handling** — every one of the 67 objections recorded across the
+  22 trades has an answer that concedes the owner's point first. An objection
+  argued with is an objection repeated.
+- **Discovery questions** that make the prospect do the arithmetic themselves,
+  because a number they say out loud is worth more than the same number in our
+  email.
+- **Sequence discipline**, enforced rather than documented: `sequence_check`
+  runs against the system's own drafts and rejects a content-free nudge, an
+  over-long message, a missing unsubscribe line or a broken wrap. A rule the
+  agents are trained on but never measured against is a comment, not a rule.
+
+```bash
+python3 run.py playbook septic        # how to sell one trade
+python3 run.py brief "Apex"           # the full read on one prospect
+```
 
 ## Finding the next market
 
-The seven verticals were chosen by hand, which is a ceiling. Two agents lift it.
+The first seven verticals were chosen by hand, which is a ceiling. Two agents
+lift it — seven trades have since been promoted out of the candidate list and
+into the served library on measured evidence.
 
 **Explorer** tests the market model rather than trusting it. It samples real
 businesses in a candidate trade, runs the same audit the paying product runs,
@@ -133,8 +171,16 @@ run, never decoration.
 | --- | --- |
 | **Today** | What needs you now, fleet health, and the three actions |
 | **Inbox** | Every draft with its evidence line — Approve or Skip with a thumb |
-| **Pipeline** | Prospects by stage, and the hot leads |
-| **Money** | Profit against the $5k target, MRR, clients, reports |
+| **Pipeline** | Prospects by stage, and the hot leads — tap one for the full read |
+| **Clients** | Health score per account, worst first, with the one action for each |
+| **Brain** | What the fleet worked out: findings, the next move, required volume, where each trade should be priced |
+
+Tapping a hot lead opens the qualification sheet: priority, ICP tier, BANT with
+its evidence, whether the quoted price fits that trade, and the question to ask
+next. It carries a reply box, so a reply that arrives on the phone can be
+pasted straight in — the Concierge reads it, advances the prospect, and drafts
+the response for approval without a laptop being involved. Money is one tap
+from Brain; five tabs is the most a phone nav carries legibly.
 
 **The console cannot bypass a compliance gate.** Sending from the phone runs
 the same preflight as the command line: no postal address or failing DNS means
@@ -149,18 +195,49 @@ outreach — treat it like a password; restarting issues a new one.
 
 | Agent | Every | Does |
 | --- | --- | --- |
+| `concierge` | 30m | Reads inbound replies, classifies intent, drafts the answer |
 | `scout` | 6h | Finds local businesses in defensible verticals, dedupes by domain |
 | `auditor` | 1h | Teaser audits on prospects, full audits for clients |
 | `fixer` | 6h | Generates JSON-LD schema, FAQ copy, GBP and citation plans |
 | `reporter` | 12h | Renders branded monthly client reports |
 | `outreach` | 4h | Drafts evidence-backed, CAN-SPAM-compliant email |
 | `bookkeeper` | 24h | Bills clients, books costs, tracks the target |
+| `retention` | 24h | Scores client health and names the one action per account |
 | `explorer` | 12h | Samples candidate markets to find the next vertical worth entering |
+| `analyst` | 12h | Reads recorded outcomes and reports what is actually converting |
 | `strategist` | 24h | Reads the evidence and recommends the single next move |
 
 The orchestrator runs them on independent schedules in one process. An agent
 that crashes is recorded as a failed run; the fleet keeps going. "Due" is
 computed from the database, so restarts resume rather than replay.
+
+Order is deliberate. The Concierge runs first because an inbound reply outranks
+every piece of new work in the queue — it is the only event a human is waiting
+on. The Analyst runs late, once the tick has produced whatever it is going to,
+and the Strategist runs last so its single recommendation is made with the
+Analyst's findings already written.
+
+### The three that close the loop
+
+Everything else in the fleet *acts*. These three are what let it improve.
+
+**Concierge** handles the moment a prospect replies — previously the largest
+unmanaged gap in the business, since everything upstream exists to produce a
+reply and a reply landed in an inbox and sat there. It classifies intent
+conservatively (ambiguity routes to a human, never to an assumption),
+suppresses instantly on an unsubscribe, and answers the objection hiding inside
+most "questions". It drafts; it never sends.
+
+**Analyst** is the only agent that asks whether the acting worked. It reads the
+`outcomes` table and reports reply and win rates by trade and by sequence step —
+and refuses to conclude below 25 sends, because acting on noise is worse than
+acting on a benchmark, since it feels like evidence. It also turns the
+$5,000/month goal into the only form that can be acted on: emails per day.
+
+**Retention** scores client health continuously rather than reacting to notice,
+because health deteriorates 60–90 days before a cancellation. Silence is the
+leading indicator it weighs heaviest — not complaints, which at least mean the
+client still expects something to change.
 
 ## How the product works
 
@@ -205,9 +282,57 @@ and retention at the same time.
 | `schedule --start DATE` | Generate an .ics calendar for your phone |
 | `setup` | Interactive first-run configuration |
 | `doctor [--probe]` | What is blocking you from operating |
-| `verticals [--price N]` | Which trades justify which retainer, and why |
+| `verticals [--price N]` | Which trades justify which retainer, and where each should be priced |
 | `markets [--price N]` | Candidate markets, measured, and the next move |
+| `brief NAME` | Full qualification read on one prospect: fit, BANT, objections, questions |
+| `reply NAME "text"` | Log an inbound reply; the Concierge classifies it and drafts the answer |
+| `clients` | Client health scores, worst first, with the one action for each |
+| `learn [--days N]` | What the recorded outcomes actually show |
+| `playbook TRADE` | How to sell one trade: positioning, objections, discovery |
+| `domain NAME --provider X` | Sending-domain setup: the exact DNS records, then whether they are live |
 | `web` | Serve the site and the phone console |
+
+## Turning the domain on
+
+Double-click **SETUP-DOMAIN.bat** (Windows) or run **./setup-domain.sh**
+(macOS, Linux). It asks for the domain and the mailbox provider, and nothing
+else. From a terminal it is:
+
+```bash
+python3 run.py domain yourdomain.com --provider google
+```
+
+It is a separate file from the launcher on purpose. Domain setup is not a
+one-shot — DNS takes minutes to hours to appear, so this is something you run,
+go and add a record, and run again.
+
+Prints the exact rows to paste into the registrar — MX, SPF, DKIM, DMARC —
+with what each one is for, then checks live DNS and tells you which are
+actually published. Run it again after adding them; it is idempotent and safe
+to run as many times as it takes.
+
+It refuses rather than warns. A domain that sends unauthenticated mail is not
+recoverable — you buy a new one — so nothing sends until every blocking row
+passes.
+
+Two things it is strict about, because both are silent failures:
+
+- **DKIM with an empty key is treated as missing.** `v=DKIM1; p=` means the
+  key is *revoked* under RFC 6376, and it is sometimes published on a wildcard
+  to say "we sign nothing here". Reporting that domain as authenticated while
+  it sends unsigned mail would be the worst thing this check could do.
+- **Lookups go over DNS-over-HTTPS**, not `dig`. `dig` does not ship with
+  Windows, so the previous check could never pass on the machine this is
+  actually run from — sending was blocked by a resolver that was never there.
+
+### Warm-up is enforced, not suggested
+
+A domain with no sending history that opens at 120 a day is read as a
+compromised account, and that reputation does not come back. The cap ramps
+over about a month — 10 a day, then 20, 40, 70, 100, then full — and the send
+path will not exceed it. Day one is stamped in the database on the first real
+send rather than set in the config, because a warm-up that can be reset by
+editing a file is a warm-up that gets reset the first time the cap feels slow.
 
 ## Safety rails
 
@@ -257,7 +382,9 @@ answerrank/
 ├── cli.py             Operator command line
 ├── engines/           ChatGPT, Claude, Perplexity, Google AI Overviews, mock
 │   └── base.py        Answer parsing — the core IP
-├── agents/            The seven workers
+├── playbook.py        BANT, objection handling, sequence discipline
+├── sending.py         The single path a message leaves by
+├── agents/            The eleven workers
 ├── report/templates/  Client-facing HTML report
 ├── doctor.py          Preflight checks — what is blocking you
 ├── wizard.py          Interactive setup

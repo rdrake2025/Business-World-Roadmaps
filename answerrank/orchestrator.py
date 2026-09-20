@@ -23,13 +23,16 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
+from .agents.analyst import AnalystAgent
 from .agents.auditor import AuditorAgent
 from .agents.base import Agent
 from .agents.bookkeeper import BookkeeperAgent
+from .agents.concierge import ConciergeAgent
 from .agents.explorer import ExplorerAgent
 from .agents.fixer import FixerAgent
 from .agents.outreach import OutreachAgent
 from .agents.reporter import ReporterAgent
+from .agents.retention import RetentionAgent
 from .agents.scout import ScoutAgent
 from .agents.strategist import StrategistAgent
 from .config import Settings
@@ -40,8 +43,15 @@ log = logging.getLogger("answerrank.orchestrator")
 # Order matters: each agent consumes what the previous one produced, so a
 # single tick can carry a prospect from discovery all the way to a drafted
 # email.
-AGENT_ORDER = [ScoutAgent, AuditorAgent, FixerAgent, ReporterAgent, OutreachAgent,
-               BookkeeperAgent, ExplorerAgent, StrategistAgent]
+#
+# The Concierge runs first because an inbound reply outranks every piece of
+# new work in the queue — it is the only event in the system that a human is
+# waiting on. The Analyst runs late, after the tick has produced whatever it
+# is going to produce, and the Strategist runs last so its single
+# recommendation is made with the Analyst's findings already written.
+AGENT_ORDER = [ConciergeAgent, ScoutAgent, AuditorAgent, FixerAgent, ReporterAgent,
+               OutreachAgent, BookkeeperAgent, RetentionAgent, ExplorerAgent,
+               AnalystAgent, StrategistAgent]
 
 
 def build_fleet(store: Store, settings: Settings) -> list[Agent]:

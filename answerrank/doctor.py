@@ -11,8 +11,6 @@ fail, so this is where you find out why.
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,27 +31,6 @@ class Check:
     @property
     def icon(self) -> str:
         return {PASS: "✓", WARN: "!", FAIL: "✗"}[self.status]
-
-
-def _dns_tool() -> str | None:
-    """`dig` on macOS and Linux, `nslookup` on Windows. Either is fine."""
-    for tool in ("dig", "nslookup"):
-        if shutil.which(tool):
-            return tool
-    return None
-
-
-def _dig_txt(name: str) -> str:
-    tool = _dns_tool()
-    if not tool:
-        return ""
-    cmd = (["dig", "+short", "TXT", name] if tool == "dig"
-           else ["nslookup", "-type=TXT", name])
-    try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-        return out.stdout or ""
-    except (OSError, subprocess.SubprocessError):
-        return ""
 
 
 def check_python() -> Check:
@@ -137,35 +114,22 @@ def check_database(settings: Settings) -> Check:
 
 
 def check_dns(settings: Settings) -> list[Check]:
+    """SPF, DKIM, DMARC and MX, checked live against the sending domain.
+
+    This previously checked SPF and DMARC only. A domain can pass both and
+    still land in spam, because DKIM is the one of the three that actually
+    proves a message was not forged — and it was never looked at.
+    """
+    from .dns_setup import readiness
+
     domain = settings.from_email.split("@")[-1] if "@" in settings.from_email else ""
-    if not domain or "yourdomain" in domain:
-        return [Check("DNS (SPF/DKIM/DMARC)", FAIL, "no real sending domain configured",
-                      "Set from_email to your sending domain first.", blocking=True)]
-    if not _dns_tool():
-        return [Check("DNS (SPF/DKIM/DMARC)", WARN, "no DNS lookup tool on this machine",
-                      f"Check manually at https://mxtoolbox.com/SuperTool.aspx — "
-                      f"look up TXT for {domain} and _dmarc.{domain}", blocking=True)]
-
-    out = []
-    spf = _dig_txt(domain)
-    if "v=spf1" in spf:
-        out.append(Check("SPF record", PASS, domain, blocking=True))
-    else:
-        out.append(Check("SPF record", FAIL, f"none on {domain}",
-                         f'Add TXT @ → "v=spf1 include:_spf.google.com ~all"', blocking=True))
-
-    dmarc = _dig_txt(f"_dmarc.{domain}").replace(" ", "")
-    if "v=DMARC1" not in dmarc:
-        out.append(Check("DMARC record", FAIL, f"none on _dmarc.{domain}",
-                         'Add TXT _dmarc → "v=DMARC1; p=quarantine; rua=mailto:you@domain"',
-                         blocking=True))
-    elif "p=none" in dmarc:
-        out.append(Check("DMARC policy", FAIL, "p=none is not sufficient in 2026",
-                         "Change the DMARC policy to p=quarantine or p=reject.", blocking=True))
-    else:
-        policy = "reject" if "p=reject" in dmarc else "quarantine"
-        out.append(Check("DMARC record", PASS, f"p={policy}", blocking=True))
-    return out
+    provider = getattr(settings, "email_provider", "") or ""
+    result = readiness(domain, provider)
+    return [
+        Check(f"DNS · {s.name}", PASS if s.ok else FAIL, s.detail, s.fix,
+              blocking=s.blocking)
+        for s in result.signals
+    ]
 
 
 def check_unsubscribe(settings: Settings, probe: bool = False) -> Check:

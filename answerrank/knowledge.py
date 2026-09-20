@@ -19,6 +19,9 @@ Sources:
   Seasonality              — SmartAC / BaaDigi HVAC search seasonality (2026)
   Restoration job / CLV    — PuroClean, Palm Build, PushLeads restoration (2026)
   Med spa visit / LTV      — Zenoti, DigitalMedSpa, ScaleHaven aesthetics (2026)
+  Electrician pricing      — Housecall Pro electrician pricing; 99 Calls LSA (2026)
+  Garage door pricing      — Housecall Pro garage door price guide (2026)
+  Tree service CAC         — Financial Models Lab tree care benchmarks (2026)
 """
 
 from __future__ import annotations
@@ -259,6 +262,76 @@ VERTICALS: dict[str, Vertical] = {
                        "Google Ads presence", "multiple injectors on staff",
                        "financing offered"],
     ),
+    "electrical": Vertical(
+        key="electrical",
+        label="electrician",
+        service="electrical work",
+        urgent_scenario="My power keeps tripping and I need an electrician",
+        jobs=["panel upgrade", "EV charger installation", "rewiring",
+              "outlet and switch repair", "lighting installation"],
+        # $40-100/hr with $100-200 service calls; panel upgrades and EV charger
+        # installs carry the average well above a service call. Lead cost rose
+        # 51% to $43.15 in 2026, which makes organic visibility more valuable.
+        economics=Economics(avg_ticket=900, lifetime_value=3600, typical_cac=310,
+                            monthly_queries=380, booking_rate=0.022),
+        peak_months=[6, 11],
+        objections=[
+            "We're booked out for weeks",
+            "Contractors send us all the work we need",
+            "I don't do residential marketing",
+        ],
+        decision_maker="owner, often still on the tools",
+        buyer_phrases=["electrician near me", "breaker keeps tripping who to call",
+                       "ev charger installer", "cost to upgrade electrical panel"],
+        spend_signals=["licensed and bonded displayed", "Google Ads presence",
+                       "EV charger certification", "branded vans"],
+    ),
+    "tree_service": Vertical(
+        key="tree_service",
+        label="tree service",
+        service="tree removal",
+        urgent_scenario="A tree came down on my property after a storm",
+        jobs=["emergency tree removal", "tree removal", "stump grinding",
+              "pruning and trimming", "storm cleanup"],
+        # Emergency removal is the highest-value line by a wide margin;
+        # published CAC around $300 with an industry goal of $220 by 2030.
+        economics=Economics(avg_ticket=1400, lifetime_value=2800, typical_cac=300,
+                            monthly_queries=260, booking_rate=0.020),
+        peak_months=[3, 9],  # storm seasons
+        objections=[
+            "Storm season gives us more work than we can take",
+            "We get everything from referrals and HOAs",
+            "Marketing didn't work when we tried it",
+        ],
+        decision_maker="owner",
+        buyer_phrases=["emergency tree removal near me", "tree fell on house who to call",
+                       "tree removal cost", "arborist near me"],
+        spend_signals=["ISA certified arborist", "24/7 storm response advertised",
+                       "chipper and bucket truck fleet", "Google Ads presence"],
+    ),
+    "garage_door": Vertical(
+        key="garage_door",
+        label="garage door company",
+        service="garage door repair",
+        urgent_scenario="My garage door is stuck and my car is trapped inside",
+        jobs=["door installation", "opener replacement", "torsion spring replacement",
+              "track and roller repair"],
+        # Repairs $150-600, springs $200-600, openers $300-800, full install
+        # $800-2,500+. High frequency, modest ticket — the case rests on volume.
+        economics=Economics(avg_ticket=450, lifetime_value=1300, typical_cac=190,
+                            monthly_queries=300, booking_rate=0.028),
+        peak_months=[1, 7],  # cold snaps and heat both break springs
+        objections=[
+            "We're a two-truck shop, we stay busy",
+            "Builders and property managers keep us full",
+            "Our phone rings enough",
+        ],
+        decision_maker="owner",
+        buyer_phrases=["garage door repair near me", "garage door spring broke",
+                       "garage door won't open", "same day garage door repair"],
+        spend_signals=["same-day service advertised", "Google Ads presence",
+                       "branded trucks", "manufacturer dealer status"],
+    ),
     "medical": Vertical(
         key="medical",
         label="medical clinic",
@@ -287,6 +360,237 @@ VERTICALS: dict[str, Vertical] = {
         decision_maker="agency principal",
         buyer_phrases=["insurance agent near me", "cheapest home insurance quote"],
         spend_signals=["multiple carriers", "Google Ads presence", "local sponsorships"],
+    ),
+    "pest_control": Vertical(
+        key="pest_control",
+        label="pest control company",
+        service="pest treatment",
+        urgent_scenario="I found bed bugs in my bedroom",
+        jobs=["bed bug treatment", "termite treatment", "rodent exclusion",
+              "quarterly protection plan", "wasp nest removal"],
+        # Initial service $300-550; the money is in the quarterly plan, which
+        # runs ~$140 a visit and retains for 3-5 years.
+        economics=Economics(avg_ticket=400, lifetime_value=2600, typical_cac=180,
+                            monthly_queries=380, search_share=0.50, booking_rate=0.030),
+        peak_months=[5, 6],  # spring emergence and summer swarms
+        objections=[
+            "We're seasonal, we catch up in spring anyway",
+            "Terminix and Orkin own the search results",
+            "Our route is full",
+        ],
+        decision_maker="owner or branch manager",
+        buyer_phrases=["exterminator near me", "how to get rid of bed bugs fast",
+                       "termite inspection cost", "same day pest control"],
+        spend_signals=["quarterly plan advertised", "Google Ads presence",
+                       "branded trucks", "free inspection offer"],
+    ),
+    "auto_repair": Vertical(
+        key="auto_repair",
+        label="auto repair shop",
+        service="car repair",
+        urgent_scenario="My car won't start and I need it fixed today",
+        jobs=["engine diagnostics and repair", "transmission service", "brake job",
+              "check engine light", "oil change"],
+        # Average repair order sits around $500; a retained customer returns
+        # two to three times a year for the life of the vehicle.
+        economics=Economics(avg_ticket=500, lifetime_value=4200, typical_cac=250,
+                            monthly_queries=550, search_share=0.40, booking_rate=0.028),
+        peak_months=[1, 7],  # cold-start failures and summer road-trip season
+        objections=[
+            "We have a two-week backlog already",
+            "Our customers have been coming here for twenty years",
+            "Dealers get all the online business",
+        ],
+        decision_maker="owner or service manager",
+        buyer_phrases=["mechanic near me", "why is my check engine light on",
+                       "brake repair cost", "honest auto shop near me"],
+        spend_signals=["ASE certified technicians", "loaner cars offered",
+                       "Google Ads presence", "review count above 100"],
+    ),
+    "veterinary": Vertical(
+        key="veterinary",
+        label="veterinary clinic",
+        service="veterinary care",
+        urgent_scenario="My dog is sick and I need a vet who can see him today",
+        jobs=["emergency visit", "surgery", "dental cleaning", "wellness plan",
+              "vaccinations"],
+        # Per-visit spend is modest but a pet is a decade-long relationship,
+        # so the honest case here is lifetime value, not the first visit.
+        economics=Economics(avg_ticket=320, lifetime_value=4800, typical_cac=220,
+                            monthly_queries=420, search_share=0.45, booking_rate=0.030),
+        peak_months=[5, 9],  # parasite season and back-to-school puppy intake
+        objections=[
+            "We're not taking new patients",
+            "Corporate groups are buying up every practice around us",
+            "Our schedule is booked three weeks out",
+        ],
+        decision_maker="practice owner or hospital manager",
+        buyer_phrases=["emergency vet near me open now", "vet accepting new patients",
+                       "how much does a dog dental cost", "24 hour animal hospital"],
+        spend_signals=["accepting new patients", "wellness plan advertised",
+                       "after-hours line", "AAHA accreditation"],
+    ),
+    "chiropractic": Vertical(
+        key="chiropractic",
+        label="chiropractor",
+        service="chiropractic care",
+        urgent_scenario="I threw my back out and I can barely move",
+        jobs=["initial care plan", "spinal decompression", "auto injury rehab",
+              "adjustment visit"],
+        # A single adjustment is ~$65, but new patients arrive on a care plan
+        # worth $800-1,100 and many return for years afterwards.
+        economics=Economics(avg_ticket=850, lifetime_value=3600, typical_cac=190,
+                            monthly_queries=260, search_share=0.55, booking_rate=0.025),
+        peak_months=[1, 9],  # new-year resolutions and post-summer injuries
+        objections=[
+            "Referrals from our existing patients keep us full",
+            "Insurance reimbursement is what limits us, not patients",
+            "We tried a marketing company and got nothing",
+        ],
+        decision_maker="practice owner",
+        buyer_phrases=["chiropractor near me", "chiropractor that takes my insurance",
+                       "back pain who to see", "walk in chiropractor today"],
+        spend_signals=["new patient special advertised", "online booking",
+                       "Google Ads presence", "review count above 80"],
+    ),
+    "remodeling": Vertical(
+        key="remodeling",
+        label="remodeling contractor",
+        service="kitchen and bath remodeling",
+        urgent_scenario="I am planning a kitchen remodel and comparing contractors",
+        jobs=["full kitchen remodel", "bathroom remodel", "home addition",
+              "basement finishing"],
+        has_emergencies=False,
+        # Very high ticket, very low volume, long consideration with three or
+        # four bids — the booking rate is set correspondingly low.
+        economics=Economics(avg_ticket=28000, lifetime_value=38000, typical_cac=1900,
+                            monthly_queries=140, search_share=0.55, booking_rate=0.010),
+        peak_months=[3, 9],  # spring planning and pre-holiday completion
+        objections=[
+            "We're booked through next year",
+            "Our work comes from designers and past clients",
+            "Leads from Angi were worthless",
+        ],
+        decision_maker="owner",
+        buyer_phrases=["kitchen remodel cost", "best remodeling contractor near me",
+                       "bathroom renovation contractors", "home addition builder"],
+        spend_signals=["portfolio gallery on site", "design showroom",
+                       "financing offered", "NARI or NKBA membership"],
+    ),
+    "flooring": Vertical(
+        key="flooring",
+        label="flooring contractor",
+        service="flooring installation",
+        urgent_scenario="I am choosing a flooring installer and want quotes",
+        jobs=["whole-home hardwood installation", "luxury vinyl plank",
+              "tile installation", "carpet replacement", "refinishing"],
+        has_emergencies=False,
+        economics=Economics(avg_ticket=4200, lifetime_value=6400, typical_cac=620,
+                            monthly_queries=190, search_share=0.50, booking_rate=0.012),
+        peak_months=[4, 10],
+        objections=[
+            "Big box stores control the installs",
+            "Builders keep our crews busy",
+            "Everyone shops us on price anyway",
+        ],
+        decision_maker="owner",
+        buyer_phrases=["flooring installers near me", "cost to install hardwood floors",
+                       "lvp vs laminate", "who installs tile floors"],
+        spend_signals=["showroom", "free in-home estimate", "Google Ads presence",
+                       "manufacturer certified installer"],
+    ),
+    "appliance_repair": Vertical(
+        key="appliance_repair",
+        label="appliance repair company",
+        service="appliance repair",
+        urgent_scenario="My refrigerator stopped cooling and the food is spoiling",
+        jobs=["refrigerator repair", "washer and dryer repair", "oven repair",
+              "dishwasher repair"],
+        # Low ticket, high frequency, decided in minutes — this trade lives or
+        # dies on being the name the assistant says first.
+        economics=Economics(avg_ticket=280, lifetime_value=900, typical_cac=120,
+                            monthly_queries=460, search_share=0.55, booking_rate=0.032),
+        peak_months=[7, 11],  # summer fridge failures, holiday oven failures
+        objections=[
+            "We're a one-van operation",
+            "Warranty companies send us all the work we need",
+            "Margins are too thin for marketing",
+        ],
+        decision_maker="owner",
+        buyer_phrases=["appliance repair near me", "fridge not cooling who to call",
+                       "same day washer repair", "samsung repair technician near me"],
+        spend_signals=["same-day service advertised", "factory authorized",
+                       "Google Ads presence", "online booking"],
+    ),
+    "septic": Vertical(
+        key="septic",
+        label="septic service company",
+        service="septic service",
+        urgent_scenario="My septic tank is backing up into the house",
+        jobs=["septic system replacement", "drain field repair", "tank pumping",
+              "inspection for a home sale"],
+        # Routine pumping is ~$500; failures and replacements run into the
+        # thousands, and the blended figure reflects both.
+        economics=Economics(avg_ticket=1100, lifetime_value=3400, typical_cac=230,
+                            monthly_queries=180, search_share=0.60, booking_rate=0.035),
+        peak_months=[4, 11],  # spring saturation and holiday household load
+        objections=[
+            "Everyone around here already knows us",
+            "The county inspector sends us work",
+            "We only have two trucks",
+        ],
+        decision_maker="owner",
+        buyer_phrases=["septic pumping near me", "septic backing up who to call",
+                       "septic inspection for closing", "drain field repair cost"],
+        spend_signals=["emergency service advertised", "county permitted installer",
+                       "Google Ads presence", "real estate inspection service"],
+    ),
+    "moving": Vertical(
+        key="moving",
+        label="moving company",
+        service="moving services",
+        urgent_scenario="I need movers for a house move in two weeks",
+        jobs=["long-distance move", "full-service local move", "packing services",
+              "piano and specialty moving"],
+        # Search-dominated: almost nobody has a mover they already use, which
+        # makes the AI answer unusually decisive for this trade.
+        economics=Economics(avg_ticket=1300, lifetime_value=2100, typical_cac=290,
+                            monthly_queries=320, search_share=0.65, booking_rate=0.018),
+        peak_months=[6, 7],  # the summer moving season
+        objections=[
+            "Summer fills itself, winter is the problem",
+            "Lead brokers already sell us moves",
+            "Every quote turns into a price shootout",
+        ],
+        decision_maker="owner",
+        buyer_phrases=["movers near me", "how much do movers cost",
+                       "best moving company reviews", "last minute movers"],
+        spend_signals=["binding estimate offered", "DOT number displayed",
+                       "Google Ads presence", "review count above 60"],
+    ),
+    "landscaping": Vertical(
+        key="landscaping",
+        label="landscaping company",
+        service="landscaping",
+        urgent_scenario="I want my yard redone before summer",
+        jobs=["hardscape and patio installation", "irrigation installation",
+              "landscape design", "seasonal maintenance contract", "sod installation"],
+        has_emergencies=False,
+        # Maintenance contracts are what make the lifetime value work; the
+        # blended ticket carries both a mow route and a $9,000 patio.
+        economics=Economics(avg_ticket=650, lifetime_value=4800, typical_cac=210,
+                            monthly_queries=400, search_share=0.45, booking_rate=0.022),
+        peak_months=[4, 5],
+        objections=[
+            "Our route is full by April",
+            "Neighbours refer us, we've never advertised",
+            "Everyone wants a cheaper mow",
+        ],
+        decision_maker="owner",
+        buyer_phrases=["landscaper near me", "patio installation cost",
+                       "lawn care service near me", "landscape designer near me"],
+        spend_signals=["design portfolio", "maintenance contracts advertised",
+                       "Google Ads presence", "branded trailers"],
     ),
 }
 
@@ -326,6 +630,52 @@ def register_provisional(v: "Vertical") -> None:
 
 def is_adopted(vertical: str) -> bool:
     return vertical in VERTICALS
+
+
+#: Letters whose *name* begins with a vowel sound. "HVAC" is spoken
+#: "aych-vac", so it takes "an" despite starting with a consonant — the kind
+#: of detail a trade owner notices in a cold email even if they cannot say why.
+_ACRONYM_VOWEL_SOUND = set("AEFHILMNORSX")
+
+
+def article(phrase: str) -> str:
+    """"a" or "an" for a phrase, acronyms included."""
+    words = (phrase or "").split()
+    if not words:
+        return "a"
+    word = words[0]
+    if word.isupper() and len(word) > 1:
+        return "an" if word[0] in _ACRONYM_VOWEL_SOUND else "a"
+    return "an" if word[0].lower() in "aeiou" else "a"
+
+
+def plural(label: str) -> str:
+    """Pluralise a trade label. "garage door company" -> "garage door companies"."""
+    if not label:
+        return label
+    head, _, last = label.rpartition(" ")
+    if last.endswith("y") and len(last) > 1 and last[-2].lower() not in "aeiou":
+        last = last[:-1] + "ies"
+    elif last.endswith(("s", "x", "z", "ch", "sh")):
+        last += "es"
+    else:
+        last += "s"
+    return f"{head} {last}".strip()
+
+
+def sentence_case(text: str) -> str:
+    """Capitalise the first letter and leave the rest alone.
+
+    ``str.capitalize`` would turn "HVAC contractor" into "Hvac contractor",
+    which reads as carelessness to the one audience that would notice.
+    """
+    return (text[:1].upper() + text[1:]) if text else text
+
+
+def a_label(vertical: str) -> str:
+    """"an HVAC contractor", "a plumber" — ready to drop into a sentence."""
+    label = get(vertical).label
+    return f"{article(label)} {label}"
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +719,8 @@ def revenue_at_risk(vertical: str, missed_answers: int, total_answers: int,
         "lifetime_value": econ.lifetime_value,
         "assumption": (
             f"Assumes ~{queries} buyer-intent searches a month for "
-            f"{v.label}s in a market this size, {int(econ.search_share * 100)}% of "
+            f"{plural(v.label)} in a market this size, "
+            f"{int(econ.search_share * 100)}% of "
             f"new customers arriving via search, {int(econ.ai_answer_share * 100)}% "
             f"of those resolving to an AI answer, and a "
             f"{econ.booking_rate * 100:.1f}% booking rate. Every step is set low on "
@@ -470,7 +821,7 @@ def from_candidate(candidate) -> Vertical:
         key=candidate.key,
         label=label,
         service=label.replace(" contractor", "").replace(" clinic", ""),
-        urgent_scenario=f"I need a {label} urgently",
+        urgent_scenario=f"I need {article(label)} {label} urgently",
         jobs=[f"{label} work"],
         economics=Economics(
             avg_ticket=candidate.avg_ticket,
@@ -489,3 +840,52 @@ def from_candidate(candidate) -> Vertical:
         buyer_phrases=[f"{label} near me", f"best {label}", f"emergency {label}"],
         spend_signals=["Google Ads presence", "branded vehicle"],
     )
+
+
+#: The standard pricing ladder, low to high. Kept here rather than imported
+#: from config so the knowledge layer has no dependency on runtime settings.
+PRICE_LADDER: list[float] = [297.0, 497.0, 997.0, 1997.0]
+
+
+def recommended_price(vertical: str, ladder: list[float] | None = None) -> dict[str, object]:
+    """The highest price this trade's economics actually defend.
+
+    Previously a trade that failed at $997 was simply dropped. That threw away
+    real markets for a reason that was never about the market: an appliance
+    repair shop cannot justify $997 on a $280 ticket, but it justifies $297
+    comfortably. The answer to weak economics is a lower tier, not silence.
+
+    Returns the tier, the basis it rests on, and — when nothing on the ladder
+    works — an honest ``None`` rather than a price we would have to defend
+    with a number the owner could disprove.
+    """
+    rungs = sorted(ladder or PRICE_LADDER, reverse=True)
+    for price in rungs:
+        fit = plan_fit(vertical, price)
+        if fit["verdict"] in {"strong", "workable"}:
+            return {
+                "vertical": vertical,
+                "price": price,
+                "verdict": fit["verdict"],
+                "basis": fit["basis"],
+                "line": (f"{sentence_case(plural(get(vertical).label))} support "
+                         f"${price:,.0f}/mo on {fit['basis']}."),
+            }
+    return {
+        "vertical": vertical,
+        "price": None,
+        "verdict": "weak",
+        "basis": "neither",
+        "line": (f"No tier on the ladder is defensible for {get(vertical).label}s. "
+                 f"The ticket is too small and the relationship too short."),
+    }
+
+
+def priced_verticals(ladder: list[float] | None = None) -> list[dict[str, object]]:
+    """Every adopted trade with the tier it should be sold at, best first."""
+    rows = [recommended_price(k, ladder) for k in VERTICALS]
+    sellable = [r for r in rows if r["price"] is not None]
+    unsellable = [r for r in rows if r["price"] is None]
+    sellable.sort(key=lambda r: (-float(r["price"] or 0),
+                                 0 if r["verdict"] == "strong" else 1))
+    return sellable + unsellable

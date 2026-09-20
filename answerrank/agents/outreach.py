@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, timezone
 
-from .. import knowledge, qualify
+from .. import knowledge, playbook, qualify
 from ..models import OutreachMessage, Prospect, now_iso
 from .base import Agent
 
@@ -37,7 +37,7 @@ def _compliance_block(settings) -> str:
         f"\n\n---\n"
         f"{settings.company_legal_name}\n"
         f"{settings.physical_address}\n"
-        f"Reply STOP or click here to unsubscribe and we will not contact you again: "
+        f"Reply STOP, or use this link, and we will not contact you again:\n"
         f"{settings.website}/unsubscribe\n"
     )
 
@@ -88,32 +88,27 @@ def first_touch(prospect: Prospect, settings) -> tuple[str, str]:
         subject = f"{biz.name[:22]}: a gap in AI search"
 
     evidence = note.split(" | ")[0] if note else (
-        f"{biz.name} appears in very few AI answers for {v.label}s in {biz.market}."
-    )
+        f"{biz.name} appears in very few AI answers for "
+        f"{knowledge.plural(v.label)} in {biz.market}.")
 
     risk = knowledge.revenue_at_risk(biz.vertical, missed, total)
     money = ""
     if float(risk["annual_revenue"]) >= 8000:
         money = (
-            f"\n\nOn a ${v.economics.avg_ticket:,.0f} average ticket that is roughly "
+            f"On a ${v.economics.avg_ticket:,.0f} average ticket that is roughly "
             f"${float(risk['annual_revenue']):,.0f} a year of first-job revenue going "
-            f"elsewhere \u2014 and that estimate is set deliberately low."
-        )
+            f"elsewhere \u2014 and that estimate is set deliberately low.")
 
-    body = f"""Hi,
-
-{evidence}
-
-When someone asks an assistant who to call, the answer names two or three
-businesses and the rest are never seen.{money}
-
-I put the full check into a one-page report \u2014 which questions you're missing,
-who's named instead, and the three fixes that move it fastest.
-
-Want it? Reply "yes" and it's yours, no charge.
-
-{settings.brand}
-{settings.website}"""
+    body = playbook.email_body(
+        "Hi,",
+        evidence,
+        "When someone asks an assistant who to call, the answer names two or three "
+        "businesses and the rest are never seen.",
+        money,
+        "I put the full check into a one-page report \u2014 which questions you're "
+        "missing, who's named instead, and the three fixes that move it fastest.",
+        'Want it? Reply "yes" and it\'s yours, no charge.',
+        f"{settings.brand}\n{settings.website}")
 
     return subject, body + _compliance_block(settings)
 
@@ -123,7 +118,9 @@ def followup(prospect: Prospect, step: int, settings) -> tuple[str, str]:
 
     Step 2 reframes: this is not an SEO problem, which is why their existing
     spend did not prevent it. Step 3 gives permission to say no, which
-    reliably produces a share of the total replies.
+    reliably produces a share of the total replies. Past step 3 the sequence
+    closes rather than degrading into pestering \u2014 a content-free nudge costs
+    more in complaint rate than it can earn in replies.
     """
     biz = prospect.business
     v = knowledge.get(biz.vertical)
@@ -131,41 +128,43 @@ def followup(prospect: Prospect, step: int, settings) -> tuple[str, str]:
 
     if step == 2:
         subject = f"Re: {subject_line(biz.name, biz.city, 0, 0).split(':')[0]}"
-        body = f"""Hi,
-
-Following up on the AI visibility check for {biz.name}.
-
-The part most owners find surprising: this isn't a Google ranking problem.
-You can sit at number one in local search and still be absent from the AI
-answer, because assistants build answers from structured data and
-corroborating sources rather than from the results page.
-
-That's why your existing SEO spend didn't stop it.
-
-{evidence}
-
-Happy to send the one-page report \u2014 no charge, no call. Just reply "yes".
-
-{settings.brand}"""
+        body = playbook.email_body(
+            "Hi,",
+            f"Following up on the AI visibility check for {biz.name}.",
+            "The part most owners find surprising: this isn't a Google ranking "
+            "problem. You can sit at number one in local search and still be absent "
+            "from the AI answer, because assistants build answers from structured "
+            "data and corroborating sources rather than from the results page.",
+            "That's why your existing SEO spend didn't stop it.",
+            evidence,
+            'Happy to send the one-page report \u2014 no charge, no call. Just reply "yes".',
+            settings.brand)
     elif step == 3:
         subject = f"Closing the loop \u2014 {biz.name[:24]}"
-        body = f"""Hi,
-
-Last note from me on this.
-
-If AI search visibility isn't a priority for {biz.name} right now, that's a
-fair call and I'll leave you alone.
-
-If it becomes one \u2014 {v.peak_label()} is when it costs the most \u2014 reply any
-time and I'll run a fresh check for {biz.market}.
-
-Either way, good luck this season.
-
-{settings.brand}
-{settings.website}"""
+        body = playbook.email_body(
+            "Hi,",
+            "Last note from me on this.",
+            f"If AI search visibility isn't a priority for {biz.name} right now, "
+            f"that's a fair call and I'll leave you alone.",
+            f"If it becomes one \u2014 the run-up to {v.peak_label()} is when it costs "
+            f"the most \u2014 reply any time and I'll run a fresh check for "
+            f"{biz.market}.",
+            "Either way, good luck this season.",
+            f"{settings.brand}\n{settings.website}")
     else:
-        subject = f"Re: {biz.name[:26]}"
-        body = f"Hi,\n\nJust checking whether the report would be useful.\n\n{settings.brand}"
+        subject = f"One last thing \u2014 {biz.name[:24]}"
+        risk = knowledge.revenue_at_risk(biz.vertical, 7, 10)
+        body = playbook.email_body(
+            "Hi,",
+            "I'll stop here, but I'll leave you the number rather than the pitch.",
+            f"{knowledge.sentence_case(knowledge.a_label(biz.vertical))} missing from "
+            f"roughly seven in ten AI answers loses on the order of "
+            f"${float(risk['annual_revenue']):,.0f} a year in first-job revenue. That "
+            f"is built on ${v.economics.avg_ticket:,.0f} tickets and a deliberately "
+            f"low booking rate, so check it against your own books \u2014 it costs you "
+            f"nothing to know the figure either way.",
+            f"If you ever want the detail behind it for {biz.name}, reply any time.",
+            settings.brand)
 
     return subject, body + _compliance_block(settings)
 
@@ -221,6 +220,21 @@ class OutreachAgent(Agent):
 
         return prospect.is_hot or (prospect.score is not None and prospect.score < 55)
 
+    def _passes_discipline(self, step: int, body: str, prospect: Prospect) -> bool:
+        """The playbook's own check, run against our own drafts.
+
+        A rule the agents are trained on but never measured against is a
+        comment, not a rule. Anything the check rejects is not sent — a
+        message that fails our own standard would cost more in reputation
+        than it could earn in replies.
+        """
+        problems = playbook.sequence_check(step, body)
+        if problems:
+            self.log.warning("draft for %s rejected by the playbook: %s",
+                             prospect.business.name, "; ".join(problems))
+            return False
+        return True
+
     def execute(self) -> tuple[int, str]:
         pol = self.settings.outreach
         drafted = skipped = 0
@@ -241,6 +255,9 @@ class OutreachAgent(Agent):
                 continue
 
             subject, body = first_touch(prospect, self.settings)
+            if not self._passes_discipline(1, body, prospect):
+                skipped += 1
+                continue
             self.store.save_message(OutreachMessage(
                 prospect_id=prospect.id, subject=subject, body=body,
                 sequence_step=1, status="drafted",
@@ -266,6 +283,8 @@ class OutreachAgent(Agent):
 
             step = prospect.touches + 1
             subject, body = followup(prospect, step, self.settings)
+            if not self._passes_discipline(step, body, prospect):
+                continue
             self.store.save_message(OutreachMessage(
                 prospect_id=prospect.id, subject=subject, body=body,
                 sequence_step=step, status="drafted",

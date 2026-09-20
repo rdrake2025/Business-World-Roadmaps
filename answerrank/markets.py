@@ -126,44 +126,12 @@ class Candidate:
 #: searchable footprint. Trades already served are excluded — this is the
 #: expansion list, not a catalogue.
 #:
-#: Promoted so far: restoration and med spa, both moved into knowledge.py
-#: once the Explorer measured them and the economics were sourced properly.
+#: Promoted so far: restoration, med spa, tree service, electrician, garage
+#: door, pest control and veterinary — each moved into knowledge.py once the
+#: Explorer measured it and the economics were sourced properly. A promoted
+#: trade leaves this list: keeping it here would have the Explorer spend real
+#: audits re-measuring a market already being sold to.
 CANDIDATES: list[Candidate] = [
-    Candidate(
-        key="tree_service", label="tree service",
-        # $28-30 per lead published; jobs commonly $800-3,000.
-        avg_ticket=1400, monthly_marketing_spend=1500,
-        urgency=0.80, fragmentation=0.90, digital_gap=0.82, incumbent_risk=0.25,
-        basis="2026 home-services CPL benchmarks ($28-30/lead landscaping and tree)",
-        notes=["Storm-driven urgency spikes mirror roofing.",
-               "Very fragmented and poorly served digitally — strong gap.",
-               "Seasonal: demand concentrates after storms."],
-    ),
-    Candidate(
-        key="garage_door", label="garage door repair",
-        avg_ticket=650, monthly_marketing_spend=1400,
-        urgency=0.90, fragmentation=0.85, digital_gap=0.78, incumbent_risk=0.30,
-        basis="Estimated from adjacent home-services benchmarks",
-        needs_research=True,
-        notes=["A stuck door is an immediate, searched problem.",
-               "Ticket is modest; lean on frequency rather than job size."],
-    ),
-    Candidate(
-        key="pest_control", label="pest control",
-        avg_ticket=400, monthly_marketing_spend=1800,
-        urgency=0.75, fragmentation=0.65, digital_gap=0.55, incumbent_risk=0.60,
-        basis="Named among the five most profitable 2026 home-service niches",
-        notes=["Recurring revenue model means high customer lifetime value.",
-               "Heavily consolidated by national brands — smaller independent pool."],
-    ),
-    Candidate(
-        key="electrical", label="electrician",
-        avg_ticket=900, monthly_marketing_spend=1600,
-        urgency=0.85, fragmentation=0.88, digital_gap=0.72, incumbent_risk=0.45,
-        basis="Named among the five most profitable 2026 home-service niches",
-        notes=["Sits alongside HVAC and plumbing in profitability rankings.",
-               "Panel upgrades and EV charger installs push ticket well above average."],
-    ),
     Candidate(
         key="concrete", label="concrete contractor",
         avg_ticket=5500, monthly_marketing_spend=1200,
@@ -180,15 +148,6 @@ CANDIDATES: list[Candidate] = [
         basis="$52B market, cited as a growth niche for 2026",
         notes=["Large and growing market, but low ticket.",
                "Franchise brands (1-800-GOT-JUNK) dominate recall."],
-    ),
-    Candidate(
-        key="veterinary", label="veterinary clinic",
-        avg_ticket=320, monthly_marketing_spend=2200,
-        urgency=0.80, fragmentation=0.70, digital_gap=0.60, incumbent_risk=0.45,
-        basis="Pet care named a 2026 growth sector; ticket estimated",
-        needs_research=True,
-        notes=["Pet owners search urgently and choose on trust signals.",
-               "Consolidation by corporate groups is shrinking the independent pool."],
     ),
     Candidate(
         key="aging_in_place", label="home accessibility contractor",

@@ -279,6 +279,20 @@ class Application:
         return self._json(start, self.api.send(
             min(int(d.get("limit", 25)), 100), bool(d.get("dry_run"))))
 
+    def api_clients(self, environ, start):
+        return self._json(start, self.api.clients())
+
+    def api_intelligence(self, environ, start):
+        return self._json(start, self.api.intelligence())
+
+    def api_brief(self, environ, start):
+        return self._json(start, self.api.brief(_query(environ).get("id", "")))
+
+    def api_reply(self, environ, start):
+        d = self._body_json(environ)
+        return self._json(start, self.api.log_reply(
+            str(d.get("id", "")), str(d.get("text", ""))))
+
     def api_tick(self, environ, start):
         return self._json(start, self.api.tick())
 
@@ -340,6 +354,10 @@ class Application:
             "/api/reject": self.api_reject,
             "/api/send": self.api_send,
             "/api/tick": self.api_tick,
+            "/api/clients": self.api_clients,
+            "/api/intelligence": self.api_intelligence,
+            "/api/brief": self.api_brief,
+            "/api/reply": self.api_reply,
         }
 
     def __call__(self, environ, start_response) -> Iterable[bytes]:
