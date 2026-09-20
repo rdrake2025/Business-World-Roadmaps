@@ -253,6 +253,19 @@ class Application:
     def api_reports(self, environ, start):
         return self._json(start, self.api.reports())
 
+    def api_telemetry(self, environ, start):
+        return self._json(start, self.api.telemetry())
+
+    def ops(self, environ, start):
+        body = render("ops.html")
+        headers = [("Content-Type", "text/html; charset=utf-8"),
+                   ("Content-Length", str(len(body))),
+                   ("Cache-Control", "no-store")]
+        if _query(environ).get("t"):
+            headers.append(("Set-Cookie", auth.session_cookie(self.token)))
+        start("200 OK", headers)
+        return [body]
+
     def api_approve(self, environ, start):
         ids = self._body_json(environ).get("ids") or []
         return self._json(start, self.api.approve([str(i) for i in ids]))
@@ -321,6 +334,8 @@ class Application:
             "/api/inbox": self.api_inbox,
             "/api/prospects": self.api_prospects,
             "/api/reports": self.api_reports,
+            "/api/telemetry": self.api_telemetry,
+            "/ops": self.ops,
             "/api/approve": self.api_approve,
             "/api/reject": self.api_reject,
             "/api/send": self.api_send,
