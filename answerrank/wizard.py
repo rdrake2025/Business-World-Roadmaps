@@ -69,9 +69,13 @@ def run(settings: Settings, config_path: str = "answerrank.yml") -> int:
                   why="Where the landing page and unsubscribe endpoint live.")
 
     address = ask("Business postal address", "",
-                  why="LEGALLY REQUIRED in every commercial email (CAN-SPAM). A "
-                      "registered agent address or mailbox service works — do not "
-                      "use a PO box. Sending is blocked until this is set.",
+                  why="LEGALLY REQUIRED in every commercial email (CAN-SPAM), but it "
+                      "does NOT have to be your home. The FTC accepts a street "
+                      "address, a USPS-registered PO Box, or a mailbox from a "
+                      "commercial mail receiving agency. A registered agent "
+                      "(~$15/mo) also works. Sending is blocked until this is set; "
+                      "put your home address in for now and change it later in "
+                      "answerrank.yml.",
                   required=True)
 
     vertical = ask(f"Starting vertical ({'/'.join(VERTICALS)})", "hvac",

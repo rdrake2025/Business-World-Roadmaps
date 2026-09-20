@@ -55,7 +55,8 @@ from_email: "hello@yourdomain.com"
 website: "https://yourdomain.com"
 
 # REQUIRED before any email is sent (CAN-SPAM). A registered agent address
-# or a mailbox service address is fine; a PO box may not be.
+# A registered agent, a USPS-registered PO Box, or a CMRA mailbox all
+# qualify under the FTC's CAN-SPAM guide. It need not be your home.
 physical_address: "123 Main St, Suite 100, Austin, TX 78701"
 
 engines: [openai, anthropic, perplexity, google_aio]
