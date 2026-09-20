@@ -17,57 +17,30 @@ from __future__ import annotations
 from . import knowledge
 from .models import Probe
 
-# Per-vertical language. Keys map to the ``vertical`` field on Business.
+#: Per-vertical language, derived from :mod:`answerrank.knowledge` rather than
+#: duplicated here. This was a second hand-maintained copy, and it had already
+#: drifted badly: fifteen of the twenty-two trades were missing from it, so the
+#: Scout searched local listings for "home service contractor" instead of "pest
+#: control company" and brought back the wrong businesses entirely. A library
+#: that has to be updated in two places is a library that will be updated in
+#: one.
 VERTICALS: dict[str, dict[str, object]] = {
-    "hvac": {
-        "label": "HVAC contractor",
-        "service": "AC repair",
-        "urgent": "My AC stopped working in a heat wave",
-        "jobs": ["AC repair", "furnace replacement", "heat pump installation", "duct cleaning"],
-    },
-    "plumbing": {
-        "label": "plumber",
-        "service": "plumbing repair",
-        "urgent": "I have a burst pipe flooding my kitchen",
-        "jobs": ["water heater replacement", "drain cleaning", "leak detection", "repiping"],
-    },
-    "roofing": {
-        "label": "roofing contractor",
-        "service": "roof repair",
-        "urgent": "My roof is leaking after a storm",
-        "jobs": ["roof replacement", "storm damage repair", "gutter installation"],
-    },
-    "dental": {
-        "label": "dentist",
-        "service": "dental care",
-        "urgent": "I have severe tooth pain and need to be seen today",
-        "jobs": ["dental implants", "Invisalign", "teeth whitening", "root canal"],
-    },
-    "legal": {
-        "label": "attorney",
-        "service": "legal representation",
-        "urgent": "I was just injured in a car accident",
-        "jobs": ["personal injury claim", "estate planning", "business formation"],
-    },
-    "medical": {
-        "label": "medical clinic",
-        "service": "primary care",
-        "urgent": "I need urgent care today",
-        "jobs": ["annual physical", "same-day sick visit", "chronic care management"],
-    },
-    "insurance": {
-        "label": "insurance agency",
-        "service": "insurance coverage",
-        "urgent": "I need to file a claim after an accident",
-        "jobs": ["home insurance quote", "commercial liability policy", "auto coverage review"],
-    },
-    "home_services": {
-        "label": "home service contractor",
-        "service": "home repair",
-        "urgent": "I have an urgent home repair emergency",
-        "jobs": ["remodeling", "electrical work", "general repairs"],
-    },
+    key: {
+        "label": v.label,
+        "service": v.service,
+        "urgent": v.urgent_scenario,
+        "jobs": list(v.jobs),
+    }
+    for key, v in knowledge.VERTICALS.items()
 }
+
+#: The fallback for anything unrecognised, matching ``knowledge.GENERIC``.
+VERTICALS.setdefault("home_services", {
+    "label": knowledge.GENERIC.label,
+    "service": knowledge.GENERIC.service,
+    "urgent": knowledge.GENERIC.urgent_scenario,
+    "jobs": list(knowledge.GENERIC.jobs),
+})
 
 
 def vertical_meta(vertical: str) -> dict[str, object]:

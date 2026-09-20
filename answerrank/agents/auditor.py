@@ -33,19 +33,28 @@ class AuditorAgent(Agent):
         engine_count = len(self.settings.available_engines())
         processed = 0
         spend = 0.0
+        blocked_sites = 0
 
         # --- 1. Teaser audits on freshly discovered prospects ---
         for prospect in self.store.due_prospects("discovered", self.teaser_budget):
-            audit = run_audit(prospect.business, self.settings, depth="teaser")
+            audit = run_audit(prospect.business, self.settings, depth="teaser",
+                              check_crawlers=True)
             self.store.save_audit(audit)
 
             prospect.score = audit.score
             prospect.competitor_gap = competitor_gap(audit)
             prospect.last_audit_id = audit.id
             prospect.stage = "audited"
-            prospect.notes = audit.headline()
+            # Outreach reads the first segment of notes as its evidence line.
+            # A site that turns the engines away leads, because it is a
+            # stronger and more checkable claim than a low score.
+            blocked = (audit.crawler_access or {}).get("critical")
+            prospect.notes = (f"{audit.crawler_access['headline']} | {audit.headline()}"
+                              if blocked else audit.headline())
             self.store.upsert_prospect(prospect)
 
+            if (audit.crawler_access or {}).get("critical"):
+                blocked_sites += 1
             spend += estimate_cost("teaser", engine_count)
             processed += 1
 
@@ -55,7 +64,8 @@ class AuditorAgent(Agent):
         for client in self.store.get_clients("active"):
             if client.last_report_at and client.last_report_at > cutoff:
                 continue
-            audit = run_audit(client.business, self.settings, depth="full")
+            audit = run_audit(client.business, self.settings, depth="full",
+                              check_crawlers=True)
             self.store.save_audit(audit)
             spend += estimate_cost("full", engine_count)
             clients_audited += 1
@@ -67,7 +77,9 @@ class AuditorAgent(Agent):
                 description=f"{processed} audits ({engine_count} engines)",
             ))
 
-        return processed, (
-            f"{processed - clients_audited} teaser audits, {clients_audited} client audits, "
-            f"${spend:.2f} API spend"
-        )
+        summary = (f"{processed - clients_audited} teaser audits, "
+                   f"{clients_audited} client audits, ${spend:.2f} API spend")
+        if blocked_sites:
+            summary += (f" | {blocked_sites} site(s) block the answer engines in "
+                        f"their own robots.txt \u2014 the strongest opener you have")
+        return processed, summary

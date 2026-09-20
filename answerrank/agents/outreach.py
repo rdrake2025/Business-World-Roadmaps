@@ -83,8 +83,15 @@ def first_touch(prospect: Prospect, settings) -> tuple[str, str]:
         shown, total = int(match.group(1)), int(match.group(2))
         missed = max(0, total - shown)
 
+    # A site that blocks the engines is a different conversation: not "you
+    # are losing a competition" but "you withdrew from it", which is both a
+    # stronger claim and one they can verify in ten seconds.
+    blocks_engines = "in its own robots.txt" in note
+
     subject = subject_line(biz.name, biz.city, missed, total)
-    if score >= 40:
+    if blocks_engines:
+        subject = f"{biz.name[:26]}: your site blocks AI search"
+    elif score >= 40:
         subject = f"{biz.name[:22]}: a gap in AI search"
 
     evidence = note.split(" | ")[0] if note else (
@@ -98,6 +105,19 @@ def first_touch(prospect: Prospect, settings) -> tuple[str, str]:
             f"On a ${v.economics.avg_ticket:,.0f} average ticket that is roughly "
             f"${float(risk['annual_revenue']):,.0f} a year of first-job revenue going "
             f"elsewhere \u2014 and that estimate is set deliberately low.")
+
+    if blocks_engines:
+        return subject, playbook.email_body(
+            "Hi,",
+            evidence,
+            "I check this for a living and it is almost always unintentional \u2014 a "
+            "plugin or a previous agency adds the rule to block scrapers, and the "
+            "same line removes the business from the answers its customers read.",
+            f"You can confirm it yourself: open {biz.website.rstrip('/')}/robots.txt "
+            f"and look for those names.",
+            "It is a one-line fix and it costs nothing. Happy to send exactly what "
+            "to change, plus the check I ran \u2014 no charge either way.",
+            f"{settings.brand}\n{settings.website}") + _compliance_block(settings)
 
     body = playbook.email_body(
         "Hi,",
@@ -210,9 +230,11 @@ class OutreachAgent(Agent):
         if self.store.is_suppressed(email):
             return False
 
-        fit = qualify.score_fit(
-            prospect.business, prospect.score,
-            self.settings.pricing.growth_monthly)
+        # The price this trade can actually defend, not one flat number.
+        # Quoting every trade $997 discarded half the library for a reason
+        # that was never about the market.
+        price = self.settings.quote_for(prospect.business.vertical)
+        fit = qualify.score_fit(prospect.business, prospect.score, price)
         if not fit.worth_pitching:
             self.log.debug("skipping %s: %s", prospect.business.name,
                            fit.blockers[0] if fit.blockers else f"tier {fit.tier}")
@@ -243,8 +265,9 @@ class OutreachAgent(Agent):
         # --- first touches, best-fit first ---
         candidates = sorted(
             self.store.due_prospects("audited", self.draft_budget * 2),
-            key=lambda p: -qualify.priority(p.business, p.score, p.competitor_gap,
-                                            self.settings.pricing.growth_monthly),
+            key=lambda p: -qualify.priority(
+                p.business, p.score, p.competitor_gap,
+                self.settings.quote_for(p.business.vertical)),
         )[: self.draft_budget]
         for prospect in candidates:
             if not self._eligible(prospect):

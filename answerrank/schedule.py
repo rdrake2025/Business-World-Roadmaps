@@ -34,7 +34,7 @@ def _escape(text: str) -> str:
     """Escape per RFC 5545 §3.3.11."""
     return (
         text.replace("\\", "\\\\")
-        .replace(";", "\;")
+        .replace(";", "\\;")
         .replace(",", "\\,")
         .replace("\r\n", "\\n")
         .replace("\n", "\\n")

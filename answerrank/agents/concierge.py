@@ -66,7 +66,7 @@ def draft_response(intent: str, prospect: Prospect, settings,
     """A reply the operator can send as-is or edit in ten seconds."""
     biz = prospect.business
     brand = settings.brand
-    price = settings.pricing.growth_monthly
+    price = settings.quote_for(biz.vertical)
     payback = knowledge.payback_line(biz.vertical, price)
 
     if intent == "interested":

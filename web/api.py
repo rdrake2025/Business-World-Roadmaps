@@ -299,8 +299,7 @@ class Api:
             "by_vertical": [r for r in analyst.by_vertical() if r["sent"]],
             "by_step": [r for r in analyst.by_step() if r["sent"]],
             "volume": analyst.required_volume(
-                self.settings.profit_target_monthly,
-                self.settings.pricing.growth_monthly,
+                self.settings.profit_target_monthly, None,
                 self.settings.pricing.delivery_cost_monthly),
             "next_move": move,
             "pricing": [
@@ -319,7 +318,7 @@ class Api:
         if not prospect:
             return {"error": "no such prospect"}
         out = qualify.brief(prospect.business, prospect.score, prospect.competitor_gap,
-                            self.settings.pricing.growth_monthly)
+                            self.settings.quote_for(prospect.business.vertical))
         out["prospect_id"] = prospect.id
         out["stage"] = prospect.stage
         out["market"] = prospect.business.market

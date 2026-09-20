@@ -54,6 +54,11 @@ class Pricing:
             "managed": self.managed_monthly,
         }.get(plan.lower(), 0.0)
 
+    def ladder(self) -> list[float]:
+        """The recurring tiers, low to high. The one-off audit is not a tier."""
+        return sorted({self.starter_monthly, self.growth_monthly,
+                       self.managed_monthly})
+
 
 @dataclass
 class OutreachPolicy:
@@ -143,6 +148,21 @@ class Settings:
 
     # Business target that the Bookkeeper agent measures everything against.
     profit_target_monthly: float = 5000.0
+
+    def quote_for(self, vertical: str) -> float:
+        """What to charge this trade, rather than what to charge everyone.
+
+        Quoting one price across every trade meant half the library was
+        unsellable: a garage door company cannot defend $997 on a $450 ticket,
+        so it was dropped — when it defends $297 comfortably. This is the one
+        place that decision is made, so the Scout, the qualifier and the copy
+        cannot disagree about what a prospect is being offered.
+        """
+        from . import knowledge
+
+        recommended = knowledge.recommended_price(vertical, self.pricing.ladder())
+        price = recommended.get("price")
+        return float(price) if price else self.pricing.growth_monthly
 
     def available_engines(self) -> list[str]:
         """Engines we actually hold credentials for, else the mock engine."""

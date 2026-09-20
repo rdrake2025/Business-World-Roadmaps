@@ -37,18 +37,30 @@ DEFAULT_MARKETS = [
 FALLBACK_VERTICALS = ["hvac", "plumbing"]
 
 
-def defensible_verticals(monthly_price: float) -> list[str]:
-    """Only prospect trades the retainer can honestly be sold to.
+def defensible_verticals(monthly_price: float,
+                         ladder: list[float] | None = None) -> list[str]:
+    """Trades worth prospecting, highest-value tier first.
 
-    The Strategist flagged this: the Scout was adding roofing prospects at a
-    price roofing cannot justify, so the Outreach agent then filtered them
-    out. That is API spend and pipeline noise generated for nothing. Selecting
-    at the point of discovery is cheaper than rejecting at the point of sale.
+    The Strategist flagged the first version of this: the Scout was adding
+    roofing prospects at a price roofing cannot justify, so Outreach filtered
+    them out afterwards — API spend and pipeline noise generated for nothing.
+    Selecting at discovery is cheaper than rejecting at the point of sale.
+
+    The correction to that correction is the pricing ladder. "Cannot justify
+    $997" is not the same as "not worth serving": a garage door company
+    defends $297 comfortably. Filtering on one price threw away half the
+    library for a reason that was never about the market. Every trade with a
+    defensible tier is prospected, best-paying first, and each one is later
+    quoted the price its own economics support.
     """
-    ranked = knowledge.best_verticals(monthly_price)
-    good = [str(r["vertical"]) for r in ranked
-            if r["verdict"] in {"strong", "workable"}]
-    return good or FALLBACK_VERTICALS
+    tiers = ladder or [monthly_price]
+    priced = [
+        (float(r["price"]), str(r["vertical"]))
+        for r in (knowledge.recommended_price(k, tiers) for k in knowledge.VERTICALS)
+        if r["price"]
+    ]
+    priced.sort(key=lambda row: -row[0])
+    return [vertical for _price, vertical in priced] or FALLBACK_VERTICALS
 
 
 class ScoutAgent(Agent):
@@ -61,7 +73,8 @@ class ScoutAgent(Agent):
         super().__init__(store, settings)
         self.target = target_per_run
         self.seed_file = seed_file or os.environ.get("ANSWERRANK_SEED_FILE", "")
-        self.verticals = defensible_verticals(settings.pricing.growth_monthly)
+        self.verticals = defensible_verticals(
+            settings.pricing.growth_monthly, settings.pricing.ladder())
 
     # ---------------- sources ----------------
 

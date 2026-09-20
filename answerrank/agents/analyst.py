@@ -121,10 +121,33 @@ class AnalystAgent(Agent):
             })
         return rows
 
+    # ---------------- what a client is actually worth ----------------
+
+    def blended_price(self) -> tuple[float, str]:
+        """The average retainer the current pipeline would actually produce.
+
+        Trades are quoted between the lowest and highest tier the ladder
+        offers, so assuming one flat price makes the most important number
+        this system produces — how much work the target requires — wrong in
+        an unknown direction. This weights each trade's own price by how many
+        prospects are actually in it.
+        """
+        prospects = self.store.get_prospects(limit=5000)
+        prices = [self.settings.quote_for(p.business.vertical) for p in prospects]
+        if not prices:
+            return self.settings.pricing.growth_monthly, "no pipeline yet, using the standard tier"
+        blended = sum(prices) / len(prices)
+        low, high = min(prices), max(prices)
+        if low == high:
+            return blended, f"every prospect quoted ${blended:,.0f}"
+        return blended, (f"blended across {len(prices)} prospects quoted "
+                         f"${low:,.0f}\u2013${high:,.0f}")
+
     # ---------------- the volume the goal requires ----------------
 
     def required_volume(self, target_monthly_profit: float,
-                        monthly_price: float, delivery_cost: float = 18.0,
+                        monthly_price: float | None = None,
+                        delivery_cost: float = 18.0,
                         days: int = 90) -> dict[str, object]:
         """Emails per week to reach the profit target at the observed rates.
 
@@ -134,6 +157,10 @@ class AnalystAgent(Agent):
         a stated prior is honest, a fabricated measurement is not.
         """
         f = self.funnel(days)
+        if monthly_price is None:
+            monthly_price, price_basis = self.blended_price()
+        else:
+            price_basis = f"${monthly_price:,.0f} as given"
         margin = max(1.0, monthly_price - delivery_cost)
         clients_needed = target_monthly_profit / margin
 
@@ -165,7 +192,10 @@ class AnalystAgent(Agent):
             "sends_per_week": round(per_week),
             "sends_per_day": round(per_week / 5),
             "basis": basis,
-            "line": (f"{clients_needed:.0f} clients at ${monthly_price:,.0f} reaches "
+            "monthly_price": round(monthly_price, 2),
+            "price_basis": price_basis,
+            "line": (f"{clients_needed:.0f} clients at an average of "
+                     f"${monthly_price:,.0f} reaches "
                      f"${target_monthly_profit:,.0f}/mo profit. At {round(sends_per_win)} "
                      f"sends per client that is about {round(per_week)} emails a week "
                      f"over {ramp} months ({basis})."),
@@ -225,7 +255,7 @@ class AnalystAgent(Agent):
         learnings = self.learnings()
         vol = self.required_volume(
             self.settings.profit_target_monthly,
-            self.settings.pricing.growth_monthly,
+            None,  # blend from the pipeline rather than assume one tier
             self.settings.pricing.delivery_cost_monthly)
 
         import json

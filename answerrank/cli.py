@@ -706,7 +706,7 @@ def cmd_brief(args, settings: Settings) -> int:
     if not prospect:
         return 1
 
-    price = args.price or settings.pricing.growth_monthly
+    price = args.price or settings.quote_for(prospect.business.vertical)
     b = qualify.brief(prospect.business, prospect.score, prospect.competitor_gap, price)
 
     _hr(f"{str(b['business']).upper()} \u2014 {b['trade']}")
@@ -841,11 +841,11 @@ def cmd_learn(args, settings: Settings) -> int:
             print(f"  step {r['step']}: {r['sent']:>5} sent, {r['replied']:>4} replied "
                   f"({rate})")
 
-    vol = analyst.required_volume(settings.profit_target_monthly,
-                                  settings.pricing.growth_monthly,
+    vol = analyst.required_volume(settings.profit_target_monthly, None,
                                   settings.pricing.delivery_cost_monthly, days)
     _hr("WHAT THE TARGET REQUIRES")
     print(_wrap(str(vol["line"])))
+    print(_wrap(f"Deal value: {vol['price_basis']}."))
     print(f"\n  About {vol['sends_per_day']} emails a working day, every day, "
           f"for {vol['ramp_months']} months.")
     return 0

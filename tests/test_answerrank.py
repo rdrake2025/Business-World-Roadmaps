@@ -27,6 +27,7 @@ from answerrank.engines.base import detect_sentiment, extract_businesses, name_m
 from answerrank.mailer import build_message
 from answerrank.models import (
     Audit, Business, Client, LedgerEntry, OutreachMessage, ProbeResult, Prospect,
+    now_iso,
 )
 from answerrank.orchestrator import Orchestrator
 from answerrank.scoring import (
@@ -1895,3 +1896,391 @@ class TestWarmup(unittest.TestCase):
             self.assertEqual(_days_warming(store, settings), 5)
         finally:
             os.unlink(tmp.name)
+
+
+class TestContactDiscovery(unittest.TestCase):
+    """Without an address, every real prospect is uncontactable."""
+
+    def test_the_real_pipeline_gap_is_closed(self):
+        """A Serper result has a website and a phone and no email.
+
+        This is the shape of every real prospect. Before the Prospector they
+        were all filtered out as uncontactable while the simulated fixtures,
+        which fabricate addresses, sailed through — so the fleet looked
+        healthy and could not send one message to a real business.
+        """
+        from answerrank.agents.outreach import OutreachAgent
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            agent = OutreachAgent(Store(tmp.name), Settings())
+            biz = Business(name="Apex", city="Austin", state="TX", vertical="hvac",
+                           website="https://apexhvac.com", phone="+15125550100")
+            prospect = Prospect(business=biz, score=18, competitor_gap=40)
+            self.assertFalse(agent._eligible(prospect))
+            biz.email = "office@apexhvac.com"
+            self.assertTrue(agent._eligible(prospect))
+        finally:
+            os.unlink(tmp.name)
+
+    def test_junk_that_looks_like_an_address_is_rejected(self):
+        from answerrank.contacts import is_usable
+        for junk in ("logo@2x.png", "noreply@real.com", "postmaster@real.com",
+                     "youremail@example.com", "err@sentry.io", "a@@b.com",
+                     "name@yourdomain.com", "x@wixpress.com"):
+            self.assertFalse(is_usable(junk), junk)
+
+    def test_real_addresses_survive(self):
+        from answerrank.contacts import is_usable
+        for good in ("office@apexhvac.com", "hello@a-b.co.uk",
+                     "apexhvac1998@gmail.com", "first.last@firm.com"):
+            self.assertTrue(is_usable(good), good)
+
+    def test_a_mailto_outranks_a_string_in_the_body(self):
+        from answerrank.contacts import extract_emails
+        html = ('<p>vendor: sales@printshop.com</p>'
+                '<a href="mailto:office@apex.com">us</a>')
+        self.assertEqual(extract_emails(html)[0], "office@apex.com")
+
+    def test_their_own_domain_beats_a_free_inbox(self):
+        from answerrank.contacts import rank
+        best = rank(["apex1998@gmail.com", "office@apex.com"], "apex.com")
+        self.assertEqual(best[0], "office@apex.com")
+
+    def test_a_role_address_beats_a_named_person(self):
+        """People leave companies; office@ does not."""
+        from answerrank.contacts import rank
+        best = rank(["dave@apex.com", "office@apex.com"], "apex.com")
+        self.assertEqual(best[0], "office@apex.com")
+
+    def test_it_never_guesses_an_address(self):
+        """A guessed address is a bounce, and bounces are capped at 2%."""
+        from answerrank.contacts import find_contact
+        result = find_contact("https://this-host-does-not-resolve-xyz123.test")
+        self.assertFalse(result.found)
+        self.assertEqual(result.email, "")
+
+    def test_no_website_is_not_an_error(self):
+        from answerrank.contacts import find_contact
+        self.assertFalse(find_contact("").found)
+
+    def test_a_checked_business_is_not_crawled_again(self):
+        """Re-reading a small business's site every six hours is rude and
+        finds nothing new."""
+        from answerrank.agents.prospector import ProspectorAgent
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            store = Store(tmp.name)
+            prospect = Prospect(business=Business(
+                name="Apex", city="Austin", state="TX", vertical="hvac",
+                website="https://apex.com"), stage="discovered")
+            prospect.contact_checked_at = now_iso()
+            store.upsert_prospect(prospect)
+            self.assertEqual(ProspectorAgent(store, Settings()).due(), [])
+        finally:
+            os.unlink(tmp.name)
+
+    def test_the_check_stamp_survives_a_round_trip(self):
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            store = Store(tmp.name)
+            prospect = Prospect(business=Business(
+                name="Apex", city="Austin", state="TX", vertical="hvac",
+                website="https://apex.com"), stage="discovered")
+            prospect.contact_checked_at = "2026-01-01T00:00:00+00:00"
+            store.upsert_prospect(prospect)
+            loaded = store.get_prospects("discovered")[0]
+            self.assertEqual(loaded.contact_checked_at, "2026-01-01T00:00:00+00:00")
+        finally:
+            os.unlink(tmp.name)
+
+
+class TestPerTradePricing(unittest.TestCase):
+    """Quoting one price across every trade discarded half the library."""
+
+    def test_each_trade_is_quoted_what_its_economics_defend(self):
+        settings = Settings()
+        self.assertGreater(settings.quote_for("remodeling"),
+                           settings.quote_for("appliance_repair"))
+
+    def test_every_quote_sits_on_the_configured_ladder(self):
+        settings = Settings()
+        ladder = set(settings.pricing.ladder())
+        for key in knowledge_verticals():
+            self.assertIn(settings.quote_for(key), ladder, key)
+
+    def test_a_trade_that_failed_at_one_price_is_now_reachable(self):
+        from answerrank.agents.outreach import OutreachAgent
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            agent = OutreachAgent(Store(tmp.name), Settings())
+            prospect = Prospect(business=Business(
+                name="Fix It Fast", city="Austin", state="TX",
+                vertical="appliance_repair", website="https://fif.com",
+                email="office@fif.com"), score=20, competitor_gap=40)
+            self.assertTrue(agent._eligible(prospect))
+        finally:
+            os.unlink(tmp.name)
+
+    def test_the_scout_prospects_far_more_than_one_price_allowed(self):
+        from answerrank.agents.scout import defensible_verticals
+        settings = Settings()
+        flat = [v for v in knowledge_verticals()
+                if __import__("answerrank.knowledge", fromlist=["plan_fit"])
+                .plan_fit(v, settings.pricing.growth_monthly)["verdict"] != "weak"]
+        laddered = defensible_verticals(settings.pricing.growth_monthly,
+                                        settings.pricing.ladder())
+        self.assertGreater(len(laddered), len(flat))
+
+    def test_the_scout_prospects_the_best_paying_trades_first(self):
+        from answerrank.agents.scout import defensible_verticals
+        settings = Settings()
+        order = defensible_verticals(settings.pricing.growth_monthly,
+                                     settings.pricing.ladder())
+        prices = [settings.quote_for(v) for v in order]
+        self.assertEqual(prices, sorted(prices, reverse=True))
+
+
+class TestOneVerticalLibrary(unittest.TestCase):
+    def test_the_search_label_exists_for_every_trade(self):
+        """A second hand-maintained copy had drifted to missing 15 of 22,
+        so the Scout searched local listings for the wrong businesses."""
+        from answerrank.prompts import VERTICALS, vertical_meta
+        for key in knowledge_verticals():
+            self.assertIn(key, VERTICALS, key)
+            self.assertTrue(str(vertical_meta(key)["label"]).strip(), key)
+
+    def test_the_search_label_matches_the_knowledge_layer(self):
+        from answerrank import knowledge
+        from answerrank.prompts import vertical_meta
+        for key, v in knowledge.VERTICALS.items():
+            self.assertEqual(vertical_meta(key)["label"], v.label, key)
+
+    def test_an_unknown_trade_still_resolves(self):
+        from answerrank.prompts import vertical_meta
+        self.assertTrue(vertical_meta("underwater_basket_weaving")["label"])
+
+
+def knowledge_verticals():
+    from answerrank import knowledge
+    return list(knowledge.VERTICALS)
+
+
+class TestCrawlerAccess(unittest.TestCase):
+    """Upstream of every other measurement: can the engines read the site?"""
+
+    def _blocks(self, robots: str, token: str) -> bool:
+        from answerrank.crawlers import _blocks, _groups
+        return _blocks(_groups(robots), token)
+
+    def test_robots_parsing(self):
+        cases = [
+            ("User-agent: *\nDisallow: /\n", "GPTBot", True),
+            ("User-agent: *\nDisallow:\n", "GPTBot", False),
+            ("User-agent: GPTBot\nDisallow: /\n", "GPTBot", True),
+            ("User-agent: GPTBot\nDisallow: /\n", "PerplexityBot", False),
+            ("User-agent: gptbot\nDisallow: /\n", "GPTBot", True),
+            ("User-agent: *\nDisallow: /admin\n", "GPTBot", False),
+            ("# note\nUser-agent: *\nDisallow: / # all\n", "GPTBot", True),
+            ("", "GPTBot", False),
+        ]
+        for robots, token, expected in cases:
+            self.assertEqual(self._blocks(robots, token), expected,
+                             f"{token} against {robots!r}")
+
+    def test_a_rule_naming_the_agent_beats_the_wildcard(self):
+        """Every major crawler implements this, so we must too — otherwise we
+        tell an owner they are blocked when they are explicitly allowed."""
+        robots = "User-agent: *\nDisallow: /\n\nUser-agent: GPTBot\nAllow: /\n"
+        self.assertFalse(self._blocks(robots, "GPTBot"))
+        self.assertTrue(self._blocks(robots, "PerplexityBot"))
+
+    def test_a_training_block_is_not_reported_as_lost_visibility(self):
+        """Blocking GPTBot does not remove a site from ChatGPT search, and
+        claiming otherwise would be disproven the moment the owner checked."""
+        from answerrank.crawlers import CRAWLERS, Access
+        access = Access(domain="apex.com", robots_found=True)
+        training_only = {"GPTBot", "ClaudeBot", "Google-Extended", "CCBot"}
+        for c in CRAWLERS:
+            (access.blocked if c.token in training_only
+             else access.allowed).append(c)
+        self.assertTrue(access.ok)
+        self.assertIn("not the answers customers see", access.headline())
+
+    def test_a_search_block_is_reported(self):
+        from answerrank.crawlers import CRAWLERS, Access
+        access = Access(domain="apex.com", robots_found=True)
+        for c in CRAWLERS:
+            (access.blocked if c.token == "PerplexityBot"
+             else access.allowed).append(c)
+        self.assertFalse(access.ok)
+        self.assertIn("robots.txt", access.headline())
+        self.assertIn("PerplexityBot", access.fix())
+
+    def test_an_unreadable_robots_file_is_never_reported_as_all_clear(self):
+        """A 403 is not a 404. Saying "nothing to fix" when the truth is
+        unknown is the one direction this check must not be wrong in."""
+        from answerrank.crawlers import Access
+        access = Access(domain="apex.com", error="robots.txt returned HTTP 403")
+        self.assertFalse(access.ok)
+        self.assertIn("unknown", access.headline())
+        self.assertNotIn("Nothing to fix", access.headline())
+
+    def test_a_genuinely_absent_robots_file_is_all_clear(self):
+        from answerrank.crawlers import Access
+        access = Access(domain="apex.com", robots_found=False)
+        self.assertTrue(access.ok)
+        self.assertIn("Nothing to fix", access.headline())
+
+    def test_every_crawler_says_what_a_block_costs(self):
+        from answerrank.crawlers import CRAWLERS
+        for c in CRAWLERS:
+            self.assertTrue(c.token and c.operator and c.surface, c.token)
+
+    def test_no_website_is_handled(self):
+        from answerrank.crawlers import check_access
+        self.assertFalse(check_access("").ok)
+
+
+class TestBlockedSiteOutreach(unittest.TestCase):
+    def _blocked_prospect(self):
+        note = ("apexhvac.com blocks OAI-SearchBot in its own robots.txt. That "
+                "removes it from ChatGPT search results. | Apex appears in 1 of 10.")
+        return Prospect(business=Business(
+            name="Apex Heating & Air", city="Austin", state="TX", vertical="hvac",
+            website="https://apexhvac.com", email="o@apexhvac.com"),
+            score=12, notes=note)
+
+    def test_the_opener_makes_the_argument_the_finding_supports(self):
+        """Not "you are losing a competition" but "you withdrew from it"."""
+        from answerrank.agents.outreach import first_touch
+        subject, body = first_touch(self._blocked_prospect(), Settings())
+        self.assertIn("blocks AI search", subject)
+        self.assertIn("robots.txt", body)
+
+    def test_the_blocked_opener_invites_them_to_check_it_themselves(self):
+        from answerrank.agents.outreach import first_touch
+        _subject, body = first_touch(self._blocked_prospect(), Settings())
+        self.assertIn("/robots.txt", body)
+
+    def test_the_blocked_opener_still_passes_the_playbook(self):
+        from answerrank.agents.outreach import first_touch
+        from answerrank.playbook import sequence_check
+        subject, body = first_touch(self._blocked_prospect(), Settings())
+        self.assertFalse(sequence_check(1, body))
+        self.assertLessEqual(len(subject), 60)
+
+    def test_an_unblocked_prospect_gets_the_normal_opener(self):
+        from answerrank.agents.outreach import first_touch
+        prospect = Prospect(business=Business(
+            name="Apex", city="Austin", state="TX", vertical="hvac",
+            website="https://apex.com", email="o@apex.com"),
+            score=12, notes="Apex appears in 1 of 10 AI answers.")
+        subject, body = first_touch(prospect, Settings())
+        self.assertNotIn("blocks AI search", subject)
+        self.assertNotIn("robots.txt", body)
+
+
+class TestSchemaTypes(unittest.TestCase):
+    """The one signal that tells an engine what the business actually is."""
+
+    def test_no_trade_falls_back_to_the_generic_type(self):
+        """This lived as a table inside the Fixer covering 7 of 22 trades,
+        so fifteen published a generic LocalBusiness."""
+        import json
+        from answerrank import knowledge
+        from answerrank.agents.fixer import localbusiness_schema
+        for key in knowledge.VERTICALS:
+            biz = Business(name="T", city="Austin", state="TX", vertical=key,
+                           website="https://t.com")
+            found = json.loads(localbusiness_schema(biz))["@type"]
+            self.assertNotEqual(found, "LocalBusiness", key)
+
+    def test_every_type_is_one_we_know_exists(self):
+        """A subtly wrong type is worse than a generic one: the engine drops
+        the whole block rather than reading past it."""
+        from answerrank import knowledge
+        for key, v in knowledge.VERTICALS.items():
+            self.assertIn(v.schema_type, knowledge.KNOWN_SCHEMA_TYPES, key)
+
+    def test_the_schema_type_comes_from_the_trade(self):
+        import json
+        from answerrank import knowledge
+        from answerrank.agents.fixer import localbusiness_schema
+        for key in ("auto_repair", "veterinary", "moving", "med_spa"):
+            biz = Business(name="T", city="Austin", state="TX", vertical=key,
+                           website="https://t.com")
+            self.assertEqual(json.loads(localbusiness_schema(biz))["@type"],
+                             knowledge.get(key).schema_type)
+
+    def test_an_unknown_trade_still_produces_valid_markup(self):
+        import json
+        from answerrank.agents.fixer import localbusiness_schema
+        biz = Business(name="T", city="Austin", state="TX",
+                       vertical="underwater_basket_weaving", website="https://t.com")
+        doc = json.loads(localbusiness_schema(biz))
+        self.assertEqual(doc["@context"], "https://schema.org")
+        self.assertTrue(doc["@type"])
+
+
+class TestBlendedDealValue(unittest.TestCase):
+    """The most important number this system produces must not assume a
+    price the pipeline is not being quoted."""
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def _agent(self):
+        from answerrank.agents.analyst import AnalystAgent
+        return AnalystAgent(self.store, self.settings)
+
+    def _add(self, vertical, n=1):
+        for i in range(n):
+            self.store.upsert_prospect(Prospect(business=Business(
+                name=f"{vertical}{i}", city="Austin", state="TX", vertical=vertical,
+                website=f"https://{vertical}{i}.com", email=f"o@{vertical}{i}.com")))
+
+    def test_an_empty_pipeline_falls_back_to_the_standard_tier(self):
+        price, basis = self._agent().blended_price()
+        self.assertEqual(price, self.settings.pricing.growth_monthly)
+        self.assertIn("no pipeline", basis)
+
+    def test_the_blend_sits_between_the_cheapest_and_dearest_trade(self):
+        self._add("remodeling", 3)     # quoted high
+        self._add("appliance_repair", 3)  # quoted low
+        price, basis = self._agent().blended_price()
+        low = self.settings.quote_for("appliance_repair")
+        high = self.settings.quote_for("remodeling")
+        self.assertGreater(price, low)
+        self.assertLess(price, high)
+        self.assertIn("blended across 6", basis)
+
+    def test_a_dearer_pipeline_needs_fewer_clients(self):
+        self._add("appliance_repair", 10)
+        cheap = self._agent().required_volume(5000)["clients_needed"]
+        for p in self.store.get_prospects(limit=100):
+            p.business.vertical = "remodeling"
+            self.store.upsert_prospect(p)
+        dear = self._agent().required_volume(5000)["clients_needed"]
+        self.assertLess(dear, cheap)
+
+    def test_an_explicit_price_still_wins(self):
+        self._add("remodeling", 5)
+        result = self._agent().required_volume(5000, 997.0)
+        self.assertEqual(result["monthly_price"], 997.0)
+        self.assertIn("as given", str(result["price_basis"]))
+
+    def test_the_volume_line_states_which_price_it_used(self):
+        self._add("hvac", 4)
+        result = self._agent().required_volume(5000)
+        self.assertIn("average", str(result["line"]))
+        self.assertTrue(str(result["price_basis"]))

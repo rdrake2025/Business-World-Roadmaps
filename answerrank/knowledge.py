@@ -77,6 +77,12 @@ class Vertical:
     #: spa does not, and framing one as urgent produces a prompt no real
     #: customer would type — which measures nothing.
     has_emergencies: bool = True
+    #: The schema.org type a retrieval engine should see. This lived as a
+    #: lookup table inside the Fixer and covered seven trades of twenty-two,
+    #: so fifteen were published as a generic ``LocalBusiness`` — the one
+    #: signal that tells an engine what the business actually *is*, discarded.
+    #: It belongs on the trade, where adding a vertical forces choosing one.
+    schema_type: str = "LocalBusiness"
 
     def peak_label(self) -> str:
         names = {1: "January", 2: "February", 3: "March", 4: "April", 5: "May",
@@ -85,9 +91,26 @@ class Vertical:
         return " and ".join(names[m] for m in self.peak_months)
 
 
+#: schema.org types we are confident exist and are recognised. A type that is
+#: subtly wrong is worse than a generic one: the engine drops the whole block
+#: rather than reading past it, so the markup that was supposed to help is
+#: simply not read.
+KNOWN_SCHEMA_TYPES = {
+    "LocalBusiness", "ProfessionalService", "HomeAndConstructionBusiness",
+    "HVACBusiness", "Plumber", "RoofingContractor", "Electrician",
+    "GeneralContractor", "HousePainter", "Locksmith", "MovingCompany",
+    "AutomotiveBusiness", "AutoRepair",
+    "MedicalBusiness", "MedicalClinic", "Dentist", "Physician", "VeterinaryCare",
+    "LegalService", "Attorney",
+    "FinancialService", "InsuranceAgency",
+    "HealthAndBeautyBusiness", "DaySpa",
+}
+
+
 VERTICALS: dict[str, Vertical] = {
     "hvac": Vertical(
         key="hvac",
+        schema_type="HVACBusiness",
         label="HVAC contractor",
         service="AC repair",
         urgent_scenario="My AC stopped working in a heat wave",
@@ -112,6 +135,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "plumbing": Vertical(
         key="plumbing",
+        schema_type="Plumber",
         label="plumber",
         service="plumbing repair",
         urgent_scenario="I have a burst pipe flooding my kitchen",
@@ -134,6 +158,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "roofing": Vertical(
         key="roofing",
+        schema_type="RoofingContractor",
         label="roofing contractor",
         service="roof repair",
         urgent_scenario="My roof is leaking after a storm",
@@ -157,6 +182,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "dental": Vertical(
         key="dental",
+        schema_type="Dentist",
         label="dentist",
         service="dental care",
         urgent_scenario="I have severe tooth pain and need to be seen today",
@@ -180,6 +206,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "legal": Vertical(
         key="legal",
+        schema_type="Attorney",
         label="attorney",
         service="legal representation",
         urgent_scenario="I was just injured in a car accident",
@@ -205,6 +232,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "restoration": Vertical(
         key="restoration",
+        schema_type="GeneralContractor",
         label="restoration contractor",
         service="water damage restoration",
         urgent_scenario="My basement is flooding right now",
@@ -234,6 +262,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "med_spa": Vertical(
         key="med_spa",
+        schema_type="DaySpa",
         label="medical spa",
         service="aesthetic treatment",
         urgent_scenario="I am looking for a good med spa",
@@ -264,6 +293,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "electrical": Vertical(
         key="electrical",
+        schema_type="Electrician",
         label="electrician",
         service="electrical work",
         urgent_scenario="My power keeps tripping and I need an electrician",
@@ -288,6 +318,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "tree_service": Vertical(
         key="tree_service",
+        schema_type="HomeAndConstructionBusiness",
         label="tree service",
         service="tree removal",
         urgent_scenario="A tree came down on my property after a storm",
@@ -311,6 +342,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "garage_door": Vertical(
         key="garage_door",
+        schema_type="HomeAndConstructionBusiness",
         label="garage door company",
         service="garage door repair",
         urgent_scenario="My garage door is stuck and my car is trapped inside",
@@ -334,6 +366,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "medical": Vertical(
         key="medical",
+        schema_type="MedicalClinic",
         label="medical clinic",
         service="primary care",
         urgent_scenario="I need urgent care today",
@@ -348,6 +381,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "insurance": Vertical(
         key="insurance",
+        schema_type="InsuranceAgency",
         label="insurance agency",
         service="insurance coverage",
         urgent_scenario="I am shopping for an insurance agent",
@@ -363,6 +397,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "pest_control": Vertical(
         key="pest_control",
+        schema_type="HomeAndConstructionBusiness",
         label="pest control company",
         service="pest treatment",
         urgent_scenario="I found bed bugs in my bedroom",
@@ -386,6 +421,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "auto_repair": Vertical(
         key="auto_repair",
+        schema_type="AutoRepair",
         label="auto repair shop",
         service="car repair",
         urgent_scenario="My car won't start and I need it fixed today",
@@ -409,6 +445,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "veterinary": Vertical(
         key="veterinary",
+        schema_type="VeterinaryCare",
         label="veterinary clinic",
         service="veterinary care",
         urgent_scenario="My dog is sick and I need a vet who can see him today",
@@ -432,6 +469,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "chiropractic": Vertical(
         key="chiropractic",
+        schema_type="MedicalBusiness",
         label="chiropractor",
         service="chiropractic care",
         urgent_scenario="I threw my back out and I can barely move",
@@ -455,6 +493,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "remodeling": Vertical(
         key="remodeling",
+        schema_type="GeneralContractor",
         label="remodeling contractor",
         service="kitchen and bath remodeling",
         urgent_scenario="I am planning a kitchen remodel and comparing contractors",
@@ -479,6 +518,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "flooring": Vertical(
         key="flooring",
+        schema_type="HomeAndConstructionBusiness",
         label="flooring contractor",
         service="flooring installation",
         urgent_scenario="I am choosing a flooring installer and want quotes",
@@ -501,6 +541,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "appliance_repair": Vertical(
         key="appliance_repair",
+        schema_type="HomeAndConstructionBusiness",
         label="appliance repair company",
         service="appliance repair",
         urgent_scenario="My refrigerator stopped cooling and the food is spoiling",
@@ -524,6 +565,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "septic": Vertical(
         key="septic",
+        schema_type="HomeAndConstructionBusiness",
         label="septic service company",
         service="septic service",
         urgent_scenario="My septic tank is backing up into the house",
@@ -547,6 +589,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "moving": Vertical(
         key="moving",
+        schema_type="MovingCompany",
         label="moving company",
         service="moving services",
         urgent_scenario="I need movers for a house move in two weeks",
@@ -570,6 +613,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "landscaping": Vertical(
         key="landscaping",
+        schema_type="HomeAndConstructionBusiness",
         label="landscaping company",
         service="landscaping",
         urgent_scenario="I want my yard redone before summer",

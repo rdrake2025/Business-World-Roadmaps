@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 
+from .. import knowledge
 from ..engines.live import _post
 from ..models import Audit, Business, Deliverable
 from ..prompts import build_prompts, vertical_meta
@@ -28,12 +29,11 @@ from .base import Agent
 
 def localbusiness_schema(biz: Business, audit: Audit | None = None) -> str:
     meta = vertical_meta(biz.vertical)
-    # schema.org types that engines actually recognise for these verticals.
-    schema_type = {
-        "hvac": "HVACBusiness", "plumbing": "Plumber", "roofing": "RoofingContractor",
-        "dental": "Dentist", "legal": "Attorney", "medical": "MedicalClinic",
-        "insurance": "InsuranceAgency",
-    }.get(biz.vertical, "LocalBusiness")
+    # The type comes from the trade itself. It used to be a lookup table here
+    # that covered seven of twenty-two verticals, so fifteen trades published
+    # a generic LocalBusiness and threw away the one signal that tells a
+    # retrieval engine what the business actually is.
+    schema_type = knowledge.get(biz.vertical).schema_type
 
     doc = {
         "@context": "https://schema.org",
