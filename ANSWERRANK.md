@@ -57,6 +57,33 @@ With no keys present, every engine falls back to a deterministic simulator, so
 the whole system is demonstrable offline. Add keys and the same code paths hit
 live engines.
 
+## What the agents know
+
+The agents reason from a cited knowledge layer (`answerrank/knowledge.py`)
+rather than hardcoded strings: real 2026 benchmarks for average ticket,
+lifetime value, acquisition cost, seasonality, buyer language and objections,
+per trade.
+
+That changes what the system can say. Instead of "you aren't visible in AI
+search", an audit produces:
+
+> At an average ticket of $1,600, that gap is worth an estimated $27,200 a year
+> in first-job revenue — about 1.4 jobs a month.
+
+…with its assumptions printed alongside, because a number a client cannot
+interrogate is one they should not believe.
+
+It also makes the system honest about where the business model works:
+
+```bash
+python3 run.py verticals          # which trades justify $997/mo, and on what argument
+```
+
+At $997/mo only HVAC clears on first-job revenue alone. Plumbing and dental
+need the lifetime-value argument. The rest do not justify that price and the
+qualifier refuses to pitch them — pitching poor-fit prospects spends
+complaint-rate budget that cannot be bought back.
+
 ## Run it from your phone
 
 The fleet runs on your laptop; you manage it from your pocket.
@@ -152,6 +179,7 @@ and retention at the same time.
 | `schedule --start DATE` | Generate an .ics calendar for your phone |
 | `setup` | Interactive first-run configuration |
 | `doctor [--probe]` | What is blocking you from operating |
+| `verticals [--price N]` | Which trades justify which retainer, and why |
 | `web` | Serve the site and the phone console |
 
 ## Safety rails

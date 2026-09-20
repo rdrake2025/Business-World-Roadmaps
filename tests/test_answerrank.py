@@ -37,6 +37,7 @@ from answerrank.store import Store
 
 import json
 import logging
+import re
 
 SAMPLE_ANSWER = """Here are the top HVAC companies in Austin, TX:
 
@@ -908,3 +909,170 @@ class TestLanDiscovery(unittest.TestCase):
     def test_qr_helper_degrades_to_empty(self):
         from web.app import qr_or_url
         self.assertIsInstance(qr_or_url("http://example.com"), str)
+
+
+class TestKnowledge(unittest.TestCase):
+    """The knowledge layer makes revenue claims to prospects. Every number it
+    produces has to be defensible, so these assert the estimates stay
+    conservative rather than merely being present."""
+
+    def test_every_vertical_has_economics(self):
+        from answerrank.knowledge import VERTICALS
+        for key, v in VERTICALS.items():
+            self.assertGreater(v.economics.avg_ticket, 0, key)
+            self.assertGreaterEqual(v.economics.lifetime_value,
+                                    v.economics.avg_ticket, key)
+            self.assertTrue(v.buyer_phrases, f"{key} has no real buyer language")
+            self.assertTrue(v.objections, f"{key} has no objections")
+
+    def test_unknown_vertical_falls_back(self):
+        from answerrank.knowledge import GENERIC, get
+        self.assertEqual(get("underwater_basket_weaving"), GENERIC)
+
+    def test_revenue_estimates_stay_credible(self):
+        """A roofer told they lose $290k/year dismisses the whole pitch."""
+        from answerrank.knowledge import VERTICALS, revenue_at_risk
+        for key in VERTICALS:
+            r = revenue_at_risk(key, 10, 10)
+            self.assertLess(float(r["annual_revenue"]), 60_000,
+                            f"{key} revenue-at-risk is too aggressive to be believed")
+            self.assertGreaterEqual(float(r["annual_revenue"]), 0)
+
+    def test_no_gap_means_no_loss(self):
+        from answerrank.knowledge import revenue_at_risk
+        self.assertEqual(revenue_at_risk("hvac", 0, 10)["annual_revenue"], 0)
+
+    def test_bigger_gap_means_bigger_loss(self):
+        from answerrank.knowledge import revenue_at_risk
+        small = float(revenue_at_risk("hvac", 2, 10)["annual_revenue"])
+        big = float(revenue_at_risk("hvac", 9, 10)["annual_revenue"])
+        self.assertGreater(big, small)
+
+    def test_every_estimate_states_its_assumptions(self):
+        from answerrank.knowledge import VERTICALS, revenue_at_risk
+        for key in VERTICALS:
+            assumption = str(revenue_at_risk(key, 5, 10)["assumption"])
+            self.assertIn("Assumes", assumption)
+            self.assertIn("%", assumption)
+
+    def test_hvac_is_the_strongest_fit_at_growth_price(self):
+        """The vertical recommendation should follow the arithmetic."""
+        from answerrank.knowledge import best_verticals
+        self.assertEqual(best_verticals(997)[0]["vertical"], "hvac")
+
+    def test_low_ticket_verticals_cannot_claim_first_job_payback(self):
+        from answerrank.knowledge import plan_fit
+        fit = plan_fit("dental", 997)
+        self.assertNotEqual(fit["basis"], "first-job revenue")
+        self.assertLess(float(fit["first_job_ratio"]), 1.0)
+
+    def test_seasonal_note_covers_every_month(self):
+        from answerrank.knowledge import seasonal_note
+        for month in range(1, 13):
+            self.assertTrue(seasonal_note("hvac", month).strip())
+
+
+class TestQualification(unittest.TestCase):
+    def _biz(self, **kw):
+        base = dict(name="Apex Heating & Air", city="Austin", state="TX",
+                    vertical="hvac", website="https://apexhvac.com",
+                    email="office@apexhvac.com")
+        base.update(kw)
+        return Business(**base)
+
+    def test_ideal_prospect_scores_top_tier(self):
+        from answerrank.qualify import score_fit
+        fit = score_fit(self._biz(), visibility_score=8.0)
+        self.assertEqual(fit.tier, "A")
+        self.assertTrue(fit.worth_pitching)
+
+    def test_no_website_is_blocked(self):
+        from answerrank.qualify import score_fit
+        fit = score_fit(self._biz(website=""), visibility_score=8.0)
+        self.assertFalse(fit.worth_pitching)
+        self.assertTrue(any("website" in b.lower() for b in fit.blockers))
+
+    def test_already_visible_business_is_never_pitched(self):
+        """There is no honest problem to sell them."""
+        from answerrank.qualify import score_fit
+        fit = score_fit(self._biz(), visibility_score=88.0)
+        self.assertFalse(fit.worth_pitching)
+        self.assertTrue(any("visible" in b.lower() for b in fit.blockers))
+
+    def test_weak_economics_blocks_the_pitch(self):
+        from answerrank.qualify import score_fit
+        fit = score_fit(self._biz(vertical="medical"), visibility_score=10.0)
+        self.assertFalse(fit.worth_pitching)
+
+    def test_own_domain_email_scores_above_free_host(self):
+        from answerrank.qualify import score_fit
+        owned = score_fit(self._biz(), 8.0).score
+        free = score_fit(self._biz(email="bob@gmail.com"), 8.0).score
+        self.assertGreater(owned, free)
+
+    def test_priority_is_zero_for_unpitchable(self):
+        from answerrank.qualify import priority
+        self.assertEqual(priority(self._biz(website=""), 8.0, 90.0), 0.0)
+
+    def test_priority_favours_fit_over_raw_pain(self):
+        from answerrank.qualify import priority
+        good_fit_moderate_pain = priority(self._biz(), 30.0, 30.0)
+        poor_fit_severe_pain = priority(
+            self._biz(vertical="medical", city="Nowhere"), 5.0, 100.0)
+        self.assertGreater(good_fit_moderate_pain, poor_fit_severe_pain)
+
+
+class TestOutreachCopy(unittest.TestCase):
+    """Reply-rate research is specific: 36-50 character subjects, and emails
+    past ~12 sentences lose about half their replies. These hold the copy to
+    that, because it is the difference between a 3% and a 7% reply rate."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.settings = make_settings(self.tmp.name)
+        self.settings.physical_address = "PO Box 1, Austin, TX 78701"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _prospect(self, name="Apex Heating & Air", vertical="hvac"):
+        biz = Business(name=name, city="Austin", state="TX", vertical=vertical,
+                       website="https://apex.com", email="o@apex.com")
+        return Prospect(business=biz, score=8.0, competitor_gap=80.0,
+                        notes=f"{name} appears in 0 of 4 AI answers for HVAC "
+                              f"contractors in Austin, TX. Summit Climate Co appears in 4.")
+
+    def test_subject_length_sits_in_the_target_band(self):
+        from answerrank.agents.outreach import subject_line
+        for name in ["Apex", "Apex Heating & Air",
+                     "Cornerstone Heating Cooling and Plumbing Services of Texas"]:
+            subj = subject_line(name, "Austin", 4, 4)
+            self.assertLessEqual(len(subj), 55, f"too long for a mobile preview: {subj}")
+
+    def test_opener_stays_short_enough_to_get_replies(self):
+        from answerrank.agents.outreach import first_touch
+        _subject, body = first_touch(self._prospect(), self.settings)
+        core = body.split("---")[0]
+        sentences = [s for s in re.split(r"[.!?]+", core) if len(s.strip()) > 12]
+        self.assertLessEqual(len(sentences), 10,
+                             "past ~12 sentences reply rates roughly halve")
+
+    def test_opener_names_the_competitor(self):
+        """Referencing a visible competitor is top-quartile personalisation."""
+        _subject, body = __import__(
+            "answerrank.agents.outreach", fromlist=["first_touch"]
+        ).first_touch(self._prospect(), self.settings)
+        self.assertIn("Summit Climate Co", body)
+
+    def test_opener_carries_the_money_argument(self):
+        from answerrank.agents.outreach import first_touch
+        _subject, body = first_touch(self._prospect(), self.settings)
+        self.assertIn("average ticket", body)
+
+    def test_every_message_still_carries_compliance(self):
+        from answerrank.agents.outreach import first_touch, followup
+        for subject, body in [first_touch(self._prospect(), self.settings)] + \
+                             [followup(self._prospect(), n, self.settings) for n in (2, 3)]:
+            self.assertTrue(subject.strip())
+            self.assertIn("unsubscribe", body.lower())
+            self.assertIn(self.settings.company_legal_name, body)

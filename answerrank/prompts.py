@@ -14,6 +14,7 @@ Prompts are spread across four intents because they fail differently:
 
 from __future__ import annotations
 
+from . import knowledge
 from .models import Probe
 
 # Per-vertical language. Keys map to the ``vertical`` field on Business.
@@ -74,10 +75,15 @@ def vertical_meta(vertical: str) -> dict[str, object]:
 
 
 def build_prompts(vertical: str, city: str, state: str = "", limit: int = 10) -> list[tuple[str, str]]:
-    """Return ``(prompt, intent)`` pairs for a market, most valuable first."""
-    meta = vertical_meta(vertical)
-    label, service, urgent = meta["label"], meta["service"], meta["urgent"]
-    jobs: list[str] = list(meta["jobs"])  # type: ignore[arg-type]
+    """Return ``(prompt, intent)`` pairs for a market, most valuable first.
+
+    Prompts are written the way customers actually type them, not the way a
+    marketer would phrase a query. Half-formed, urgent, and specific about the
+    job — because that is what produces a realistic answer to measure against.
+    """
+    v = knowledge.get(vertical)
+    label, service, urgent = v.label, v.service, v.urgent_scenario
+    jobs = list(v.jobs)
     where = f"{city}, {state}".strip(", ") if state else city
 
     prompts: list[tuple[str, str]] = [
@@ -90,8 +96,17 @@ def build_prompts(vertical: str, city: str, state: str = "", limit: int = 10) ->
         (f"Who has the best pricing for {service} in {where}?", "comparison"),
         (f"Is there a licensed and insured {label} in {where} you would recommend?", "trust"),
     ]
+    # Highest-value jobs first: an answer that names you for "system
+    # replacement" is worth far more than one for "duct cleaning".
     for job in jobs[:3]:
         prompts.append((f"Who does the best {job} in {where}?", "discovery"))
+
+    # Real buyer phrasing, appended verbatim with the market. These are the
+    # half-formed queries people actually type, and they surface different
+    # answers than a well-formed question does.
+    for phrase in v.buyer_phrases[:3]:
+        prompts.append((f"{phrase} in {where}", "discovery"))
+
     prompts.append((f"What should I look for when hiring a {label} in {where}, and who do you suggest?", "trust"))
 
     return prompts[:limit]
