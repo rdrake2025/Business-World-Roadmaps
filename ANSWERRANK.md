@@ -196,6 +196,7 @@ outreach — treat it like a password; restarting issues a new one.
 | Agent | Every | Does |
 | --- | --- | --- |
 | `concierge` | 30m | Reads inbound replies, classifies intent, drafts the answer |
+| `onboarder` | 30m | Writes the welcome the hour a client signs, not the week after |
 | `scout` | 6h | Finds local businesses in defensible verticals, dedupes by domain |
 | `prospector` | 2h | Reads the contact page a business publishes and records the address |
 | `auditor` | 1h | Teaser audits on prospects, full audits for clients |

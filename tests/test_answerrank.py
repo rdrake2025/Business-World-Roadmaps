@@ -2472,3 +2472,111 @@ class TestDeliveryMethod(unittest.TestCase):
     def test_two_different_months_produce_different_plans(self):
         from answerrank import method
         self.assertNotEqual(method.summarise(1, "hvac"), method.summarise(4, "hvac"))
+
+
+class TestOnboarding(unittest.TestCase):
+    """The gap between paying and hearing from you is where remorse lives."""
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def _client(self, vertical="hvac"):
+        biz = Business(name="Apex Heating & Air", city="Austin", state="TX",
+                       vertical=vertical, website="https://apexhvac.com",
+                       email="o@apexhvac.com")
+        client = Client(business=biz, plan="growth", mrr=997.0, status="active")
+        self.store.upsert_client(client)
+        return client
+
+    def _agent(self):
+        from answerrank.agents.onboarder import OnboarderAgent
+        return OnboarderAgent(self.store, self.settings)
+
+    def test_a_new_client_gets_a_welcome_drafted(self):
+        self._client()
+        count, _summary = self._agent().execute()
+        self.assertEqual(count, 1)
+        self.assertEqual(len(self.store.get_messages("drafted")), 1)
+
+    def test_a_client_is_never_welcomed_twice(self):
+        self._client()
+        agent = self._agent()
+        agent.execute()
+        count, summary = agent.execute()
+        self.assertEqual(count, 0)
+        self.assertIn("welcomed", summary)
+        self.assertEqual(len(self.store.get_messages("drafted")), 1)
+
+    def test_no_clients_is_not_an_error(self):
+        count, summary = self._agent().execute()
+        self.assertEqual(count, 0)
+        self.assertTrue(summary)
+
+    def test_the_welcome_states_the_honest_timeline(self):
+        """A client told to expect movement in 30 days cancels in month
+        three. The overpromise causes the churn it was meant to prevent."""
+        self._client()
+        self._agent().execute()
+        body = self.store.get_messages("drafted")[0].body
+        self.assertIn("month two", body.lower())
+        self.assertNotIn("guarantee", body.lower())
+        self.assertNotIn("overnight", body.lower())
+
+    def test_the_welcome_asks_for_exactly_what_month_one_needs(self):
+        self._client()
+        self._agent().execute()
+        body = self.store.get_messages("drafted")[0].body.lower()
+        self.assertIn("google business profile", body)
+        self.assertIn("name, address and phone", body)
+
+    def test_the_welcome_carries_this_clients_own_numbers(self):
+        from answerrank.models import Audit, ProbeResult
+        client = self._client()
+        audit = Audit(business_id=client.business.id, business_name="Apex",
+                      market="Austin, TX", vertical="hvac", score=20.0)
+        audit.results = [ProbeResult(probe_id="p", engine="mock", prompt="q",
+                                     answer_text="", mentioned=(i < 2), cited=False,
+                                     position=None) for i in range(10)]
+        self.store.save_audit(audit)
+        self._agent().execute()
+        self.assertIn("2 of 10", self.store.get_messages("drafted")[0].body)
+
+    def test_the_welcome_is_wrapped_like_every_other_message(self):
+        from answerrank.playbook import WRAP
+        self._client()
+        self._agent().execute()
+        body = self.store.get_messages("drafted")[0].body
+        self.assertLessEqual(max(len(l) for l in body.split("\n")), WRAP + 4)
+
+    def test_it_reads_as_written_english(self):
+        """A generated sentence like "about make the site readable" tells the
+        client precisely how much of this was automated."""
+        self._client()
+        self._agent().execute()
+        body = self.store.get_messages("drafted")[0].body
+        for broken in ("is about make", "about complete the", "..", "Hi ,",
+                       " ,", " .", "the the"):
+            self.assertNotIn(broken, body)
+        # A double space *inside* a sentence is a seam. Leading indentation on
+        # a list item is deliberate formatting, so only the body of each line
+        # is checked.
+        for line in body.split("\n"):
+            self.assertNotIn("  ", line.lstrip(), repr(line))
+
+    def test_every_trade_produces_a_sound_welcome(self):
+        from answerrank import knowledge
+        from answerrank.agents.onboarder import welcome_email
+        for key in knowledge.VERTICALS:
+            client = Client(business=Business(
+                name="Test Co", city="Austin", state="TX", vertical=key,
+                website="https://t.com"), plan="growth", mrr=997.0)
+            subject, body = welcome_email(client, None, self.settings)
+            self.assertTrue(subject.strip(), key)
+            self.assertNotIn("is about make", body, key)
+            self.assertLessEqual(max(len(l) for l in body.split("\n")), 78, key)
