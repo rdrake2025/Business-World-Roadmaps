@@ -27,6 +27,7 @@ from answerrank.engines.base import detect_sentiment, extract_businesses, name_m
 from answerrank.mailer import build_message
 from answerrank.models import (
     Audit, Business, Client, LedgerEntry, OutreachMessage, ProbeResult, Prospect,
+    now_iso,
 )
 from answerrank.orchestrator import Orchestrator
 from answerrank.scoring import (
@@ -1895,3 +1896,174 @@ class TestWarmup(unittest.TestCase):
             self.assertEqual(_days_warming(store, settings), 5)
         finally:
             os.unlink(tmp.name)
+
+
+class TestContactDiscovery(unittest.TestCase):
+    """Without an address, every real prospect is uncontactable."""
+
+    def test_the_real_pipeline_gap_is_closed(self):
+        """A Serper result has a website and a phone and no email.
+
+        This is the shape of every real prospect. Before the Prospector they
+        were all filtered out as uncontactable while the simulated fixtures,
+        which fabricate addresses, sailed through — so the fleet looked
+        healthy and could not send one message to a real business.
+        """
+        from answerrank.agents.outreach import OutreachAgent
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            agent = OutreachAgent(Store(tmp.name), Settings())
+            biz = Business(name="Apex", city="Austin", state="TX", vertical="hvac",
+                           website="https://apexhvac.com", phone="+15125550100")
+            prospect = Prospect(business=biz, score=18, competitor_gap=40)
+            self.assertFalse(agent._eligible(prospect))
+            biz.email = "office@apexhvac.com"
+            self.assertTrue(agent._eligible(prospect))
+        finally:
+            os.unlink(tmp.name)
+
+    def test_junk_that_looks_like_an_address_is_rejected(self):
+        from answerrank.contacts import is_usable
+        for junk in ("logo@2x.png", "noreply@real.com", "postmaster@real.com",
+                     "youremail@example.com", "err@sentry.io", "a@@b.com",
+                     "name@yourdomain.com", "x@wixpress.com"):
+            self.assertFalse(is_usable(junk), junk)
+
+    def test_real_addresses_survive(self):
+        from answerrank.contacts import is_usable
+        for good in ("office@apexhvac.com", "hello@a-b.co.uk",
+                     "apexhvac1998@gmail.com", "first.last@firm.com"):
+            self.assertTrue(is_usable(good), good)
+
+    def test_a_mailto_outranks_a_string_in_the_body(self):
+        from answerrank.contacts import extract_emails
+        html = ('<p>vendor: sales@printshop.com</p>'
+                '<a href="mailto:office@apex.com">us</a>')
+        self.assertEqual(extract_emails(html)[0], "office@apex.com")
+
+    def test_their_own_domain_beats_a_free_inbox(self):
+        from answerrank.contacts import rank
+        best = rank(["apex1998@gmail.com", "office@apex.com"], "apex.com")
+        self.assertEqual(best[0], "office@apex.com")
+
+    def test_a_role_address_beats_a_named_person(self):
+        """People leave companies; office@ does not."""
+        from answerrank.contacts import rank
+        best = rank(["dave@apex.com", "office@apex.com"], "apex.com")
+        self.assertEqual(best[0], "office@apex.com")
+
+    def test_it_never_guesses_an_address(self):
+        """A guessed address is a bounce, and bounces are capped at 2%."""
+        from answerrank.contacts import find_contact
+        result = find_contact("https://this-host-does-not-resolve-xyz123.test")
+        self.assertFalse(result.found)
+        self.assertEqual(result.email, "")
+
+    def test_no_website_is_not_an_error(self):
+        from answerrank.contacts import find_contact
+        self.assertFalse(find_contact("").found)
+
+    def test_a_checked_business_is_not_crawled_again(self):
+        """Re-reading a small business's site every six hours is rude and
+        finds nothing new."""
+        from answerrank.agents.prospector import ProspectorAgent
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            store = Store(tmp.name)
+            prospect = Prospect(business=Business(
+                name="Apex", city="Austin", state="TX", vertical="hvac",
+                website="https://apex.com"), stage="discovered")
+            prospect.contact_checked_at = now_iso()
+            store.upsert_prospect(prospect)
+            self.assertEqual(ProspectorAgent(store, Settings()).due(), [])
+        finally:
+            os.unlink(tmp.name)
+
+    def test_the_check_stamp_survives_a_round_trip(self):
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            store = Store(tmp.name)
+            prospect = Prospect(business=Business(
+                name="Apex", city="Austin", state="TX", vertical="hvac",
+                website="https://apex.com"), stage="discovered")
+            prospect.contact_checked_at = "2026-01-01T00:00:00+00:00"
+            store.upsert_prospect(prospect)
+            loaded = store.get_prospects("discovered")[0]
+            self.assertEqual(loaded.contact_checked_at, "2026-01-01T00:00:00+00:00")
+        finally:
+            os.unlink(tmp.name)
+
+
+class TestPerTradePricing(unittest.TestCase):
+    """Quoting one price across every trade discarded half the library."""
+
+    def test_each_trade_is_quoted_what_its_economics_defend(self):
+        settings = Settings()
+        self.assertGreater(settings.quote_for("remodeling"),
+                           settings.quote_for("appliance_repair"))
+
+    def test_every_quote_sits_on_the_configured_ladder(self):
+        settings = Settings()
+        ladder = set(settings.pricing.ladder())
+        for key in knowledge_verticals():
+            self.assertIn(settings.quote_for(key), ladder, key)
+
+    def test_a_trade_that_failed_at_one_price_is_now_reachable(self):
+        from answerrank.agents.outreach import OutreachAgent
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            agent = OutreachAgent(Store(tmp.name), Settings())
+            prospect = Prospect(business=Business(
+                name="Fix It Fast", city="Austin", state="TX",
+                vertical="appliance_repair", website="https://fif.com",
+                email="office@fif.com"), score=20, competitor_gap=40)
+            self.assertTrue(agent._eligible(prospect))
+        finally:
+            os.unlink(tmp.name)
+
+    def test_the_scout_prospects_far_more_than_one_price_allowed(self):
+        from answerrank.agents.scout import defensible_verticals
+        settings = Settings()
+        flat = [v for v in knowledge_verticals()
+                if __import__("answerrank.knowledge", fromlist=["plan_fit"])
+                .plan_fit(v, settings.pricing.growth_monthly)["verdict"] != "weak"]
+        laddered = defensible_verticals(settings.pricing.growth_monthly,
+                                        settings.pricing.ladder())
+        self.assertGreater(len(laddered), len(flat))
+
+    def test_the_scout_prospects_the_best_paying_trades_first(self):
+        from answerrank.agents.scout import defensible_verticals
+        settings = Settings()
+        order = defensible_verticals(settings.pricing.growth_monthly,
+                                     settings.pricing.ladder())
+        prices = [settings.quote_for(v) for v in order]
+        self.assertEqual(prices, sorted(prices, reverse=True))
+
+
+class TestOneVerticalLibrary(unittest.TestCase):
+    def test_the_search_label_exists_for_every_trade(self):
+        """A second hand-maintained copy had drifted to missing 15 of 22,
+        so the Scout searched local listings for the wrong businesses."""
+        from answerrank.prompts import VERTICALS, vertical_meta
+        for key in knowledge_verticals():
+            self.assertIn(key, VERTICALS, key)
+            self.assertTrue(str(vertical_meta(key)["label"]).strip(), key)
+
+    def test_the_search_label_matches_the_knowledge_layer(self):
+        from answerrank import knowledge
+        from answerrank.prompts import vertical_meta
+        for key, v in knowledge.VERTICALS.items():
+            self.assertEqual(vertical_meta(key)["label"], v.label, key)
+
+    def test_an_unknown_trade_still_resolves(self):
+        from answerrank.prompts import vertical_meta
+        self.assertTrue(vertical_meta("underwater_basket_weaving")["label"])
+
+
+def knowledge_verticals():
+    from answerrank import knowledge
+    return list(knowledge.VERTICALS)

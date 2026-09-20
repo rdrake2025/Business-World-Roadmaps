@@ -706,7 +706,7 @@ def cmd_brief(args, settings: Settings) -> int:
     if not prospect:
         return 1
 
-    price = args.price or settings.pricing.growth_monthly
+    price = args.price or settings.quote_for(prospect.business.vertical)
     b = qualify.brief(prospect.business, prospect.score, prospect.competitor_gap, price)
 
     _hr(f"{str(b['business']).upper()} \u2014 {b['trade']}")

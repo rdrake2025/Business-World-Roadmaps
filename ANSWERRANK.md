@@ -197,6 +197,7 @@ outreach — treat it like a password; restarting issues a new one.
 | --- | --- | --- |
 | `concierge` | 30m | Reads inbound replies, classifies intent, drafts the answer |
 | `scout` | 6h | Finds local businesses in defensible verticals, dedupes by domain |
+| `prospector` | 2h | Reads the contact page a business publishes and records the address |
 | `auditor` | 1h | Teaser audits on prospects, full audits for clients |
 | `fixer` | 6h | Generates JSON-LD schema, FAQ copy, GBP and citation plans |
 | `reporter` | 12h | Renders branded monthly client reports |
@@ -291,6 +292,33 @@ and retention at the same time.
 | `playbook TRADE` | How to sell one trade: positioning, objections, discovery |
 | `domain NAME --provider X` | Sending-domain setup: the exact DNS records, then whether they are live |
 | `web` | Serve the site and the phone console |
+
+## Getting a real prospect you can actually write to
+
+Local search results give a name, a website and a phone number. They never
+give an email, and the outreach agent requires one — so in production every
+real prospect was filtered out as uncontactable while the simulated fixtures,
+which fabricate addresses, sailed through. The fleet looked healthy in every
+dashboard and could not send one message to a real business.
+
+**Prospector** does what a person does: opens the site, clicks Contact, reads
+the address printed there. It obeys robots.txt, identifies itself honestly,
+pauses between sites, and re-checks a business at most every 45 days.
+
+It never guesses. `info@theirdomain.com` is right often enough to be tempting
+and wrong often enough to be fatal — every wrong guess is a bounce, bounces
+are capped at 2% before the sending domain is throttled wholesale, and a
+guessed address is indistinguishable from a real one until the damage is
+done. A business with no published address is recorded as exactly that, which
+is a fact the operator can act on by calling the number already on file.
+
+## One price per trade, not one price
+
+Quoting every trade $997 meant half the library was unsellable and therefore
+unprospected. `Settings.quote_for(vertical)` is now the single place that
+decision is made, so the Scout, the qualifier and the copy cannot disagree
+about what a prospect is being offered. The Scout prospects every trade with
+a defensible tier, best-paying first — twenty trades rather than eleven.
 
 ## Turning the domain on
 

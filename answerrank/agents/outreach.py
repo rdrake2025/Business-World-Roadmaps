@@ -210,9 +210,11 @@ class OutreachAgent(Agent):
         if self.store.is_suppressed(email):
             return False
 
-        fit = qualify.score_fit(
-            prospect.business, prospect.score,
-            self.settings.pricing.growth_monthly)
+        # The price this trade can actually defend, not one flat number.
+        # Quoting every trade $997 discarded half the library for a reason
+        # that was never about the market.
+        price = self.settings.quote_for(prospect.business.vertical)
+        fit = qualify.score_fit(prospect.business, prospect.score, price)
         if not fit.worth_pitching:
             self.log.debug("skipping %s: %s", prospect.business.name,
                            fit.blockers[0] if fit.blockers else f"tier {fit.tier}")
@@ -243,8 +245,9 @@ class OutreachAgent(Agent):
         # --- first touches, best-fit first ---
         candidates = sorted(
             self.store.due_prospects("audited", self.draft_budget * 2),
-            key=lambda p: -qualify.priority(p.business, p.score, p.competitor_gap,
-                                            self.settings.pricing.growth_monthly),
+            key=lambda p: -qualify.priority(
+                p.business, p.score, p.competitor_gap,
+                self.settings.quote_for(p.business.vertical)),
         )[: self.draft_budget]
         for prospect in candidates:
             if not self._eligible(prospect):

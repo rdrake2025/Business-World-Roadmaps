@@ -319,7 +319,7 @@ class Api:
         if not prospect:
             return {"error": "no such prospect"}
         out = qualify.brief(prospect.business, prospect.score, prospect.competitor_gap,
-                            self.settings.pricing.growth_monthly)
+                            self.settings.quote_for(prospect.business.vertical))
         out["prospect_id"] = prospect.id
         out["stage"] = prospect.stage
         out["market"] = prospect.business.market
