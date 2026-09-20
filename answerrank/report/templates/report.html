@@ -223,8 +223,38 @@
   </ul>
 </section>
 
+{% if plan %}
 <section>
-  <h2>Your action plan this cycle</h2>
+  <h2>Month {{ month }} &mdash; {{ plan.title }}</h2>
+  <p class="sub" style="margin-bottom:14px">{{ plan.thesis }}</p>
+  {% for note in plan.overrides %}
+  <p class="sub" style="color:#d03b3b;font-weight:600">{{ note }}</p>
+  {% endfor %}
+  <ol class="actions">
+    {% for lever in plan.levers %}
+    <li><b>{{ lever.name }}</b>
+      <span>{{ lever.why }}</span>
+      <span style="display:block;margin-top:4px;color:var(--ink-2)">
+        {% if lever.owner == 'us' %}We do this.{% elif lever.owner == 'client' %}Needs you.{% else %}We prepare it, you approve.{% endif %}
+        It {{ lever.timing() }}. Done when: {{ lever.verify }}
+      </span>
+    </li>
+    {% endfor %}
+  </ol>
+  {% for note in plan.notes %}
+  <p class="sub" style="margin-top:10px">{{ note }}</p>
+  {% endfor %}
+  {% if plan.client_minutes %}
+  <p class="sub" style="margin-top:14px">
+    Your time this month: about {{ plan.client_minutes }} minutes. Everything
+    else is ours.
+  </p>
+  {% endif %}
+</section>
+{% endif %}
+
+<section>
+  <h2>Your action plan &mdash; specific to this month's result</h2>
   <ol class="actions">
     {% for act in actions %}
     <li><b>{{ act.title }}</b><span>{{ act.detail }}</span></li>

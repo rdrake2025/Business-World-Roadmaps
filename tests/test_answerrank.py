@@ -396,9 +396,12 @@ class TestPipelineIntegration(unittest.TestCase):
                        website="https://apexhvac.com")
         audit = run_audit(biz, self.settings, depth="teaser")
         deliverables = FixerAgent(self.store, self.settings).build_for(biz, audit)
-        html = render_report(audit, self.settings, [audit], deliverables)
-        for needle in ("Visibility Score", "Apex HVAC", "action plan", "Full test log"):
+        html = render_report(audit, self.settings, [audit], deliverables, month=2)
+        # Substance, not wording: a heading rename should not fail this.
+        for needle in ("Visibility Score", "Apex HVAC", "Full test log"):
             self.assertIn(needle.lower(), html.lower())
+        self.assertIn('<ol class="actions">', html)
+        self.assertIn("month 2", html.lower())
 
     def test_report_escapes_html_in_business_name(self):
         from answerrank.agents.reporter import render_report
@@ -2284,3 +2287,188 @@ class TestBlendedDealValue(unittest.TestCase):
         result = self._agent().required_volume(5000)
         self.assertIn("average", str(result["line"]))
         self.assertTrue(str(result["price_basis"]))
+
+
+class TestNoTradeIsHalfAdded(unittest.TestCase):
+    """One test standing in for a bug that has now happened four times.
+
+    Per-trade data kept escaping into lookup tables elsewhere in the codebase
+    — prompt labels, schema types, trade directories — and each copy silently
+    stopped at the seven original verticals while the library grew to
+    twenty-two. Every time, the new trades kept working and quietly got the
+    generic fallback: the Scout searched for "home service contractor", the
+    Fixer published a bare LocalBusiness, the citation plan listed no trade
+    authority at all.
+
+    This walks every adopted trade through every per-trade surface and fails
+    if any of them falls back. A fifth copy will be caught the day it is
+    written rather than months later.
+    """
+
+    def _verticals(self):
+        from answerrank import knowledge
+        return knowledge.VERTICALS
+
+    def test_every_trade_resolves_to_itself_not_the_generic(self):
+        from answerrank import knowledge
+        for key in self._verticals():
+            self.assertIsNot(knowledge.get(key), knowledge.GENERIC, key)
+
+    def test_every_trade_has_its_own_schema_type(self):
+        for key, v in self._verticals().items():
+            self.assertNotEqual(v.schema_type, "LocalBusiness", key)
+            self.assertIn(v.schema_type, __import__(
+                "answerrank.knowledge", fromlist=["x"]).KNOWN_SCHEMA_TYPES, key)
+
+    def test_every_trade_has_trade_specific_directories(self):
+        for key, v in self._verticals().items():
+            self.assertTrue(v.directories, key)
+
+    def test_every_trade_has_its_own_search_label(self):
+        from answerrank.prompts import vertical_meta
+        generic = vertical_meta("a_trade_that_does_not_exist")["label"]
+        for key, v in self._verticals().items():
+            self.assertEqual(vertical_meta(key)["label"], v.label, key)
+            self.assertNotEqual(vertical_meta(key)["label"], generic, key)
+
+    def test_every_trade_has_the_content_the_agents_need(self):
+        for key, v in self._verticals().items():
+            for attr in ("label", "service", "urgent_scenario", "decision_maker"):
+                self.assertTrue(str(getattr(v, attr)).strip(), f"{key}.{attr}")
+            for attr in ("jobs", "objections", "buyer_phrases", "spend_signals",
+                         "peak_months"):
+                self.assertTrue(getattr(v, attr), f"{key}.{attr}")
+
+    def test_every_trade_produces_a_citation_plan_naming_its_own_authority(self):
+        from answerrank.agents.fixer import citation_gaps
+        for key, v in self._verticals().items():
+            plan = citation_gaps(Business(name="T", city="Austin", state="TX",
+                                          vertical=key))
+            for directory in v.directories:
+                self.assertIn(directory, plan, key)
+
+    def test_every_trade_produces_schema_naming_its_own_type(self):
+        import json
+        from answerrank.agents.fixer import localbusiness_schema
+        for key, v in self._verticals().items():
+            doc = json.loads(localbusiness_schema(Business(
+                name="T", city="Austin", state="TX", vertical=key,
+                website="https://t.com")))
+            self.assertEqual(doc["@type"], v.schema_type, key)
+
+    def test_every_trade_is_quoted_and_prospectable(self):
+        from answerrank.agents.scout import defensible_verticals
+        settings = Settings()
+        prospected = set(defensible_verticals(settings.pricing.growth_monthly,
+                                              settings.pricing.ladder()))
+        for key in self._verticals():
+            self.assertGreater(settings.quote_for(key), 0, key)
+        self.assertGreaterEqual(len(prospected), len(self._verticals()) - 2)
+
+
+class TestDeliveryMethod(unittest.TestCase):
+    """A client receiving the same six files every month cancels in month
+    three. The arc is what makes the retainer renewable."""
+
+    def test_each_month_does_something_the_last_one_did_not(self):
+        from answerrank import method
+        seen: set[str] = set()
+        for phase in method.PHASES:
+            keys = {l.key for l in phase.levers}
+            self.assertTrue(keys - seen, f"month {phase.month} repeats earlier work")
+            seen |= keys
+
+    def test_every_lever_states_the_mechanism_not_the_benefit(self):
+        from answerrank import method
+        for phase in method.PHASES:
+            for lever in phase.levers:
+                self.assertTrue(lever.why.strip(), lever.key)
+                self.assertTrue(lever.verify.strip(), lever.key)
+                self.assertIn(lever.owner, {method.US, method.CLIENT, method.BOTH})
+
+    def test_no_lever_promises_an_overnight_result(self):
+        """A client told to expect results in thirty days and shown none
+        cancels in month three. The overpromise causes the churn."""
+        from answerrank import method
+        for phase in method.PHASES:
+            for lever in phase.levers:
+                earliest, typical = lever.effect_days
+                self.assertGreaterEqual(earliest, 2, lever.key)
+                self.assertGreaterEqual(typical, earliest, lever.key)
+
+    def test_the_client_is_never_asked_for_much_of_their_time(self):
+        """A plan full of owner tasks does not get done, and then the
+        retainer looks worthless."""
+        from answerrank import method
+        for phase in method.PHASES:
+            self.assertLessEqual(phase.client_minutes(), 90, f"month {phase.month}")
+
+    def test_a_blocked_site_jumps_the_queue_whatever_month_it_is(self):
+        from answerrank import method
+
+        class FakeAudit:
+            crawler_access = {"critical": ["OAI-SearchBot"]}
+
+        plan = method.plan(4, "hvac", FakeAudit())
+        self.assertEqual(plan["levers"][0].key, "unblock_crawlers")
+        self.assertTrue(plan["overrides"])
+
+    def test_an_unblocked_site_gets_the_normal_plan(self):
+        from answerrank import method
+
+        class FakeAudit:
+            crawler_access = {"critical": []}
+
+        plan = method.plan(4, "hvac", FakeAudit())
+        self.assertNotEqual(plan["levers"][0].key, "unblock_crawlers")
+        self.assertFalse(plan["overrides"])
+
+    def test_the_plan_survives_past_the_end_of_the_arc(self):
+        from answerrank import method
+        for month in range(1, 30):
+            phase = method.phase_for(month)
+            self.assertTrue(phase.title)
+            self.assertTrue(phase.levers)
+
+    def test_month_three_names_the_trades_own_directories(self):
+        from answerrank import knowledge, method
+        for key in ("septic", "moving", "hvac"):
+            text = method.summarise(3, key)
+            self.assertIn(knowledge.get(key).directories[0], text, key)
+
+    def test_engagement_month_counts_from_the_start_date(self):
+        from datetime import datetime, timedelta, timezone
+        from answerrank.agents.fixer import FixerAgent
+        for days, expected in [(0, 1), (5, 1), (35, 2), (70, 3), (200, 7)]:
+            client = Client(business=Business(name="X", city="Austin", state="TX",
+                                              vertical="hvac"),
+                            started_at=(datetime.now(timezone.utc)
+                                        - timedelta(days=days)).isoformat())
+            self.assertEqual(FixerAgent.engagement_month(client), expected, days)
+
+    def test_a_missing_start_date_does_not_crash_the_month(self):
+        from answerrank.agents.fixer import FixerAgent
+        self.assertEqual(FixerAgent.engagement_month(None), 1)
+
+    def test_the_month_plan_ships_as_a_deliverable(self):
+        from answerrank.agents.fixer import FixerAgent
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            settings = Settings()
+            store = Store(tmp.name)
+            biz = Business(name="Apex", city="Austin", state="TX", vertical="hvac",
+                           website="https://apex.com")
+            audit = Audit(business_id=biz.id, business_name=biz.name,
+                          market="Austin, TX", vertical="hvac", score=30.0)
+            store.save_audit(audit)
+            built = FixerAgent(store, settings).build_for(biz, audit, month=3)
+            plans = [d for d in built if d.kind == "month_plan"]
+            self.assertEqual(len(plans), 1)
+            self.assertIn("Month 3", plans[0].body)
+        finally:
+            os.unlink(tmp.name)
+
+    def test_two_different_months_produce_different_plans(self):
+        from answerrank import method
+        self.assertNotEqual(method.summarise(1, "hvac"), method.summarise(4, "hvac"))

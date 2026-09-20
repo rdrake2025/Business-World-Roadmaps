@@ -83,6 +83,11 @@ class Vertical:
     #: signal that tells an engine what the business actually *is*, discarded.
     #: It belongs on the trade, where adding a vertical forces choosing one.
     schema_type: str = "LocalBusiness"
+    #: Trade-specific directories an engine can corroborate the business
+    #: against. These are the third-party sources that make a model confident
+    #: enough to name someone, so a trade without them is a trade we cannot
+    #: actually serve. Lived in the Fixer covering seven trades of twenty-two.
+    directories: list[str] = field(default_factory=list)
 
     def peak_label(self) -> str:
         names = {1: "January", 2: "February", 3: "March", 4: "April", 5: "May",
@@ -110,6 +115,7 @@ KNOWN_SCHEMA_TYPES = {
 VERTICALS: dict[str, Vertical] = {
     "hvac": Vertical(
         key="hvac",
+        directories=["HomeAdvisor", "Houzz", "ACCA member directory"],
         schema_type="HVACBusiness",
         label="HVAC contractor",
         service="AC repair",
@@ -135,6 +141,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "plumbing": Vertical(
         key="plumbing",
+        directories=["HomeAdvisor", "Porch", "PHCC contractor directory"],
         schema_type="Plumber",
         label="plumber",
         service="plumbing repair",
@@ -158,6 +165,9 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "roofing": Vertical(
         key="roofing",
+        directories=["HomeAdvisor",
+                      "GAF and Owens Corning contractor locators",
+                      "NRCA member directory"],
         schema_type="RoofingContractor",
         label="roofing contractor",
         service="roof repair",
@@ -182,6 +192,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "dental": Vertical(
         key="dental",
+        directories=["Healthgrades", "Zocdoc", "ADA Find-a-Dentist", "Vitals"],
         schema_type="Dentist",
         label="dentist",
         service="dental care",
@@ -206,6 +217,11 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "legal": Vertical(
         key="legal",
+        directories=["Avvo",
+                      "Justia",
+                      "FindLaw",
+                      "Martindale-Hubbell",
+                      "State bar directory"],
         schema_type="Attorney",
         label="attorney",
         service="legal representation",
@@ -232,6 +248,10 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "restoration": Vertical(
         key="restoration",
+        directories=["IICRC certified firm locator",
+                      "Restoration Industry Association",
+                      "HomeAdvisor",
+                      "Insurance carrier preferred-vendor lists"],
         schema_type="GeneralContractor",
         label="restoration contractor",
         service="water damage restoration",
@@ -262,6 +282,10 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "med_spa": Vertical(
         key="med_spa",
+        directories=["RealSelf",
+                      "AmSpa member directory",
+                      "Vagaro or Booker listing",
+                      "Yelp Beauty"],
         schema_type="DaySpa",
         label="medical spa",
         service="aesthetic treatment",
@@ -293,6 +317,10 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "electrical": Vertical(
         key="electrical",
+        directories=["HomeAdvisor",
+                      "Porch",
+                      "NECA member directory",
+                      "State licensing board lookup"],
         schema_type="Electrician",
         label="electrician",
         service="electrical work",
@@ -318,6 +346,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "tree_service": Vertical(
         key="tree_service",
+        directories=["ISA Find an Arborist", "TCIA member locator", "HomeAdvisor"],
         schema_type="HomeAndConstructionBusiness",
         label="tree service",
         service="tree removal",
@@ -342,6 +371,9 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "garage_door": Vertical(
         key="garage_door",
+        directories=["IDA member locator",
+                      "Clopay and Amarr dealer locators",
+                      "HomeAdvisor"],
         schema_type="HomeAndConstructionBusiness",
         label="garage door company",
         service="garage door repair",
@@ -366,6 +398,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "medical": Vertical(
         key="medical",
+        directories=["Healthgrades", "Zocdoc", "Vitals", "WebMD Provider Directory"],
         schema_type="MedicalClinic",
         label="medical clinic",
         service="primary care",
@@ -381,6 +414,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "insurance": Vertical(
         key="insurance",
+        directories=["Insurify", "Trustpilot", "State DOI licensee lookup"],
         schema_type="InsuranceAgency",
         label="insurance agency",
         service="insurance coverage",
@@ -397,6 +431,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "pest_control": Vertical(
         key="pest_control",
+        directories=["NPMA locator", "State pest control board lookup", "HomeAdvisor"],
         schema_type="HomeAndConstructionBusiness",
         label="pest control company",
         service="pest treatment",
@@ -421,6 +456,10 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "auto_repair": Vertical(
         key="auto_repair",
+        directories=["RepairPal certified shops",
+                      "AAA Approved Auto Repair",
+                      "NAPA AutoCare locator",
+                      "CARFAX service shop directory"],
         schema_type="AutoRepair",
         label="auto repair shop",
         service="car repair",
@@ -445,6 +484,9 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "veterinary": Vertical(
         key="veterinary",
+        directories=["AAHA accredited practice locator",
+                      "AVMA directory",
+                      "Vetstreet"],
         schema_type="VeterinaryCare",
         label="veterinary clinic",
         service="veterinary care",
@@ -469,6 +511,10 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "chiropractic": Vertical(
         key="chiropractic",
+        directories=["ACA Find-a-Doctor",
+                      "ChiroDirectory",
+                      "Healthgrades",
+                      "State board lookup"],
         schema_type="MedicalBusiness",
         label="chiropractor",
         service="chiropractic care",
@@ -493,6 +539,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "remodeling": Vertical(
         key="remodeling",
+        directories=["NARI member directory", "NKBA directory", "Houzz", "Angi"],
         schema_type="GeneralContractor",
         label="remodeling contractor",
         service="kitchen and bath remodeling",
@@ -518,6 +565,9 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "flooring": Vertical(
         key="flooring",
+        directories=["NWFA certified installer locator",
+                      "Houzz",
+                      "Manufacturer certified installer locators"],
         schema_type="HomeAndConstructionBusiness",
         label="flooring contractor",
         service="flooring installation",
@@ -541,6 +591,9 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "appliance_repair": Vertical(
         key="appliance_repair",
+        directories=["Manufacturer authorised-servicer locators (Whirlpool, LG, Samsung)",
+                      "HomeAdvisor",
+                      "Puls and Sears Home Services listings"],
         schema_type="HomeAndConstructionBusiness",
         label="appliance repair company",
         service="appliance repair",
@@ -565,6 +618,9 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "septic": Vertical(
         key="septic",
+        directories=["NOWRA member directory",
+                      "County health department permitted installer list",
+                      "HomeAdvisor"],
         schema_type="HomeAndConstructionBusiness",
         label="septic service company",
         service="septic service",
@@ -589,6 +645,10 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "moving": Vertical(
         key="moving",
+        directories=["FMCSA SAFER company snapshot",
+                      "AMSA ProMover directory",
+                      "MyMovingReviews",
+                      "Updater"],
         schema_type="MovingCompany",
         label="moving company",
         service="moving services",
@@ -613,6 +673,7 @@ VERTICALS: dict[str, Vertical] = {
     ),
     "landscaping": Vertical(
         key="landscaping",
+        directories=["NALP member directory", "Houzz", "HomeAdvisor", "Angi"],
         schema_type="HomeAndConstructionBusiness",
         label="landscaping company",
         service="landscaping",

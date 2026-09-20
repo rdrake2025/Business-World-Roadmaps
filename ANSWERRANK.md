@@ -293,6 +293,44 @@ and retention at the same time.
 | `domain NAME --provider X` | Sending-domain setup: the exact DNS records, then whether they are live |
 | `web` | Serve the site and the phone console |
 
+## What the agents are trained to deliver
+
+`playbook.py` trained them to sell. `method.py` trains them to deliver, and it
+exists for a commercial reason: a client paying a retainer for twelve months
+was receiving roughly the same six files every month. That is the churn
+mechanism the Retention agent names in as many words — *they are paying for
+movement they cannot see* — and it arrives on a 60-to-90 day delay, long
+before anyone asks to cancel.
+
+The work is sequenced into an arc, each month doing something the last did
+not:
+
+| Month | Focus |
+| --- | --- |
+| 1 | Make the site readable — crawler access, LocalBusiness schema, GBP |
+| 2 | Answer the questions being lost — FAQ copy, FAQPage schema, service pages |
+| 3 | Make the business resolvable — NAP consistency, citations, trade directories |
+| 4 | Give the engines proof to quote — review velocity and responses |
+| 5 | Widen the surface — service-area pages, described job galleries |
+| 6 | Authority off your own site — supplier locators, local press |
+
+Two rules in here are load-bearing:
+
+**Time-to-effect is stated and never shortened.** Structured data shows up
+when an engine next crawls, which is days to weeks. Review velocity compounds
+over months. A client told to expect results in thirty days and shown none is
+a client who cancels in month three — the overpromise causes the churn it was
+meant to prevent.
+
+**Every lever says who does the work.** A plan full of owner tasks is a plan
+that does not get done, and then the retainer looks worthless. The client's
+own time is capped and shown to them: about 80 minutes in month one, 15 in
+month two.
+
+The arc is a default, not a script. A blocked `robots.txt` moves to the front
+of whatever month it is found in, because nothing else can work while it
+holds.
+
 ## The finding that sells itself
 
 Before anything else, the Auditor reads the prospect's own `robots.txt`. A
