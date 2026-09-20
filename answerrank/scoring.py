@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+from . import knowledge
 from .engines.base import detect_sentiment, extract_businesses, name_matches
 from .models import Audit, ProbeResult
 
@@ -181,6 +182,19 @@ def generate_findings(audit: Audit) -> list[str]:
         findings.append(
             f"{top[0]} was named in {top[1]} of {n} answers — {top[1] - mentions} more than "
             f"{audit.business_name}. Those are booked jobs going to a competitor."
+        )
+
+    # The gap in money terms. Stated as an estimate with its assumption
+    # attached, because a number a client cannot interrogate is a number they
+    # will not believe — and should not.
+    risk = knowledge.revenue_at_risk(audit.vertical, n - mentions, n)
+    v = knowledge.get(audit.vertical)
+    if float(risk["annual_revenue"]) >= 2000:
+        findings.append(
+            f"At an average ticket of ${v.economics.avg_ticket:,.0f}, that gap is worth "
+            f"an estimated ${float(risk['annual_revenue']):,.0f} a year in first-job "
+            f"revenue — about {risk['lost_jobs_per_month']} jobs a month. "
+            f"{risk['assumption']}"
         )
 
     if subs.get("citation", 0) < 20:

@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .agents.fixer import FixerAgent
 from . import doctor as doctor_mod
+from . import knowledge
 from . import wizard
 from .budget import (
     PHASES, cumulative_monthly, load_personal, milestones, phase_cost,
@@ -599,6 +600,69 @@ def cmd_web(args, settings: Settings) -> int:
     return 0
 
 
+def _plural(label: str) -> str:
+    """"agency" -> "agencies", not "agencys"."""
+    if label.endswith("y") and label[-2:-1] not in "aeiou":
+        return label[:-1] + "ies"
+    if label.endswith(("s", "x", "ch", "sh")):
+        return label + "es"
+    return label + "s"
+
+
+def _wrap(text: str, width: int = 66, indent: str = "  ") -> str:
+    import textwrap
+    return "\n".join(textwrap.wrap(text, width=width,
+                                   initial_indent=indent, subsequent_indent=indent))
+
+
+def cmd_verticals(args, settings: Settings) -> int:
+    """Which trades justify which price, and on what argument."""
+    price = args.price or settings.pricing.growth_monthly
+    rows = knowledge.best_verticals(price)
+
+    _hr(f"WHICH TRADES JUSTIFY ${price:,.0f}/MO")
+    print(f"  {'Trade':<24}{'Ticket':>9}{'1st-job':>9}{'Lifetime':>10}  Verdict")
+    for r in rows:
+        v = knowledge.get(str(r["vertical"]))
+        ticket = f"${v.economics.avg_ticket:,.0f}"
+        first = f"{r['first_job_ratio']}x"
+        life = f"{r['lifetime_ratio']}x"
+        print(f"  {v.label:<24}{ticket:>9}{first:>9}{life:>10}  {r['verdict']}")
+    strong = [r for r in rows if r["verdict"] == "strong"]
+    _hr("WHAT THIS MEANS")
+    if strong:
+        names = ", ".join(_plural(knowledge.get(str(r["vertical"])).label) for r in strong)
+        print(_wrap(f"Sell {names} on first-job revenue. The arithmetic stands alone."))
+    workable = [r for r in rows if r["verdict"] == "workable"]
+    if workable:
+        names = ", ".join(_plural(knowledge.get(str(r["vertical"])).label) for r in workable)
+        print(_wrap(f"{names.capitalize()} need the lifetime-value argument — "
+                    f"claiming first-job payback there would not survive scrutiny."))
+    weak = [r for r in rows if r["verdict"] == "weak"]
+    if weak:
+        names = ", ".join(_plural(knowledge.get(str(r["vertical"])).label) for r in weak)
+        print(_wrap(f"Avoid at this price: {names}. Price lower, or spend the "
+                    f"outreach where the maths works."))
+
+    top = rows[0]
+    v = knowledge.get(str(top["vertical"]))
+    _hr(f"RECOMMENDED STARTING VERTICAL: {v.label.upper()}")
+    risk = knowledge.revenue_at_risk(v.key, 10, 10)
+    print(f"  Average ticket     ${v.economics.avg_ticket:>10,.0f}")
+    print(f"  Lifetime value     ${v.economics.lifetime_value:>10,.0f}")
+    print(f"  They already pay   ${v.economics.typical_cac:>10,.0f}  to win one customer")
+    print(f"  Invisibility costs ${float(risk['annual_revenue']):>10,.0f}  a year, estimated")
+    print(f"\n  {knowledge.payback_line(v.key, price)}")
+    print(f"  Peak season: {v.peak_label()}")
+    print()
+    print(_wrap(knowledge.seasonal_note(v.key, datetime.now(timezone.utc).month)))
+
+    _hr("WHAT THEY WILL SAY")
+    for o in v.objections:
+        print(f"  \u2022 \u201c{o}\u201d")
+    return 0
+
+
 # ---------------------------------------------------------------- parser
 
 def build_parser() -> argparse.ArgumentParser:
@@ -703,6 +767,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--probe", action="store_true",
                    help="also probe the live unsubscribe endpoint over the network")
     s.set_defaults(func=cmd_doctor)
+
+    s = sub.add_parser("verticals", help="which trades justify which price")
+    s.add_argument("--price", type=float, help="monthly retainer to test")
+    s.set_defaults(func=cmd_verticals)
 
     s = sub.add_parser("web", help="serve the site and the phone console")
     s.add_argument("--host", default="0.0.0.0"); s.add_argument("--port", type=int, default=8000)

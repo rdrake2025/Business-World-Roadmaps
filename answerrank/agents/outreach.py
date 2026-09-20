@@ -23,10 +23,11 @@ and :meth:`preflight` refuses to send if anything is missing.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 
+from .. import knowledge, qualify
 from ..models import OutreachMessage, Prospect, now_iso
-from ..prompts import vertical_meta
 from .base import Agent
 
 
@@ -41,39 +42,76 @@ def _compliance_block(settings) -> str:
     )
 
 
+def subject_line(business: str, city: str, missed: int, total: int) -> str:
+    """A subject in the 36-50 character band that reply-rate data favours.
+
+    Long subjects get truncated in a mobile preview, which is where most of
+    these are read. The business's own name goes first so the truncation, if
+    any, never costs the one word that proves this is not a blast.
+    """
+    name = business if len(business) <= 22 else business[:21].rstrip() + "\u2026"
+    candidates = [
+        f"{name}: {missed} of {total} AI answers missed",
+        f"{name} \u2014 missing from AI search",
+        f"{name} and AI search in {city}",
+        f"{name}: invisible to AI search",
+    ]
+    for c in candidates:
+        if 34 <= len(c) <= 52:
+            return c
+    return min(candidates, key=lambda c: abs(len(c) - 43))
+
+
 def first_touch(prospect: Prospect, settings) -> tuple[str, str]:
-    """The opener. Short, specific, one ask, no attachments, no images."""
+    """The opener.
+
+    Held to six sentences. Reply-rate data is unambiguous that emails past
+    roughly a dozen sentences lose about half their responses even when well
+    personalised, and the earlier version of this ran to fifteen. Everything
+    that survived the cut is either evidence about their business or the ask.
+    """
     biz = prospect.business
-    meta = vertical_meta(biz.vertical)
+    v = knowledge.get(biz.vertical)
     score = prospect.score or 0.0
-    gap = prospect.competitor_gap or 0.0
-    label = str(meta["label"])
 
-    subject = f"{biz.name} isn't showing up in AI search for {biz.city}"
+    # Recover the measured counts from the audit headline where possible, so
+    # the subject states a fact rather than an impression.
+    missed, total = 4, 4
+    note = prospect.notes or ""
+    match = re.search(r"appears in (\d+) of (\d+)", note)
+    if match:
+        shown, total = int(match.group(1)), int(match.group(2))
+        missed = max(0, total - shown)
+
+    subject = subject_line(biz.name, biz.city, missed, total)
     if score >= 40:
-        subject = f"Quick note on {biz.name}'s AI search visibility"
+        subject = f"{biz.name[:22]}: a gap in AI search"
 
-    evidence = prospect.notes or (
-        f"{biz.name} appears in very few AI answers for {label}s in {biz.market}."
+    evidence = note.split(" | ")[0] if note else (
+        f"{biz.name} appears in very few AI answers for {v.label}s in {biz.market}."
     )
+
+    risk = knowledge.revenue_at_risk(biz.vertical, missed, total)
+    money = ""
+    if float(risk["annual_revenue"]) >= 8000:
+        money = (
+            f"\n\nOn a ${v.economics.avg_ticket:,.0f} average ticket that is roughly "
+            f"${float(risk['annual_revenue']):,.0f} a year of first-job revenue going "
+            f"elsewhere \u2014 and that estimate is set deliberately low."
+        )
 
     body = f"""Hi,
 
-I ran a quick check on how {biz.name} shows up when people ask AI assistants
-(ChatGPT, Google's AI Overviews, Perplexity) for a {label} in {biz.market}.
-
 {evidence}
 
-That matters more than it used to: a growing share of "who should I call"
-searches now end with an AI answer naming two or three businesses. If you're
-not one of them, the customer never sees you — there's no page two to be on.
+When someone asks an assistant who to call, the answer names two or three
+businesses and the rest are never seen.{money}
 
-I put the full breakdown into a one-page report: which questions you're
-missing, who's being named instead, and the three fixes that move it fastest.
+I put the full check into a one-page report \u2014 which questions you're missing,
+who's named instead, and the three fixes that move it fastest.
 
-Want me to send it over? Just reply "yes" and it's yours, no charge.
+Want it? Reply "yes" and it's yours, no charge.
 
-Best,
 {settings.brand}
 {settings.website}"""
 
@@ -81,50 +119,53 @@ Best,
 
 
 def followup(prospect: Prospect, step: int, settings) -> tuple[str, str]:
+    """Follow-ups, each carrying one new idea rather than a nudge.
+
+    Step 2 reframes: this is not an SEO problem, which is why their existing
+    spend did not prevent it. Step 3 gives permission to say no, which
+    reliably produces a share of the total replies.
+    """
     biz = prospect.business
-    meta = vertical_meta(biz.vertical)
-    label = str(meta["label"])
-    top = ""
-    if prospect.notes and "appears in" in prospect.notes:
-        top = prospect.notes
+    v = knowledge.get(biz.vertical)
+    evidence = (prospect.notes or "").split(" | ")[0]
 
     if step == 2:
-        subject = f"Re: {biz.name} isn't showing up in AI search for {biz.city}"
+        subject = f"Re: {subject_line(biz.name, biz.city, 0, 0).split(':')[0]}"
         body = f"""Hi,
 
 Following up on the AI visibility check for {biz.name}.
 
 The part most owners find surprising: this isn't a Google ranking problem.
-A business can sit at #1 in local search and still be absent from the AI
+You can sit at number one in local search and still be absent from the AI
 answer, because assistants build answers from structured data and
 corroborating sources rather than from the results page.
 
-{top}
+That's why your existing SEO spend didn't stop it.
 
-Happy to send the one-page report — no charge, no call required. Reply "yes".
+{evidence}
 
-Best,
+Happy to send the one-page report \u2014 no charge, no call. Just reply "yes".
+
 {settings.brand}"""
     elif step == 3:
-        subject = f"Closing the loop — {biz.name}"
+        subject = f"Closing the loop \u2014 {biz.name[:24]}"
         body = f"""Hi,
 
 Last note from me on this.
 
 If AI search visibility isn't a priority for {biz.name} right now, that's a
-completely reasonable call and I'll leave you alone.
+fair call and I'll leave you alone.
 
-If it becomes one later, the free report offer stands — just reply to this
-email any time and I'll run a fresh check for {biz.market}.
+If it becomes one \u2014 {v.peak_label()} is when it costs the most \u2014 reply any
+time and I'll run a fresh check for {biz.market}.
 
 Either way, good luck this season.
 
-Best,
 {settings.brand}
 {settings.website}"""
     else:
-        subject = f"Re: {biz.name} and {label}s in {biz.city}"
-        body = f"Hi,\n\nJust checking whether the report would be useful.\n\nBest,\n{settings.brand}"
+        subject = f"Re: {biz.name[:26]}"
+        body = f"Hi,\n\nJust checking whether the report would be useful.\n\n{settings.brand}"
 
     return subject, body + _compliance_block(settings)
 
@@ -157,12 +198,27 @@ class OutreachAgent(Agent):
         return problems
 
     def _eligible(self, prospect: Prospect) -> bool:
+        """Two tests, both of which must pass.
+
+        A demonstrable gap is necessary but not sufficient: the business also
+        has to be one the retainer honestly makes sense for. Pitching poor-fit
+        prospects spends complaint-rate budget that cannot be recovered, and
+        the qualifier refuses outright where there is no real problem to sell.
+        """
         email = prospect.business.email
         if not email or "@" not in email:
             return False
         if self.store.is_suppressed(email):
             return False
-        # Only pitch where we proved a gap. No evidence, no email.
+
+        fit = qualify.score_fit(
+            prospect.business, prospect.score,
+            self.settings.pricing.growth_monthly)
+        if not fit.worth_pitching:
+            self.log.debug("skipping %s: %s", prospect.business.name,
+                           fit.blockers[0] if fit.blockers else f"tier {fit.tier}")
+            return False
+
         return prospect.is_hot or (prospect.score is not None and prospect.score < 55)
 
     def execute(self) -> tuple[int, str]:
@@ -170,8 +226,13 @@ class OutreachAgent(Agent):
         drafted = skipped = 0
         now = datetime.now(timezone.utc)
 
-        # --- first touches ---
-        for prospect in self.store.due_prospects("audited", self.draft_budget):
+        # --- first touches, best-fit first ---
+        candidates = sorted(
+            self.store.due_prospects("audited", self.draft_budget * 2),
+            key=lambda p: -qualify.priority(p.business, p.score, p.competitor_gap,
+                                            self.settings.pricing.growth_monthly),
+        )[: self.draft_budget]
+        for prospect in candidates:
             if not self._eligible(prospect):
                 prospect.stage = "suppressed"
                 prospect.notes = (prospect.notes or "") + " | filtered: no evidence or no email"

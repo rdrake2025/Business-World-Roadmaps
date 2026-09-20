@@ -166,7 +166,10 @@ class Audit:
         """The one sentence that sells the deal."""
         shown = sum(1 for r in self.results if r.mentioned)
         total = len(self.results) or 1
-        line = f"{self.business_name} appears in {shown} of {total} AI answers for {self.vertical.replace('_',' ')} in {self.market}."
+        from .knowledge import get as _vertical
+        trade = _vertical(self.vertical).label
+        line = (f"{self.business_name} appears in {shown} of {total} AI answers "
+                f"for {trade}s in {self.market}.")
         top = self.top_competitor
         if top and top[1] > shown:
             line += f" {top[0]} appears in {top[1]}."
