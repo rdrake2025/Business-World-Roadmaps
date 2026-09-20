@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ brand }} — Control Room</title>
+<style>
+  :root {
+    color-scheme: light;
+    --plane:#f4f4f1; --surface-1:#fcfcfb; --sunk:#efefeb;
+    --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+    --rule:#dcdbd3; --rule-2:#c3c2b7;
+    --series-1:#2a78d6; --series-2:#eb6834;
+    --good:#0ca30c; --warning:#eda100; --serious:#ec835a; --critical:#d03b3b;
+    --mark:#1b6fc4; --mark-ink:#fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --plane:#0d0d0d; --surface-1:#1a1a19; --sunk:#111110;
+      --ink:#fff; --ink-2:#c3c2b7; --muted:#898781;
+      --rule:#2c2c2a; --rule-2:#383835;
+      --series-1:#3987e5; --series-2:#d95926;
+      --good:#12b512; --warning:#c98500; --serious:#ec835a; --critical:#e05a5a;
+      --mark:#3987e5; --mark-ink:#08080a;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --plane:#0d0d0d; --surface-1:#1a1a19; --sunk:#111110;
+    --ink:#fff; --ink-2:#c3c2b7; --muted:#898781;
+    --rule:#2c2c2a; --rule-2:#383835;
+    --series-1:#3987e5; --series-2:#d95926;
+    --good:#12b512; --warning:#c98500; --serious:#ec835a; --critical:#e05a5a;
+    --mark:#3987e5; --mark-ink:#08080a;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--plane); color:var(--ink);
+    font:14.5px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+  }
+  .mono { font-variant-numeric:tabular-nums; }
+  a { color:var(--mark); }
+
+  /* ---------- shell ---------- */
+  header {
+    position:sticky; top:0; z-index:20; background:var(--surface-1);
+    border-bottom:1px solid var(--rule); padding:14px 22px;
+    display:flex; align-items:center; gap:22px; flex-wrap:wrap;
+  }
+  header h1 { font-size:16px; margin:0; letter-spacing:-.01em; }
+  header .tag { font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+                color:var(--muted); display:block; font-weight:600; }
+  .spacer { flex:1 1 auto; }
+  .hlink { font-size:13px; color:var(--ink-2); text-decoration:none; padding:7px 12px;
+           border:1px solid var(--rule-2); border-radius:9px; background:var(--surface-1); }
+  .hlink:hover { background:var(--sunk); }
+  button.icon { background:var(--surface-1); border:1px solid var(--rule-2);
+                border-radius:9px; width:36px; height:36px; cursor:pointer;
+                color:var(--ink-2); font-size:16px; }
+  button.icon:hover { background:var(--sunk); }
+  .spin { animation:sp .8s linear infinite; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+
+  main { max-width:1440px; margin:0 auto; padding:22px; }
+  h2 { font-size:11px; letter-spacing:.11em; text-transform:uppercase;
+       color:var(--muted); margin:0 0 14px; font-weight:650; }
+
+  .grid { display:grid; gap:16px; }
+  .cols-2 { grid-template-columns:repeat(auto-fit,minmax(380px,1fr)); }
+  .cols-3 { grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); }
+  .card { background:var(--surface-1); border:1px solid var(--rule);
+          border-radius:13px; padding:18px 20px; }
+  .card.wide { grid-column:1 / -1; }
+  section { margin-bottom:26px; }
+
+  /* ---------- hero + meter ---------- */
+  .hero { display:flex; align-items:flex-end; gap:20px; flex-wrap:wrap; }
+  .figure { font-size:52px; font-weight:700; line-height:1; letter-spacing:-.025em; }
+  .figure small { font-size:18px; color:var(--muted); font-weight:500; letter-spacing:0; }
+  .meter { margin-top:16px; }
+  .meter .track { height:12px; border-radius:6px; background:var(--sunk);
+                  overflow:hidden; position:relative; }
+  .meter .fill { height:12px; border-radius:0 6px 6px 0; background:var(--series-1);
+                 min-width:3px; transition:width .5s cubic-bezier(.2,.9,.3,1); }
+  .meter .cap { font-size:12.5px; color:var(--ink-2); margin-top:8px; }
+
+  /* ---------- stat tiles ---------- */
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr));
+           gap:1px; background:var(--rule); border:1px solid var(--rule);
+           border-radius:11px; overflow:hidden; }
+  .tile { background:var(--surface-1); padding:13px 15px; }
+  .tile .k { font-size:10.5px; letter-spacing:.09em; text-transform:uppercase;
+             color:var(--muted); font-weight:600; }
+  .tile .v { font-size:23px; font-weight:680; margin-top:5px; letter-spacing:-.015em; }
+  .tile .n { font-size:11.5px; color:var(--ink-2); margin-top:2px; }
+
+  /* ---------- bars (sequential, one hue) ---------- */
+  .bars { display:grid; gap:3px; }
+  .bar-row { display:grid; grid-template-columns:minmax(96px,150px) 1fr auto;
+             align-items:center; gap:11px; }
+  .bar-row .lbl { font-size:12.5px; color:var(--ink-2); text-align:right;
+                  overflow-wrap:anywhere; }
+  .bar-row .track { background:var(--sunk); border-radius:4px; height:18px; }
+  .bar-row .fill { height:18px; border-radius:0 4px 4px 0; background:var(--series-1);
+                   min-width:2px; }
+  .bar-row .val { font-size:12.5px; font-weight:650; min-width:44px; text-align:right; }
+
+  /* ---------- status (never colour alone) ---------- */
+  .st { display:inline-flex; align-items:center; gap:6px; font-size:12px;
+        font-weight:650; white-space:nowrap; }
+  .st .dot { width:8px; height:8px; border-radius:50%; background:currentcolor; flex:none; }
+  .st.good { color:var(--good); } .st.warn { color:var(--warning); }
+  .st.act  { color:var(--critical); } .st.idle { color:var(--muted); }
+
+  .rows { display:grid; }
+  .r { display:flex; align-items:center; gap:12px; padding:11px 0;
+       border-bottom:1px solid var(--rule); }
+  .r:last-child { border-bottom:0; }
+  .r .grow { flex:1; min-width:0; }
+  /* The Scout writes summaries like "hvac/plumbing/veterinary/..." with no
+     spaces. Without a break rule that single token is unbreakable and pushes
+     the whole page into a horizontal scroll. */
+  .r .nm { font-weight:620; font-size:13.5px; overflow-wrap:anywhere; }
+  .r .sub { font-size:12px; color:var(--ink-2); margin-top:2px;
+            overflow-wrap:anywhere; }
+  .card { overflow:hidden; }
+  main { overflow-x:hidden; }
+  .r.tap { cursor:pointer; }
+  .r.tap:hover { background:var(--sunk); margin:0 -20px; padding-left:20px; padding-right:20px; }
+
+  .note { font-size:13px; color:var(--ink-2); background:var(--sunk);
+          padding:11px 13px; border-radius:9px; line-height:1.5; margin-bottom:8px; }
+  .note:last-child { margin-bottom:0; }
+  .note.alert { border-left:3px solid var(--critical); }
+  .note.lead  { border-left:3px solid var(--mark); }
+  .empty { color:var(--muted); font-size:13px; padding:6px 0; }
+
+  /* ---------- actions ---------- */
+  .acts { display:flex; gap:9px; flex-wrap:wrap; margin-top:14px; }
+  button.act { padding:10px 15px; border-radius:10px; border:1px solid var(--rule-2);
+               background:var(--surface-1); color:var(--ink); font:inherit;
+               font-size:13.5px; font-weight:620; cursor:pointer; }
+  button.act:hover:not(:disabled) { background:var(--sunk); }
+  button.act.primary { background:var(--mark); border-color:var(--mark); color:var(--mark-ink); }
+  button.act:disabled { opacity:.45; cursor:not-allowed; }
+
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--rule); }
+  th { font-size:10.5px; letter-spacing:.08em; text-transform:uppercase;
+       color:var(--muted); font-weight:650; }
+  td.num { font-variant-numeric:tabular-nums; text-align:right; white-space:nowrap; }
+  tr.hit td { background:color-mix(in srgb, var(--good) 11%, transparent); font-weight:640; }
+
+  /* ---------- drawer ---------- */
+  .scrim { position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:60;
+           opacity:0; visibility:hidden; transition:opacity .2s,visibility .2s; }
+  .scrim.up { opacity:1; visibility:visible; }
+  .drawer { position:fixed; top:0; right:0; bottom:0; width:min(520px,94vw);
+            background:var(--plane); z-index:61; overflow:auto; padding:22px;
+            transform:translateX(100%); transition:transform .26s cubic-bezier(.2,.9,.3,1);
+            border-left:1px solid var(--rule); }
+  .drawer.up { transform:translateX(0); }
+  .drawer h3 { margin:0 0 3px; font-size:19px; letter-spacing:-.02em; }
+  .drawer .who { font-size:12.5px; color:var(--muted); margin-bottom:16px; }
+  .drawer select, .drawer input, .drawer textarea {
+    width:100%; padding:10px; border-radius:9px; border:1px solid var(--rule-2);
+    background:var(--surface-1); color:var(--ink); font:inherit; font-size:13.5px;
+  }
+  .drawer label { display:block; font-size:11px; letter-spacing:.08em;
+                  text-transform:uppercase; color:var(--muted); font-weight:650;
+                  margin:14px 0 6px; }
+  pre { white-space:pre-wrap; font:12.5px/1.5 inherit; color:var(--ink-2);
+        background:var(--sunk); padding:12px; border-radius:9px; margin:0;
+        max-height:340px; overflow:auto; }
+
+  .toast { position:fixed; left:50%; transform:translate(-50%,16px); bottom:22px;
+           background:var(--ink); color:var(--plane); padding:12px 18px;
+           border-radius:11px; font-size:13.5px; z-index:80; opacity:0;
+           visibility:hidden; transition:transform .22s,opacity .18s,visibility .22s;
+           box-shadow:0 8px 26px rgba(0,0,0,.26); max-width:min(560px,92vw); }
+  .toast.up { transform:translate(-50%,0); opacity:1; visibility:visible; }
+  @media (prefers-reduced-motion:reduce) { *{transition:none!important;animation:none!important} }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <span class="tag">{{ brand }}</span>
+    <h1 id="hTitle">Control Room</h1>
+  </div>
+  <div class="spacer"></div>
+  <a class="hlink" href="/app">Phone console</a>
+  <a class="hlink" href="/ops">Live agents</a>
+  <button class="icon" id="btnTheme" title="Light / dark" aria-label="Toggle theme">◐</button>
+  <button class="icon" id="btnRefresh" title="Refresh" aria-label="Refresh">&#8635;</button>
+</header>
+
+<main>
+
+<!-- ============ WHAT NEEDS YOU ============ -->
+<section>
+  <h2>What needs you now</h2>
+  <div class="grid cols-2">
+    <div class="card">
+      <div id="blockers"><div class="empty">Checking…</div></div>
+      <div class="acts">
+        <button class="act primary" id="btnSend">Send approved</button>
+        <button class="act" id="btnTick">Run a cycle</button>
+        <button class="act" id="btnExpense">Log an expense</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>The next move</h2>
+      <div id="nextMove"><div class="empty">Loading…</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ MONEY ============ -->
+<section>
+  <h2>Money</h2>
+  <div class="grid cols-2">
+    <div class="card">
+      <div class="hero">
+        <div>
+          <div class="figure mono" id="mProfit">–</div>
+          <div class="cap" style="font-size:12.5px;color:var(--muted);margin-top:4px">
+            monthly profit at the current run rate
+          </div>
+        </div>
+      </div>
+      <div class="meter">
+        <div class="track"><div class="fill" id="mBar" style="width:0%"></div></div>
+        <div class="cap" id="mNote">–</div>
+      </div>
+      <div class="tiles" style="margin-top:18px">
+        <div class="tile"><div class="k">MRR</div><div class="v mono" id="mMrr">–</div>
+          <div class="n">recurring</div></div>
+        <div class="tile"><div class="k">Clients</div><div class="v mono" id="mClients">–</div>
+          <div class="n">active</div></div>
+        <div class="tile"><div class="k">Runway</div><div class="v mono" id="mRunway">–</div>
+          <div class="n">months funded</div></div>
+        <div class="tile"><div class="k">Burn</div><div class="v mono" id="mBurn">–</div>
+          <div class="n">fixed, monthly</div></div>
+        <div class="tile"><div class="k">Banked</div><div class="v mono" id="mBooked">–</div>
+          <div class="n">actually billed, 30d</div></div>
+      </div>
+      <div id="milestone" style="margin-top:16px"></div>
+    </div>
+    <div class="card">
+      <h2>Path to the target</h2>
+      <table>
+        <thead><tr><th>Month</th><th class="num">Clients</th><th class="num">MRR</th>
+          <th class="num">Profit</th></tr></thead>
+        <tbody id="forecastBody"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
+      </table>
+      <div class="cap" id="forecastNote"
+           style="font-size:12px;color:var(--muted);margin-top:10px"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PIPELINE ============ -->
+<section>
+  <h2>Pipeline</h2>
+  <div class="grid cols-2">
+    <div class="card">
+      <h2>By stage</h2>
+      <div class="bars" id="stageBars"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>Best leads — click one to qualify or close it</h2>
+      <div class="rows" id="hotRows"><div class="empty">Loading…</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CLIENTS ============ -->
+<section>
+  <h2>Clients</h2>
+  <div class="card wide">
+    <div class="rows" id="clientRows"><div class="empty">Loading…</div></div>
+  </div>
+</section>
+
+<!-- ============ INTELLIGENCE ============ -->
+<section>
+  <h2>What the fleet has worked out</h2>
+  <div class="grid cols-3">
+    <div class="card">
+      <h2>Findings</h2>
+      <div id="learnings"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>Reply rate by trade</h2>
+      <div class="bars" id="vertBars"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>Markets not yet served</h2>
+      <div class="rows" id="marketRows"><div class="empty">Loading…</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ AGENTS ============ -->
+<section>
+  <h2>The fleet</h2>
+  <div class="card wide">
+    <div class="rows" id="agentRows"><div class="empty">Loading…</div></div>
+  </div>
+</section>
+
+</main>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Detail">
+  <div id="drawerBody"></div>
+</aside>
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+  var busy = false;
+  var $ = function(id){ return document.getElementById(id); };
+  function money(v){ return "$" + Math.round(v || 0).toLocaleString("en-US"); }
+  function esc(s){
+    return String(s === null || s === undefined ? "" : s).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+  function toast(msg, ms){
+    var t = $("toast"); t.textContent = msg; t.classList.add("up");
+    clearTimeout(t._h);
+    t._h = setTimeout(function(){ t.classList.remove("up"); }, ms || 3000);
+  }
+  function api(path, body){
+    var opt = { headers:{ "Accept":"application/json" }, credentials:"same-origin" };
+    if(body){ opt.method = "POST"; opt.headers["Content-Type"] = "application/json";
+              opt.body = JSON.stringify(body); }
+    return fetch(path, opt).then(function(r){
+      if(r.status === 401){ location.href = "/dashboard?needauth=1"; throw new Error("auth"); }
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    });
+  }
+  // One bar row. Sequential: a single hue, length carries the magnitude.
+  function bar(label, value, max, display, title){
+    var pct = max > 0 ? Math.max(2, (value / max) * 100) : 2;
+    return '<div class="bar-row" title="' + esc(title || (label + ": " + display)) + '">' +
+      '<div class="lbl">' + esc(label) + '</div>' +
+      '<div class="track"><div class="fill" style="width:' + pct.toFixed(1) + '%"></div></div>' +
+      '<div class="val mono">' + esc(display) + '</div></div>';
+  }
+  function clip(text, n){
+    text = String(text || "");
+    return text.length > n ? text.slice(0, n - 1).trimEnd() + "…" : text;
+  }
+  function ago(seconds){
+    if(seconds === null || seconds === undefined) return "never";
+    if(seconds < 90) return "just now";
+    if(seconds < 5400) return Math.round(seconds / 60) + "m ago";
+    if(seconds < 172800) return Math.round(seconds / 3600) + "h ago";
+    return Math.round(seconds / 86400) + "d ago";
+  }
+  function status(band){
+    var map = { healthy:["good","Healthy"], monitor:["warn","Monitor"],
+                act_now:["act","Act now"], ok:["good","Pass"],
+                warn:["warn","Warning"], fail:["act","Failing"] };
+    var m = map[band] || ["idle", band];
+    return '<span class="st ' + m[0] + '"><span class="dot"></span>' + esc(m[1]) + '</span>';
+  }
+
+  // ---------------------------------------------------------------- loaders
+  function loadHealth(){
+    return api("/api/health").then(function(d){
+      var el = $("blockers");
+      if(d.can_send){
+        el.innerHTML = '<div class="note"><b>' + status("ok") +
+          '</b> Nothing is blocking you from sending. ' + d.passed +
+          ' checks pass.</div>';
+        return;
+      }
+      el.innerHTML = '<div class="note alert"><b>Sending is blocked.</b> ' +
+        'These must be fixed first — the system will not send until they are.</div>' +
+        d.blockers.map(function(b){
+          return '<div class="note"><b>' + esc(b.name) + '</b> — ' + esc(b.detail) +
+            (b.fix ? '<br><span style="color:var(--muted)">' + esc(b.fix) + '</span>' : '') +
+            '</div>';
+        }).join("");
+    }).catch(function(){});
+  }
+
+  function loadMoney(){
+    return api("/api/money").then(function(d){
+      $("mProfit").textContent = money(d.run_rate_profit);
+      $("mBar").style.width = d.pct_to_target + "%";
+      $("mBar").style.background = d.pct_to_target >= 100 ? "var(--good)" : "var(--series-1)";
+      $("mNote").textContent = d.pct_to_target.toFixed(0) + "% of the " +
+        money(d.target) + "/month target";
+      $("mMrr").textContent = money(d.mrr);
+      $("mClients").textContent = d.clients;
+      // null means the runway is unbounded: income already covers the burn.
+      $("mRunway").textContent = (d.runway_months === null ||
+                                  d.runway_months >= 900) ? "∞" : d.runway_months;
+      $("mBurn").textContent = money(d.monthly_burn);
+      $("mBooked").textContent = money(d.profit_30d);
+      var m = d.next_milestone;
+      $("milestone").innerHTML = m
+        ? '<div class="note lead"><b>Next milestone</b> — ' +
+          money(m.profit) + '/mo profit, about ' + m.clients + ' client' +
+          (m.clients === 1 ? "" : "s") + '.<br>' + esc(m.meaning || "") + '</div>'
+        : '<div class="note"><b>Every milestone reached.</b></div>';
+    }).catch(function(){});
+  }
+
+  function loadForecast(){
+    return api("/api/forecast").then(function(d){
+      $("forecastBody").innerHTML = d.rows.map(function(r){
+        return '<tr class="' + (r.at_target ? "hit" : "") + '">' +
+          '<td class="mono">' + r.month + '</td>' +
+          '<td class="num">' + r.clients + '</td>' +
+          '<td class="num">' + money(r.mrr) + '</td>' +
+          '<td class="num">' + money(r.profit) + '</td></tr>';
+      }).join("");
+      $("forecastNote").textContent = d.target_month
+        ? "Crosses " + money(d.target) + "/mo profit in month " + d.target_month +
+          ", assuming " + d.adds_per_month + " new clients a month and " +
+          (d.churn * 100).toFixed(0) + "% monthly churn."
+        : "Does not reach the target within 12 months at this close rate.";
+    }).catch(function(){});
+  }
+
+  function loadPipeline(){
+    return api("/api/state").then(function(d){
+      var stages = d.pipeline.stages || {};
+      var keys = Object.keys(stages).sort(function(a,b){ return stages[b]-stages[a]; });
+      var max = Math.max.apply(null, keys.map(function(k){ return stages[k]; }).concat([1]));
+      $("stageBars").innerHTML = keys.length
+        ? keys.map(function(k){
+            return bar(k.replace(/_/g," "), stages[k], max, String(stages[k]));
+          }).join("")
+        : '<div class="empty">Empty. Run a cycle to find prospects.</div>';
+      $("hTitle").textContent = d.money.clients + " client" +
+        (d.money.clients === 1 ? "" : "s") + " · " + money(d.money.mrr) + " MRR";
+    }).then(function(){
+      return api("/api/prospects?limit=60");
+    }).then(function(d){
+      var hot = d.items.filter(function(x){ return x.hot; }).slice(0, 10);
+      if(!hot.length) hot = d.items.slice(0, 10);
+      $("hotRows").innerHTML = hot.length ? hot.map(function(x){
+        return '<div class="r tap" data-pid="' + esc(x.id) + '">' +
+          '<div class="grow"><div class="nm">' + esc(x.name) + '</div>' +
+          '<div class="sub">' + esc(x.market) + ' · ' + esc(x.stage) + '</div></div>' +
+          '<div class="mono" style="color:var(--mark);font-weight:650">' +
+          (x.score === null ? "–" : Math.round(x.score)) + '</div></div>';
+      }).join("") : '<div class="empty">No prospects yet.</div>';
+    }).catch(function(){});
+  }
+
+  function loadClients(){
+    return api("/api/clients").then(function(d){
+      $("clientRows").innerHTML = d.clients.length ? d.clients.map(function(c, i){
+        return '<div class="r tap" data-cid="' + i + '">' +
+          '<div class="grow"><div class="nm">' + esc(c.name) + '</div>' +
+          '<div class="sub">' + esc(c.action) + '</div></div>' +
+          '<div class="mono" style="min-width:74px;text-align:right">' + money(c.mrr) + '</div>' +
+          '<div style="min-width:96px;text-align:right">' + status(c.band) + '</div>' +
+          '<div class="mono" style="min-width:42px;text-align:right;font-weight:650">' +
+          Math.round(c.score) + '</div></div>';
+      }).join("") : '<div class="empty">No clients yet. Close one from the leads above.</div>';
+      $("clientRows")._data = d.clients;
+    }).catch(function(){});
+  }
+
+  function loadBrain(){
+    return api("/api/intelligence").then(function(d){
+      var m = d.next_move;
+      $("nextMove").innerHTML = m
+        ? '<div class="note lead"><b>' + esc(m.move || m.headline || "") + '</b></div>' +
+          '<div class="note">' + esc(m.why || m.reason || "") + '</div>'
+        : '<div class="empty">Run a cycle and the Strategist will pick one.</div>';
+      $("learnings").innerHTML = d.learnings.length
+        ? d.learnings.map(function(l){ return '<div class="note">' + esc(l) + '</div>'; }).join("")
+        : '<div class="empty">Nothing measurable yet.</div>';
+      var rows = d.by_vertical || [];
+      var max = Math.max.apply(null, rows.map(function(r){
+        return r.reply_rate || 0; }).concat([0.01]));
+      $("vertBars").innerHTML = rows.length ? rows.map(function(r){
+        return bar(r.label, r.reply_rate || 0, max,
+                   ((r.reply_rate || 0) * 100).toFixed(1) + "%",
+                   r.label + ": " + r.replied + " replies from " + r.sent +
+                   " sends (" + r.confidence + ")");
+      }).join("") : '<div class="empty">No sends recorded yet.</div>';
+    }).catch(function(){});
+  }
+
+  function loadMarkets(){
+    return api("/api/markets").then(function(d){
+      $("marketRows").innerHTML = d.candidates.slice(0, 7).map(function(c){
+        return '<div class="r"><div class="grow"><div class="nm">' + esc(c.label) + '</div>' +
+          '<div class="sub">' + esc(c.verdict) + (c.measured ? " · measured" : " · unmeasured") +
+          '</div></div><div class="mono" style="font-weight:650">' +
+          c.score.toFixed(0) + '</div></div>';
+      }).join("");
+    }).catch(function(){});
+  }
+
+  function loadAgents(){
+    return api("/api/telemetry").then(function(d){
+      var list = d.agents || [];
+      $("agentRows").innerHTML = list.length ? list.map(function(a){
+        var band = a.status === "error" ? "fail" : (a.status === "ok" ? "ok" : "idle");
+        return '<div class="r"><div style="min-width:104px">' + status(band) + '</div>' +
+          '<div class="grow"><div class="nm">' + esc(a.name) + '</div>' +
+          '<div class="sub">' + esc(clip(a.summary || a.role || "", 150)) +
+          '</div></div>' +
+          '<div class="sub mono" style="white-space:nowrap;min-width:92px;text-align:right">' +
+          ago(a.seconds_since) + '</div>' +
+          '<div class="sub mono" style="white-space:nowrap;min-width:80px;text-align:right">' +
+          (a.reliability === null ? "" : a.reliability + "% ok") + '</div></div>';
+      }).join("") : '<div class="empty">No runs recorded yet.</div>';
+    }).catch(function(){});
+  }
+
+  function loadAll(quiet){
+    var btn = $("btnRefresh");
+    if(!quiet) btn.classList.add("spin");
+    return Promise.all([loadHealth(), loadMoney(), loadForecast(), loadPipeline(),
+                        loadClients(), loadBrain(), loadMarkets(), loadAgents()])
+      .then(function(){ btn.classList.remove("spin"); })
+      .catch(function(){ btn.classList.remove("spin"); });
+  }
+
+  // ---------------------------------------------------------------- drawer
+  function closeDrawer(){ $("drawer").classList.remove("up"); $("scrim").classList.remove("up"); }
+  function openDrawer(html){
+    $("drawerBody").innerHTML = html;
+    $("drawer").classList.add("up"); $("scrim").classList.add("up");
+    $("drawer").scrollTop = 0;
+  }
+
+  function prospectDrawer(b){
+    if(b.error){ toast(b.error); return; }
+    var priceLine = (b.recommended_price && b.recommended_price !== b.quoted_price)
+      ? '<div class="note">Quoting ' + money(b.quoted_price) +
+        ' — this trade supports ' + money(b.recommended_price) + '.</div>' : '';
+    openDrawer(
+      '<h3>' + esc(b.business) + '</h3>' +
+      '<div class="who">' + esc(b.trade) + ' · ' + esc(b.market) + ' · ' + esc(b.stage) + '</div>' +
+      '<div class="tiles"><div class="tile"><div class="k">Priority</div>' +
+        '<div class="v mono">' + Math.round(b.priority) + '</div></div>' +
+      '<div class="tile"><div class="k">Fit</div><div class="v mono">' + esc(b.tier) + '</div></div>' +
+      '<div class="tile"><div class="k">BANT</div><div class="v mono">' +
+        Math.round(b.bant_score) + '</div></div></div>' +
+      priceLine +
+      ["budget","authority","need","timeline"].map(function(k){
+        return '<div class="note"><b>' + k + '</b> — ' + esc(b.bant_evidence[k]) + '</div>';
+      }).join("") +
+      '<div class="note lead">' + esc(b.next_question) + '</div>' +
+      '<label>They replied — paste it here</label>' +
+      '<textarea id="replyText" rows="4" placeholder="Paste what they wrote…"></textarea>' +
+      '<div class="acts"><button class="act" id="btnLogReply" data-pid="' +
+        esc(b.prospect_id) + '">Read it and draft my answer</button></div>' +
+      '<div id="replyOut"></div>' +
+      '<label>They said yes — close it</label>' +
+      '<select id="winPlan">' +
+        '<option value="growth">Growth — $997/mo</option>' +
+        '<option value="starter">Starter — $499/mo</option>' +
+        '<option value="managed">Managed — $1,997/mo</option>' +
+      '</select>' +
+      '<div class="acts"><button class="act primary" id="btnWin" data-pid="' +
+        esc(b.prospect_id) + '">Convert to a paying client</button></div>');
+  }
+
+  function clientDrawer(c){
+    openDrawer('<h3>' + esc(c.name) + '</h3>' +
+      '<div class="who">' + money(c.mrr) + '/mo · day ' + c.tenure_days +
+      ' · health ' + Math.round(c.score) + '/100</div>' +
+      '<div class="note lead"><b>Do this:</b> ' + esc(c.action) + '</div>' +
+      c.signals.map(function(s){ return '<div class="note">' + esc(s) + '</div>'; }).join(""));
+  }
+
+  function expenseDrawer(){
+    openDrawer('<h3>Log money</h3>' +
+      '<div class="who">Everything the Bookkeeper counts comes from here.</div>' +
+      '<label>Category</label><input id="exCat" placeholder="api, tooling, ads, domain…">' +
+      '<label>Amount (USD)</label><input id="exAmt" type="number" step="0.01" placeholder="12.00">' +
+      '<label>Description</label><input id="exDesc" placeholder="optional">' +
+      '<label>Direction</label><select id="exKind">' +
+        '<option value="cost">Money out (expense)</option>' +
+        '<option value="revenue">Money in (revenue)</option></select>' +
+      '<div class="acts"><button class="act primary" id="btnSaveExpense">Save it</button></div>');
+  }
+
+  // ---------------------------------------------------------------- events
+  $("btnRefresh").addEventListener("click", function(){ loadAll(); });
+  $("scrim").addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", function(e){ if(e.key === "Escape") closeDrawer(); });
+
+  $("btnTheme").addEventListener("click", function(){
+    var now = document.documentElement.getAttribute("data-theme");
+    var next = now === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("ar-theme", next); } catch(e) {}
+  });
+  try {
+    var saved = localStorage.getItem("ar-theme");
+    if(saved) document.documentElement.setAttribute("data-theme", saved);
+  } catch(e) {}
+
+  $("hotRows").addEventListener("click", function(e){
+    var row = e.target.closest("[data-pid]");
+    if(!row || busy) return;
+    api("/api/brief?id=" + encodeURIComponent(row.dataset.pid))
+      .then(prospectDrawer).catch(function(){ toast("Could not load that one"); });
+  });
+
+  $("clientRows").addEventListener("click", function(e){
+    var row = e.target.closest("[data-cid]");
+    var data = $("clientRows")._data;
+    if(row && data) clientDrawer(data[Number(row.dataset.cid)]);
+  });
+
+  $("btnExpense").addEventListener("click", expenseDrawer);
+
+  $("drawerBody").addEventListener("click", function(e){
+    var win = e.target.closest("#btnWin");
+    var reply = e.target.closest("#btnLogReply");
+    var save = e.target.closest("#btnSaveExpense");
+
+    if(win && !busy){
+      var plan = $("winPlan").value;
+      if(!confirm("Convert this prospect to a paying client on the " + plan +
+                  " plan? This starts billing them.")) return;
+      busy = true; win.disabled = true; win.textContent = "Closing…";
+      api("/api/win", { id: win.dataset.pid, plan: plan }).then(function(r){
+        if(r.error){ toast(r.error, 4500); return; }
+        toast(r.name + " is now a client at " + money(r.mrr) + "/mo. " +
+              "MRR is " + money(r.total_mrr) + ".", 6000);
+        closeDrawer();
+        return loadAll(true);
+      }).catch(function(){ toast("That didn't go through"); })
+        .then(function(){ busy = false; win.disabled = false;
+                          win.textContent = "Convert to a paying client"; });
+    }
+
+    if(reply && !busy){
+      var text = ($("replyText") && $("replyText").value || "").trim();
+      if(!text){ toast("Paste what they wrote first"); return; }
+      busy = true; reply.disabled = true; reply.textContent = "Reading…";
+      api("/api/reply", { id: reply.dataset.pid, text: text }).then(function(r){
+        if(r.error){ toast(r.error); return; }
+        $("replyOut").innerHTML =
+          '<div class="note lead">Read as <b>' + esc(r.intent) + '</b> — ' +
+          esc(String(r.action).replace(/_/g," ")) + '. They are now <b>' +
+          esc(r.stage) + '</b>.</div>' +
+          (r.draft ? '<pre>' + esc(r.draft.body) + '</pre>'
+                   : '<div class="note">Suppressed. Nothing further will be sent.</div>');
+        $("replyText").value = "";
+        return loadAll(true);
+      }).catch(function(){ toast("Could not record that"); })
+        .then(function(){ busy = false; reply.disabled = false;
+                          reply.textContent = "Read it and draft my answer"; });
+    }
+
+    if(save && !busy){
+      busy = true; save.disabled = true;
+      api("/api/expense", {
+        category: $("exCat").value, amount: $("exAmt").value,
+        description: $("exDesc").value, revenue: $("exKind").value === "revenue"
+      }).then(function(r){
+        if(r.error){ toast(r.error); return; }
+        toast("Logged " + money(r.amount) + " " + (r.kind === "revenue" ? "in" : "out"));
+        closeDrawer();
+        return loadAll(true);
+      }).catch(function(){ toast("Could not save that"); })
+        .then(function(){ busy = false; save.disabled = false; });
+    }
+  });
+
+  $("btnSend").addEventListener("click", function(){
+    if(busy) return;
+    if(!confirm("Send the approved emails now?")) return;
+    busy = true; var b = this; b.disabled = true; b.textContent = "Sending…";
+    api("/api/send", { limit: 25 }).then(function(r){
+      if(r.blocked) toast(r.reasons[0] || "Blocked", 6000);
+      else if(r.reasons && r.reasons.length) toast(r.reasons[0], 4500);
+      else toast("Sent " + r.sent + (r.failed ? ", " + r.failed + " failed" : "") +
+                 (r.warmup_note ? " — " + r.warmup_note : ""), 6000);
+      return loadAll(true);
+    }).catch(function(){ toast("Send failed"); })
+      .then(function(){ busy = false; b.disabled = false; b.textContent = "Send approved"; });
+  });
+
+  $("btnTick").addEventListener("click", function(){
+    if(busy) return;
+    busy = true; var b = this; b.disabled = true; b.textContent = "Running…";
+    toast("Running the fleet — this takes a moment", 8000);
+    api("/api/tick", {}).then(function(r){
+      toast(r.ran + " agent" + (r.ran === 1 ? "" : "s") + " ran", 4000);
+      return loadAll(true);
+    }).catch(function(){ toast("Cycle failed"); })
+      .then(function(){ busy = false; b.disabled = false; b.textContent = "Run a cycle"; });
+  });
+
+  document.addEventListener("visibilitychange", function(){
+    if(!document.hidden) loadAll(true);
+  });
+
+  loadAll();
+  setInterval(function(){ if(!document.hidden && !busy) loadAll(true); }, 60000);
+})();
+</script>
+</body>
+</html>

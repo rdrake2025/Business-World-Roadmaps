@@ -145,14 +145,15 @@ echo  ================================================================
 echo    STARTING - leave this window open
 echo  ================================================================
 echo.
-echo    CONSOLE  http://localhost:8000/app     (approve, send, money)
-echo    OPS      http://localhost:8000/ops     (live agent panel)
+echo    DASHBOARD  http://localhost:8000/dashboard  (everything, on one page)
+echo    CONSOLE    http://localhost:8000/app        (approve and send, phone-sized)
+echo    OPS        http://localhost:8000/ops        (live agent panel)
 echo.
 echo    The link for your phone is printed below.
 echo    Close this window (or press Ctrl+C) to stop.
 echo.
 
-start "" "http://localhost:8000/app"
+start "" "http://localhost:8000/dashboard"
 
 "%VPY%" run.py web --port 8000
 
