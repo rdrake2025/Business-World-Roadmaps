@@ -294,9 +294,17 @@ and retention at the same time.
 
 ## Turning the domain on
 
+Double-click **SETUP-DOMAIN.bat** (Windows) or run **./setup-domain.sh**
+(macOS, Linux). It asks for the domain and the mailbox provider, and nothing
+else. From a terminal it is:
+
 ```bash
 python3 run.py domain yourdomain.com --provider google
 ```
+
+It is a separate file from the launcher on purpose. Domain setup is not a
+one-shot — DNS takes minutes to hours to appear, so this is something you run,
+go and add a record, and run again.
 
 Prints the exact rows to paste into the registrar — MX, SPF, DKIM, DMARC —
 with what each one is for, then checks live DNS and tells you which are
