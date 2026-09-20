@@ -17,6 +17,8 @@ Sources:
   Dental production / LTV  — Dentx, Dental Intel, MeetDandy (2026)
   Legal case value         — CasePeer PI statistics; Nolo (2026)
   Seasonality              — SmartAC / BaaDigi HVAC search seasonality (2026)
+  Restoration job / CLV    — PuroClean, Palm Build, PushLeads restoration (2026)
+  Med spa visit / LTV      — Zenoti, DigitalMedSpa, ScaleHaven aesthetics (2026)
 """
 
 from __future__ import annotations
@@ -68,6 +70,10 @@ class Vertical:
     buyer_phrases: list[str] = field(default_factory=list)
     #: Signals a business is a real prospect rather than a hobbyist.
     spend_signals: list[str] = field(default_factory=list)
+    #: Whether this trade has genuine emergencies. A burst pipe does; a med
+    #: spa does not, and framing one as urgent produces a prompt no real
+    #: customer would type — which measures nothing.
+    has_emergencies: bool = True
 
     def peak_label(self) -> str:
         names = {1: "January", 2: "February", 3: "March", 4: "April", 5: "May",
@@ -194,6 +200,65 @@ VERTICALS: dict[str, Vertical] = {
         spend_signals=["TV or billboard presence", "heavy Google Ads spend",
                        "multiple office locations", "case results published"],
     ),
+    "restoration": Vertical(
+        key="restoration",
+        label="restoration contractor",
+        service="water damage restoration",
+        urgent_scenario="My basement is flooding right now",
+        jobs=["water damage restoration", "mold remediation", "fire damage repair",
+              "storm damage cleanup", "sewage cleanup"],
+        # National average job $3,860 (range $1,383-$6,370); CLV ~$5,000 with
+        # repeat customers producing 60% of annual revenue; industry CAC ~$200,
+        # though paid leads run $150-350. Volume is low because a flood is rare,
+        # but intent is near-total when it happens.
+        economics=Economics(avg_ticket=3860, lifetime_value=5000, typical_cac=200,
+                            monthly_queries=140, search_share=0.55,
+                            booking_rate=0.020),
+        peak_months=[1, 8],  # winter pipe bursts, summer storm season
+        objections=[
+            "We're on insurance panels, that's where our work comes from",
+            "Storms bring us all the work we can handle",
+            "We already buy leads",
+            "We're a franchise, marketing is handled corporately",
+        ],
+        decision_maker="owner or operations manager",
+        buyer_phrases=["water damage restoration near me", "emergency flood cleanup",
+                       "who to call for basement flooding", "mold removal company",
+                       "24 hour water damage"],
+        spend_signals=["24/7 emergency line", "IICRC certification displayed",
+                       "Google Ads presence", "insurance panel membership",
+                       "branded response vehicles"],
+    ),
+    "med_spa": Vertical(
+        key="med_spa",
+        label="medical spa",
+        service="aesthetic treatment",
+        urgent_scenario="I am looking for a good med spa",
+        has_emergencies=False,
+        jobs=["body contouring", "laser treatment", "injectables", "chemical peel",
+              "skin resurfacing"],
+        # Average $536 per visit (range $450-700); lifetime value ~$7,800 over
+        # three years at four visits a year; patient acquisition cost ~$285.
+        # Single-location marketing budgets run $3,000-10,000/month, the highest
+        # of any vertical here — the retainer is a rounding error to them.
+        economics=Economics(avg_ticket=536, lifetime_value=7800, typical_cac=285,
+                            monthly_queries=320, search_share=0.50,
+                            booking_rate=0.015),
+        peak_months=[4, 11],  # pre-summer and pre-holiday
+        objections=[
+            "We already work with a marketing agency",
+            "Our injector's following brings the patients",
+            "We're booked out for weeks already",
+            "Medical advertising rules limit what we can say",
+        ],
+        decision_maker="owner, often the medical director",
+        buyer_phrases=["best med spa near me", "botox near me",
+                       "medical spa reviews", "laser hair removal near me",
+                       "where to get filler"],
+        spend_signals=["membership plan advertised", "heavy Instagram presence",
+                       "Google Ads presence", "multiple injectors on staff",
+                       "financing offered"],
+    ),
     "medical": Vertical(
         key="medical",
         label="medical clinic",
@@ -212,8 +277,9 @@ VERTICALS: dict[str, Vertical] = {
         key="insurance",
         label="insurance agency",
         service="insurance coverage",
-        urgent_scenario="I need to file a claim after an accident",
+        urgent_scenario="I am shopping for an insurance agent",
         jobs=["commercial liability policy", "home insurance", "auto coverage"],
+        has_emergencies=False,
         economics=Economics(avg_ticket=900, lifetime_value=5600, typical_cac=280,
                             monthly_queries=210, booking_rate=0.012),
         peak_months=[1, 6],

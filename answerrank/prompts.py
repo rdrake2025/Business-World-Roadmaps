@@ -86,9 +86,16 @@ def build_prompts(vertical: str, city: str, state: str = "", limit: int = 10) ->
     jobs = list(v.jobs)
     where = f"{city}, {state}".strip(", ") if state else city
 
+    # An emergency prompt only makes sense where emergencies exist.
+    second = (
+        (f"{urgent} in {where}. Who should I call right now?", "emergency")
+        if v.has_emergencies else
+        (f"{urgent} in {where}. Which ones are worth considering?", "comparison")
+    )
+
     prompts: list[tuple[str, str]] = [
         (f"Who is the best {label} in {where}?", "discovery"),
-        (f"{urgent} in {where}. Who should I call right now?", "emergency"),
+        second,
         (f"Recommend a trustworthy {label} near {where} with good reviews.", "trust"),
         (f"What are the top 5 {label}s in {where}?", "discovery"),
         (f"I need {service} in {where}. Which local companies should I compare?", "comparison"),
