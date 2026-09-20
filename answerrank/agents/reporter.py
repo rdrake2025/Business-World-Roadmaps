@@ -15,6 +15,8 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..models import Audit, Deliverable, now_iso
 from ..prompts import vertical_meta
+from .. import method
+from .fixer import FixerAgent
 from ..scoring import ENGINE_LABELS, WEIGHTS, competitor_gap, grade, share_of_voice
 from .base import Agent
 
@@ -104,7 +106,8 @@ def _actions(audit: Audit) -> list[dict[str, str]]:
 
 
 def render_report(audit: Audit, settings, history: list[Audit] | None = None,
-                  deliverables: list[Deliverable] | None = None) -> str:
+                  deliverables: list[Deliverable] | None = None,
+                  month: int = 1) -> str:
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
         autoescape=select_autoescape(["html"]),
@@ -153,6 +156,8 @@ def render_report(audit: Audit, settings, history: list[Audit] | None = None,
         engines=engines, engine_count=len(audit.engine_breakdown) or 1,
         components=components, weights=weights,
         actions=_actions(audit),
+        plan=method.plan(month, audit.vertical, audit),
+        month=month,
         deliverables=[d.title.split(" — ")[0] for d in (deliverables or [])],
         results=sorted(audit.results, key=lambda r: (not r.mentioned, r.engine)),
     )
@@ -177,7 +182,9 @@ class ReporterAgent(Agent):
                 continue  # already reported on this audit
 
             deliverables = self.store.get_deliverables(audit.id)
-            html = render_report(audit, self.settings, history, deliverables)
+            month = FixerAgent.engagement_month(client)
+            html = render_report(audit, self.settings, history, deliverables,
+                                 month)
 
             stamp = datetime.now(timezone.utc).strftime("%Y-%m")
             slug = (client.business.domain or client.business.id).replace(".", "_")

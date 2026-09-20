@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 
-from .. import knowledge
+from .. import knowledge, method
 from ..engines.live import _post
 from ..models import Audit, Business, Deliverable
 from ..prompts import build_prompts, vertical_meta
@@ -190,16 +190,11 @@ def citation_gaps(biz: Business) -> str:
     general = ["Google Business Profile", "Bing Places", "Apple Business Connect",
                "Yelp", "Facebook Business Page", "Better Business Bureau",
                "Nextdoor Business", "Angi", "Thumbtack"]
-    by_vertical = {
-        "hvac": ["HomeAdvisor", "Houzz", "ACCA member directory"],
-        "plumbing": ["HomeAdvisor", "Porch", "PHCC directory"],
-        "roofing": ["HomeAdvisor", "GAF/Owens Corning contractor locator", "NRCA directory"],
-        "dental": ["Healthgrades", "Zocdoc", "ADA Find-a-Dentist", "Vitals"],
-        "legal": ["Avvo", "Justia", "FindLaw", "Martindale-Hubbell", "State bar directory"],
-        "medical": ["Healthgrades", "Zocdoc", "Vitals", "WebMD Provider Directory"],
-        "insurance": ["Insurify", "Trustpilot", "state DOI licensee lookup"],
-    }
-    targets = general + by_vertical.get(biz.vertical, [])
+    # The trade-specific sources come from the trade. This was a lookup table
+    # here covering seven verticals of twenty-two, so fifteen trades were sent
+    # only the generic list — and the trade authority directories are exactly
+    # the corroboration that makes an engine confident enough to name someone.
+    targets = general + list(knowledge.get(biz.vertical).directories)
     lines = "\n".join(f"- [ ] {t}" for t in targets)
     return f"""# Citation & directory coverage — {biz.name}
 
@@ -381,7 +376,23 @@ class FixerAgent(Agent):
             self.log.warning("LLM output unparsable, keeping templates: %s", exc)
             return pairs
 
-    def build_for(self, biz: Business, audit: Audit) -> list[Deliverable]:
+    @staticmethod
+    def engagement_month(client) -> int:
+        """Which month of the retainer this is. Month 1 is the first."""
+        from datetime import datetime, timezone
+        if not client or not getattr(client, "started_at", ""):
+            return 1
+        try:
+            started = datetime.fromisoformat(client.started_at)
+        except ValueError:
+            return 1
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        days = max(0, (datetime.now(timezone.utc) - started).days)
+        return days // 30 + 1
+
+    def build_for(self, biz: Business, audit: Audit,
+                  month: int = 1) -> list[Deliverable]:
         pairs = self._llm_upgrade(biz, faq_pairs(biz, audit))
         slug = biz.domain.replace(".", "_") or biz.id
         return [
@@ -406,10 +417,18 @@ class FixerAgent(Agent):
                         title=f"How to install this month's files — {biz.name}",
                         body=implementation_guide(biz, audit),
                         filename=f"{slug}_START_HERE.md"),
+            # The same six files every month is how a retainer starts looking
+            # like nothing is happening, which is the churn signal the
+            # Retention agent watches for. This is the month's own work.
+            Deliverable(audit_id=audit.id, business_id=biz.id, kind="month_plan",
+                        title=f"Month {month} plan — {biz.name}",
+                        body=method.summarise(month, biz.vertical, audit),
+                        filename=f"{slug}_month_{month:02d}_plan.md"),
         ]
 
     def execute(self) -> tuple[int, str]:
         made = 0
+        months: list[int] = []
         for client in self.store.get_clients("active"):
             history = self.store.audit_history(client.business.id, limit=1)
             if not history:
@@ -417,7 +436,11 @@ class FixerAgent(Agent):
             audit = history[0]
             if self.store.get_deliverables(audit.id):
                 continue  # already built for this cycle
-            for d in self.build_for(client.business, audit):
+            month = self.engagement_month(client)
+            months.append(month)
+            for d in self.build_for(client.business, audit, month):
                 self.store.save_deliverable(d)
                 made += 1
-        return made, f"generated {made} deliverables"
+        return made, (f"generated {made} deliverables"
+                      + (f" across months {min(months)}-{max(months)}"
+                         if months else ""))
