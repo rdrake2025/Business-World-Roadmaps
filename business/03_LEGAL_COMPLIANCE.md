@@ -12,7 +12,7 @@ and entity setup before you sign your first client.
 | --- | --- | --- |
 | Form an LLC | Single-member LLC in your home state. Do not use Delaware/Wyoming for a one-person local services business — it adds a foreign-qualification burden with no benefit. | $50–$500 |
 | Get an EIN | Free, direct from the IRS. Never pay a service for this. | $0 |
-| Registered agent | Required. Also supplies a usable business address for CAN-SPAM. | $10–$25/mo |
+| Registered agent | Required. Also supplies a business address for CAN-SPAM, so your home address stays private. | $10–$25/mo |
 | Business bank account | Separate from personal, from day one. Commingling funds is what pierces the liability veil. | $0 |
 | General liability + E&O | ~$40–$80/mo. Get it before the first client, not after the first complaint. | $40–80/mo |
 | Sales tax | Most states do not tax digital marketing services, but several do. Check yours. | — |
@@ -29,6 +29,20 @@ message.
 - [x] **Non-deceptive subject line.** The subject must describe the message.
 - [x] **Identify it as a solicitation** — the evidence-led opening does this implicitly; the footer does it explicitly.
 - [x] **Valid physical postal address** in every message. *Enforced in code — `outreach.preflight()` blocks all sending until configured.*
+
+  **It does not have to be your home.** Per the [FTC's compliance guide](https://www.ftc.gov/business-guidance/resources/can-spam-act-compliance-guide-business), any of these qualify:
+
+  | Option | Cost | Notes |
+  | --- | --- | --- |
+  | Registered agent | $10–$25/mo | Comes with most LLC formation services |
+  | Virtual mailbox (CMRA) | $10–$20/mo | Real street address; they scan your mail |
+  | USPS-registered PO Box | $5–$20/mo | Must be properly registered with USPS |
+  | Coworking space | varies | If it includes a mail service |
+
+  A PO Box **is** acceptable, provided it is accurately registered with USPS. The
+  same goes for a private mailbox registered with a commercial mail receiving
+  agency. What is not acceptable is an address that does not exist or does not
+  reach you.
 - [x] **Working opt-out**, honoured within 10 business days. *We honour immediately via the suppression list.*
 - [x] **No selling or transferring** an address that opted out.
 
