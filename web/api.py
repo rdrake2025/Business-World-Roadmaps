@@ -352,6 +352,173 @@ class Api:
                       if draft else None),
         }
 
+    # ------------------------------------------------------------------
+    # Everything below was reachable only from a terminal. Closing a sale in
+    # particular — the single most important moment in this business — needed
+    # a command line, on a machine whose owner has said plainly that they
+    # cannot use one. A capability the operator cannot reach is a capability
+    # the business does not have.
+    # ------------------------------------------------------------------
+
+    def health(self) -> dict[str, Any]:
+        """What is stopping you from operating right now."""
+        from answerrank import doctor as doctor_mod
+
+        checks = doctor_mod.run_all(self.settings, probe=False)
+        passed, warned, failed, blockers = doctor_mod.summarise(checks)
+        return {
+            "passed": passed, "warned": warned, "failed": failed,
+            "can_send": not blockers,
+            "blockers": [{"name": c.name, "detail": c.detail, "fix": c.fix}
+                         for c in blockers],
+            "checks": [{"name": c.name, "status": c.status.lower(),
+                        "detail": c.detail, "fix": c.fix, "blocking": c.blocking}
+                       for c in checks],
+        }
+
+    def money(self) -> dict[str, Any]:
+        """Runway, the path to the target, and what the next milestone is."""
+        from answerrank.budget import (
+            cumulative_monthly, load_personal, milestones, quit_threshold,
+            reinvestment_split, runway_months,
+        )
+
+        personal = load_personal()
+        pnl = self.store.pnl(30)
+        profit = pnl.get("profit", 0.0)
+        mrr = self.store.mrr()
+        clients = len(self.store.get_clients("active"))
+        burn = cumulative_monthly("1_first_client")
+        disposable = getattr(personal, "disposable", 0.0)
+        savings = getattr(personal, "savings", 0.0)
+
+        target = self.settings.profit_target_monthly
+        reached = [m for m in milestones(getattr(personal, "job_take_home", 0.0))
+                   if profit >= m["profit"]]
+        upcoming = [m for m in milestones(getattr(personal, "job_take_home", 0.0))
+                    if profit < m["profit"]]
+
+        return {
+            "mrr": round(mrr, 2),
+            "clients": clients,
+            "profit_30d": round(profit, 2),
+            "revenue_30d": round(pnl.get("revenue", 0.0), 2),
+            "costs_30d": round(pnl.get("costs", 0.0), 2),
+            "target": target,
+            "pct_to_target": round(min(100.0, max(0.0, profit / target * 100)), 1),
+            "monthly_burn": round(burn, 2),
+            "runway_months": round(runway_months(savings, burn, disposable), 1),
+            "split": reinvestment_split(profit),
+            "quit": quit_threshold(getattr(personal, "job_take_home", 0.0)),
+            "next_milestone": upcoming[0] if upcoming else None,
+            "milestones_hit": len(reached),
+            "cost_breakdown": self.store.cost_breakdown(30),
+        }
+
+    def forecast(self, adds_per_month: float = 2.0,
+                 churn: float = 0.05) -> dict[str, Any]:
+        """Month-by-month path to the profit target at a given close rate."""
+        from answerrank.budget import cumulative_monthly
+
+        price = self.settings.pricing.growth_monthly
+        delivery = self.settings.pricing.delivery_cost_monthly
+        overhead = cumulative_monthly("1_first_client")
+        target = self.settings.profit_target_monthly
+
+        rows, clients = [], float(len(self.store.get_clients("active")))
+        hit_month = None
+        for month in range(1, 13):
+            clients = clients * (1 - churn) + adds_per_month
+            revenue = clients * price
+            costs = overhead + clients * delivery
+            profit = revenue - costs
+            if profit >= target and hit_month is None:
+                hit_month = month
+            rows.append({"month": month, "clients": round(clients, 1),
+                         "mrr": round(revenue), "costs": round(costs),
+                         "profit": round(profit), "at_target": profit >= target})
+        return {"rows": rows, "target": target, "target_month": hit_month,
+                "adds_per_month": adds_per_month, "churn": churn,
+                "price": price}
+
+    def win(self, prospect_id: str, plan: str = "growth") -> dict[str, Any]:
+        """Convert a prospect into a paying client. The moment that matters."""
+        from answerrank.models import Client, LedgerEntry
+
+        prospect = next((p for p in self.store.get_prospects(limit=10_000)
+                         if p.id == prospect_id), None)
+        if not prospect:
+            return {"error": "no such prospect"}
+        if prospect.stage == "won":
+            return {"error": f"{prospect.business.name} is already a client"}
+
+        price = self.settings.pricing.plan_price(plan)
+        if not price:
+            return {"error": f"unknown plan {plan!r}"}
+
+        client = Client(business=prospect.business, plan=plan, mrr=price,
+                        status="active")
+        self.store.upsert_client(client)
+
+        prospect.stage = "won"
+        prospect.notes = (prospect.notes or "") + f" | won on {plan} at ${price:,.0f}"
+        self.store.upsert_prospect(prospect)
+        self.store.record_outcome(
+            prospect_id=prospect.id, vertical=prospect.business.vertical,
+            step=prospect.touches, kind="won", note=f"{plan} ${price:,.0f}")
+
+        return {
+            "client_id": client.id,
+            "name": prospect.business.name,
+            "plan": plan,
+            "mrr": price,
+            "total_mrr": round(self.store.mrr(), 2),
+            "clients": len(self.store.get_clients("active")),
+            "next": ("The Auditor will run their first full audit on the next "
+                     "cycle, and the Fixer will build month 1 of their plan."),
+        }
+
+    def log_expense(self, category: str, amount: float, description: str = "",
+                    revenue: bool = False) -> dict[str, Any]:
+        """Record money in or out without opening a terminal."""
+        from answerrank.models import LedgerEntry
+
+        try:
+            amount = float(amount)
+        except (TypeError, ValueError):
+            return {"error": "amount must be a number"}
+        if amount <= 0:
+            return {"error": "amount must be positive"}
+        if not category.strip():
+            return {"error": "a category is required"}
+
+        self.store.add_ledger(LedgerEntry(
+            kind="revenue" if revenue else "cost",
+            category=category.strip(), amount=amount,
+            description=description.strip()))
+        return {"ok": True, "kind": "revenue" if revenue else "cost",
+                "amount": amount, "pnl": self.store.pnl(30)}
+
+    def markets(self) -> dict[str, Any]:
+        """Candidate trades we do not serve yet, and what has been measured."""
+        from answerrank import markets as markets_mod
+
+        price = self.settings.pricing.growth_monthly
+        findings = {f["market"]: f for f in self.store.latest_findings()}
+        rows = []
+        for c in markets_mod.ranked(price):
+            found = findings.get(c.key)
+            rows.append({
+                "key": c.key, "label": c.label,
+                "score": c.score(price), "verdict": c.verdict(price),
+                "avg_ticket": c.avg_ticket, "basis": c.basis,
+                "needs_research": c.needs_research,
+                "measured": bool(found),
+                "invisible_share": (found or {}).get("invisible_share"),
+                "sampled": (found or {}).get("sampled"),
+            })
+        return {"candidates": rows, "price": price}
+
     def tick(self) -> dict[str, Any]:
         from answerrank.orchestrator import Orchestrator
 
@@ -364,5 +531,31 @@ def _knowledge():
     return knowledge
 
 
-def json_response(payload: Any, status: str = "200 OK") -> tuple[str, bytes]:
-    return status, json.dumps(payload, default=str).encode("utf-8")
+def _finite(value: Any) -> Any:
+    """Replace values JSON cannot express with ones a browser can parse.
+
+    Python happily writes `Infinity` and `NaN`; `JSON.parse` rejects both, so
+    one infinite runway figure takes down the whole panel with a parse error
+    and no visible cause. Runway legitimately is infinite when income already
+    covers the burn, so this is not a rounding edge case — it is the healthy
+    path. Infinity becomes null and the caller renders it as such.
+    """
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return None
+        return value
+    if isinstance(value, dict):
+        return {k: _finite(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_finite(v) for v in value]
+    return value
+
+
+def to_json(payload: Any) -> bytes:
+    """The one JSON writer for the whole web layer.
+
+    There were two — this one, which nothing called, and a copy inside the
+    WSGI app that every endpoint actually used. The dead one is gone rather
+    than left to drift, which is how the last four bugs of this shape started.
+    """
+    return json.dumps(_finite(payload), default=str).encode("utf-8")

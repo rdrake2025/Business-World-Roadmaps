@@ -18,9 +18,11 @@ import html
 import json
 import logging
 import re
+import socketserver
 import urllib.parse
 from pathlib import Path
 from typing import Any, Callable, Iterable
+from wsgiref.simple_server import WSGIServer, make_server
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -29,7 +31,7 @@ from answerrank.models import Business, Prospect
 from answerrank.store import Store
 
 from . import auth
-from .api import Api
+from .api import Api, to_json
 
 log = logging.getLogger("answerrank.web")
 
@@ -219,7 +221,7 @@ class Application:
     # ------------------------------------------------------------ api
 
     def _json(self, start, payload, status="200 OK"):
-        body = json.dumps(payload, default=str).encode()
+        body = to_json(payload)
         start(status, [("Content-Type", "application/json"),
                        ("Content-Length", str(len(body))),
                        ("Cache-Control", "no-store")])
@@ -278,6 +280,47 @@ class Application:
         d = self._body_json(environ)
         return self._json(start, self.api.send(
             min(int(d.get("limit", 25)), 100), bool(d.get("dry_run"))))
+
+    def api_health(self, environ, start):
+        return self._json(start, self.api.health())
+
+    def api_money(self, environ, start):
+        return self._json(start, self.api.money())
+
+    def api_forecast(self, environ, start):
+        q = _query(environ)
+        try:
+            adds = float(q.get("adds", 2) or 2)
+            churn = float(q.get("churn", 0.05) or 0.05)
+        except ValueError:
+            adds, churn = 2.0, 0.05
+        return self._json(start, self.api.forecast(max(0.1, min(20.0, adds)),
+                                                   max(0.0, min(0.5, churn))))
+
+    def api_win(self, environ, start):
+        d = self._body_json(environ)
+        return self._json(start, self.api.win(str(d.get("id", "")),
+                                              str(d.get("plan", "growth"))))
+
+    def api_expense(self, environ, start):
+        d = self._body_json(environ)
+        return self._json(start, self.api.log_expense(
+            str(d.get("category", "")), d.get("amount", 0),
+            str(d.get("description", "")), bool(d.get("revenue"))))
+
+    def api_markets(self, environ, start):
+        return self._json(start, self.api.markets())
+
+    def dashboard(self, environ, start):
+        """The desktop control room: everything on one screen."""
+        body = render("dashboard.html")
+        headers = [("Content-Type", "text/html; charset=utf-8"),
+                   ("Content-Length", str(len(body))),
+                   ("Cache-Control", "no-store")]
+        if _query(environ).get("t"):
+            headers.append(("Set-Cookie", auth.session_cookie(self.token)))
+        start("200 OK", headers)
+        return [body]
 
     def api_clients(self, environ, start):
         return self._json(start, self.api.clients())
@@ -358,6 +401,13 @@ class Application:
             "/api/intelligence": self.api_intelligence,
             "/api/brief": self.api_brief,
             "/api/reply": self.api_reply,
+            "/dashboard": self.dashboard,
+            "/api/health": self.api_health,
+            "/api/money": self.api_money,
+            "/api/forecast": self.api_forecast,
+            "/api/win": self.api_win,
+            "/api/expense": self.api_expense,
+            "/api/markets": self.api_markets,
         }
 
     def __call__(self, environ, start_response) -> Iterable[bytes]:
@@ -440,9 +490,24 @@ def create_app(settings: Settings | None = None) -> Application:
     return Application(settings)
 
 
-def serve(host: str = "0.0.0.0", port: int = 8000, settings: Settings | None = None) -> None:
-    from wsgiref.simple_server import make_server
+class _ThreadedWSGIServer(socketserver.ThreadingMixIn, WSGIServer):
+    """One thread per request.
 
+    ``make_server`` is single-threaded, so any slow request froze the whole
+    console — and one of them is genuinely slow: the doctor resolves SPF, DKIM
+    and DMARC over the network, which takes seconds. While that was in flight
+    the phone console would not load, the dashboard sat on stale numbers after
+    closing a sale, and it looked like the app had hung. It had: one blocking
+    call was holding the only thread.
+    """
+
+    daemon_threads = True
+    #: A stuck client should not hold a thread forever.
+    request_queue_size = 32
+
+
+def serve(host: str = "0.0.0.0", port: int = 8000, settings: Settings | None = None) -> None:
     app = create_app(settings)
+    server = make_server(host, port, app, server_class=_ThreadedWSGIServer)
     log.info("serving on http://%s:%s", host, port)
-    make_server(host, port, app).serve_forever()
+    server.serve_forever()
