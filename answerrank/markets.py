@@ -125,28 +125,10 @@ class Candidate:
 #: The candidate universe. Everything here is a real trade with a local,
 #: searchable footprint. Trades already served are excluded — this is the
 #: expansion list, not a catalogue.
+#:
+#: Promoted so far: restoration and med spa, both moved into knowledge.py
+#: once the Explorer measured them and the economics were sourced properly.
 CANDIDATES: list[Candidate] = [
-    Candidate(
-        key="med_spa", label="medical spa",
-        # Published 2026 guidance: a single-location med spa budgets
-        # $3,000-10,000/mo for marketing. Treatments run $400-2,000.
-        avg_ticket=850, monthly_marketing_spend=5000,
-        urgency=0.55, fragmentation=0.88, digital_gap=0.55, incumbent_risk=0.55,
-        basis="2026 med spa marketing budget guidance ($3k-10k/mo single location)",
-        notes=["Highest marketing budget of any candidate — $997 is noise to them.",
-               "Aesthetic buyers research heavily before booking, so AI answers matter.",
-               "Crowded with agencies already; differentiation must be sharp."],
-    ),
-    Candidate(
-        key="restoration", label="water and fire restoration",
-        # Emergency work, insurance-funded, very high ticket.
-        avg_ticket=4500, monthly_marketing_spend=2800,
-        urgency=0.95, fragmentation=0.72, digital_gap=0.70, incumbent_risk=0.40,
-        basis="Home-services benchmarks; insurance-funded emergency category",
-        notes=["Highest urgency of any candidate: a flooded house is searched in minutes.",
-               "Insurance funds the job, so price resistance is low.",
-               "Franchise presence (Servpro et al) reduces the independent pool."],
-    ),
     Candidate(
         key="tree_service", label="tree service",
         # $28-30 per lead published; jobs commonly $800-3,000.

@@ -1089,11 +1089,21 @@ class TestMarkets(unittest.TestCase):
 
     def test_affordability_tracks_their_budget_not_ours(self):
         """A business spending $5k/mo barely notices $997. One spending $600
-        has to cut something, and will say no."""
-        from answerrank.markets import by_key
-        rich = by_key("med_spa")
-        poor = by_key("pool_service")
+        has to cut something, and will say no.
+
+        Picks from the live candidate list rather than naming markets, since
+        promoting one into a full vertical removes it from here."""
+        from answerrank.markets import CANDIDATES
+        by_budget = sorted(CANDIDATES, key=lambda c: c.monthly_marketing_spend)
+        poor, rich = by_budget[0], by_budget[-1]
         self.assertGreater(rich.affordability(997), poor.affordability(997))
+
+    def test_promoted_markets_leave_the_candidate_list(self):
+        """The candidate list is an expansion list, not a catalogue."""
+        from answerrank.knowledge import VERTICALS
+        from answerrank.markets import CANDIDATES
+        overlap = {c.key for c in CANDIDATES} & set(VERTICALS)
+        self.assertFalse(overlap, f"already served but still a candidate: {overlap}")
 
     def test_cheaper_retainer_is_more_affordable_everywhere(self):
         from answerrank.markets import CANDIDATES
@@ -1228,3 +1238,53 @@ class TestScoutSelectivity(unittest.TestCase):
                            website="https://test.com", email="a@test.com")
             fit = score_fit(biz, visibility_score=10.0, monthly_price=997)
             self.assertTrue(fit.worth_pitching, f"{key} discovered but unpitchable")
+
+
+class TestPromotedVerticals(unittest.TestCase):
+    """Restoration and med spa were promoted from candidates after the Explorer
+    measured them and their economics were sourced."""
+
+    def test_both_are_adopted(self):
+        from answerrank.knowledge import VERTICALS
+        self.assertIn("restoration", VERTICALS)
+        self.assertIn("med_spa", VERTICALS)
+
+    def test_restoration_clears_on_first_job_revenue(self):
+        """$3,860 average ticket carries the retainer on its own."""
+        from answerrank.knowledge import plan_fit
+        self.assertEqual(plan_fit("restoration", 997)["verdict"], "strong")
+
+    def test_med_spa_needs_the_lifetime_argument(self):
+        """$536 a visit does not cover $997 a month; claiming it would not
+        survive the client checking."""
+        from answerrank.knowledge import plan_fit
+        fit = plan_fit("med_spa", 997)
+        self.assertLess(float(fit["first_job_ratio"]), 1.0)
+        self.assertEqual(fit["basis"], "lifetime value")
+
+    def test_low_urgency_trades_get_no_emergency_prompt(self):
+        """Nobody types 'I want a med spa, who do I call RIGHT NOW'."""
+        from answerrank.prompts import build_prompts
+        for key in ("med_spa", "insurance"):
+            intents = [i for _p, i in build_prompts(key, "Tampa", "FL", 10)]
+            self.assertNotIn("emergency", intents, key)
+
+    def test_urgent_trades_keep_their_emergency_prompt(self):
+        from answerrank.prompts import build_prompts
+        for key in ("restoration", "hvac", "plumbing"):
+            intents = [i for _p, i in build_prompts(key, "Tampa", "FL", 10)]
+            self.assertIn("emergency", intents, key)
+
+    def test_every_prompt_reads_as_a_real_question(self):
+        """A prompt nobody would type measures nothing."""
+        from answerrank.knowledge import VERTICALS
+        from answerrank.prompts import build_prompts
+        for key in VERTICALS:
+            for prompt, _intent in build_prompts(key, "Tampa", "FL", 12):
+                self.assertNotIn("  ", prompt, f"{key}: double space in {prompt!r}")
+                self.assertFalse(prompt.startswith("I I"), key)
+                self.assertGreater(len(prompt), 15, key)
+
+    def test_scout_now_prospects_restoration(self):
+        from answerrank.agents.scout import defensible_verticals
+        self.assertIn("restoration", defensible_verticals(997))
