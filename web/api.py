@@ -299,8 +299,7 @@ class Api:
             "by_vertical": [r for r in analyst.by_vertical() if r["sent"]],
             "by_step": [r for r in analyst.by_step() if r["sent"]],
             "volume": analyst.required_volume(
-                self.settings.profit_target_monthly,
-                self.settings.pricing.growth_monthly,
+                self.settings.profit_target_monthly, None,
                 self.settings.pricing.delivery_cost_monthly),
             "next_move": move,
             "pricing": [

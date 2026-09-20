@@ -2224,3 +2224,63 @@ class TestSchemaTypes(unittest.TestCase):
         doc = json.loads(localbusiness_schema(biz))
         self.assertEqual(doc["@context"], "https://schema.org")
         self.assertTrue(doc["@type"])
+
+
+class TestBlendedDealValue(unittest.TestCase):
+    """The most important number this system produces must not assume a
+    price the pipeline is not being quoted."""
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def _agent(self):
+        from answerrank.agents.analyst import AnalystAgent
+        return AnalystAgent(self.store, self.settings)
+
+    def _add(self, vertical, n=1):
+        for i in range(n):
+            self.store.upsert_prospect(Prospect(business=Business(
+                name=f"{vertical}{i}", city="Austin", state="TX", vertical=vertical,
+                website=f"https://{vertical}{i}.com", email=f"o@{vertical}{i}.com")))
+
+    def test_an_empty_pipeline_falls_back_to_the_standard_tier(self):
+        price, basis = self._agent().blended_price()
+        self.assertEqual(price, self.settings.pricing.growth_monthly)
+        self.assertIn("no pipeline", basis)
+
+    def test_the_blend_sits_between_the_cheapest_and_dearest_trade(self):
+        self._add("remodeling", 3)     # quoted high
+        self._add("appliance_repair", 3)  # quoted low
+        price, basis = self._agent().blended_price()
+        low = self.settings.quote_for("appliance_repair")
+        high = self.settings.quote_for("remodeling")
+        self.assertGreater(price, low)
+        self.assertLess(price, high)
+        self.assertIn("blended across 6", basis)
+
+    def test_a_dearer_pipeline_needs_fewer_clients(self):
+        self._add("appliance_repair", 10)
+        cheap = self._agent().required_volume(5000)["clients_needed"]
+        for p in self.store.get_prospects(limit=100):
+            p.business.vertical = "remodeling"
+            self.store.upsert_prospect(p)
+        dear = self._agent().required_volume(5000)["clients_needed"]
+        self.assertLess(dear, cheap)
+
+    def test_an_explicit_price_still_wins(self):
+        self._add("remodeling", 5)
+        result = self._agent().required_volume(5000, 997.0)
+        self.assertEqual(result["monthly_price"], 997.0)
+        self.assertIn("as given", str(result["price_basis"]))
+
+    def test_the_volume_line_states_which_price_it_used(self):
+        self._add("hvac", 4)
+        result = self._agent().required_volume(5000)
+        self.assertIn("average", str(result["line"]))
+        self.assertTrue(str(result["price_basis"]))
