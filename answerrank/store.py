@@ -76,6 +76,13 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_run_agent ON agent_runs(agent, started_at);
 
+CREATE TABLE IF NOT EXISTS market_findings (
+    id TEXT PRIMARY KEY, market TEXT, label TEXT, sampled INTEGER,
+    mean_score REAL, invisible_share REAL, opportunity REAL, verdict TEXT,
+    notes TEXT, created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_market_time ON market_findings(market, created_at);
+
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY, value TEXT, created_at TEXT
 );
@@ -306,6 +313,47 @@ class Store:
             return cx.execute(
                 "SELECT 1 FROM suppression WHERE email = ?", (email.lower().strip(),)
             ).fetchone() is not None
+
+    # ---------------- market findings ----------------
+
+    def save_finding(self, f: dict[str, Any]) -> None:
+        with self.conn() as cx:
+            cx.execute(
+                """INSERT OR REPLACE INTO market_findings
+                   (id,market,label,sampled,mean_score,invisible_share,opportunity,
+                    verdict,notes,created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (f["id"], f["market"], f["label"], f["sampled"], f["mean_score"],
+                 f["invisible_share"], f["opportunity"], f["verdict"],
+                 json.dumps(f.get("notes", [])), f["created_at"]),
+            )
+
+    def latest_findings(self, limit: int = 40) -> list[dict[str, Any]]:
+        """Most recent finding per market, newest first."""
+        with self.conn() as cx:
+            rows = cx.execute(
+                """SELECT * FROM market_findings WHERE id IN (
+                       SELECT id FROM market_findings m1
+                       WHERE created_at = (
+                           SELECT MAX(created_at) FROM market_findings m2
+                           WHERE m2.market = m1.market)
+                   ) ORDER BY opportunity DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["notes"] = json.loads(d.get("notes") or "[]")
+            except ValueError:
+                d["notes"] = []
+            out.append(d)
+        return out
+
+    def explored_markets(self) -> set[str]:
+        with self.conn() as cx:
+            rows = cx.execute("SELECT DISTINCT market FROM market_findings").fetchall()
+        return {r["market"] for r in rows}
 
     # ---------------- key/value ----------------
 

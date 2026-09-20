@@ -26,10 +26,12 @@ from datetime import datetime, timedelta, timezone
 from .agents.auditor import AuditorAgent
 from .agents.base import Agent
 from .agents.bookkeeper import BookkeeperAgent
+from .agents.explorer import ExplorerAgent
 from .agents.fixer import FixerAgent
 from .agents.outreach import OutreachAgent
 from .agents.reporter import ReporterAgent
 from .agents.scout import ScoutAgent
+from .agents.strategist import StrategistAgent
 from .config import Settings
 from .store import Store
 
@@ -38,7 +40,8 @@ log = logging.getLogger("answerrank.orchestrator")
 # Order matters: each agent consumes what the previous one produced, so a
 # single tick can carry a prospect from discovery all the way to a drafted
 # email.
-AGENT_ORDER = [ScoutAgent, AuditorAgent, FixerAgent, ReporterAgent, OutreachAgent, BookkeeperAgent]
+AGENT_ORDER = [ScoutAgent, AuditorAgent, FixerAgent, ReporterAgent, OutreachAgent,
+               BookkeeperAgent, ExplorerAgent, StrategistAgent]
 
 
 def build_fleet(store: Store, settings: Settings) -> list[Agent]:

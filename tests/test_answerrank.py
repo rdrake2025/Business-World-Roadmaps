@@ -1076,3 +1076,155 @@ class TestOutreachCopy(unittest.TestCase):
             self.assertTrue(subject.strip())
             self.assertIn("unsubscribe", body.lower())
             self.assertIn(self.settings.company_legal_name, body)
+
+
+class TestMarkets(unittest.TestCase):
+    def test_every_candidate_is_scoreable_and_bounded(self):
+        from answerrank.markets import CANDIDATES
+        for c in CANDIDATES:
+            score = c.score(997)
+            self.assertTrue(0 <= score <= 100, f"{c.key} scored {score}")
+            self.assertIn(c.verdict(997), {"pursue", "test", "watch", "skip"})
+            self.assertTrue(c.basis.strip(), f"{c.key} has no stated basis")
+
+    def test_affordability_tracks_their_budget_not_ours(self):
+        """A business spending $5k/mo barely notices $997. One spending $600
+        has to cut something, and will say no."""
+        from answerrank.markets import by_key
+        rich = by_key("med_spa")
+        poor = by_key("pool_service")
+        self.assertGreater(rich.affordability(997), poor.affordability(997))
+
+    def test_cheaper_retainer_is_more_affordable_everywhere(self):
+        from answerrank.markets import CANDIDATES
+        for c in CANDIDATES:
+            self.assertGreaterEqual(c.affordability(499), c.affordability(997))
+
+    def test_ticket_strength_saturates(self):
+        """Past ~$10k the ROI argument is already trivial; more adds nothing."""
+        from answerrank.markets import Candidate
+        base = dict(monthly_marketing_spend=2000, urgency=0.5, fragmentation=0.5,
+                    digital_gap=0.5, incumbent_risk=0.5, basis="test")
+        big = Candidate(key="a", label="a", avg_ticket=10_000, **base)
+        huge = Candidate(key="b", label="b", avg_ticket=100_000, **base)
+        self.assertAlmostEqual(big.ticket_strength(), huge.ticket_strength(), places=2)
+
+    def test_ranking_is_stable_and_complete(self):
+        from answerrank.markets import CANDIDATES, ranked
+        r = ranked(997)
+        self.assertEqual(len(r), len(CANDIDATES))
+        scores = [c.score(997) for c in r]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+
+    def test_shortlist_excludes_the_rejected(self):
+        from answerrank.markets import shortlist
+        for c in shortlist(997, limit=5):
+            self.assertIn(c.verdict(997), {"pursue", "test"})
+
+
+class TestExplorer(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.settings = make_settings(self.tmp.name)
+        self.store = Store(self.settings.database_path)
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_explores_one_market_per_run(self):
+        from answerrank.agents.explorer import ExplorerAgent
+        agent = ExplorerAgent(self.store, self.settings, sample_size=2)
+        run = agent.run()
+        self.assertEqual(run.status, "ok")
+        self.assertEqual(len(self.store.latest_findings()), 1)
+
+    def test_successive_runs_cover_new_markets(self):
+        """Otherwise the top of the list gets re-tested forever."""
+        from answerrank.agents.explorer import ExplorerAgent
+        agent = ExplorerAgent(self.store, self.settings, sample_size=2)
+        for _ in range(4):
+            agent.run()
+        self.assertEqual(len(self.store.explored_markets()), 4)
+
+    def test_simulated_findings_are_flagged_and_capped(self):
+        """A simulated sample must never read as evidence."""
+        from answerrank.agents.explorer import ExplorerAgent
+        ExplorerAgent(self.store, self.settings, sample_size=2).run()
+        finding = self.store.latest_findings()[0]
+        self.assertTrue(any("SIMULATED" in n for n in finding["notes"]))
+        self.assertNotEqual(finding["verdict"], "pursue")
+
+    def test_exploration_cost_is_booked(self):
+        from answerrank.agents.explorer import ExplorerAgent
+        ExplorerAgent(self.store, self.settings, sample_size=2).run()
+        self.assertGreater(self.store.cost_breakdown(30).get("api", 0), 0)
+
+
+class TestStrategist(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.settings = make_settings(self.tmp.name)
+        self.store = Store(self.settings.database_path)
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _agent(self):
+        from answerrank.agents.strategist import StrategistAgent
+        return StrategistAgent(self.store, self.settings)
+
+    def test_thin_pipeline_beats_every_other_concern(self):
+        rec = self._agent().recommend()
+        self.assertIn("pipeline", rec["move"].lower())
+        self.assertEqual(rec["confidence"], "high")
+
+    def test_always_returns_exactly_one_move(self):
+        """A list of opportunities is a way of avoiding a decision."""
+        from answerrank.agents.scout import ScoutAgent
+        ScoutAgent(self.store, self.settings, target_per_run=40).run()
+        rec = self._agent().recommend()
+        for key in ("move", "why", "confidence"):
+            self.assertTrue(rec[key].strip())
+
+    def test_recommendation_is_persisted_for_the_console(self):
+        self._agent().run()
+        self.assertTrue(self.store.kv_get("strategy_recommendation"))
+
+    def test_assessment_covers_all_candidates(self):
+        from answerrank.markets import CANDIDATES
+        state = self._agent().assess()
+        self.assertEqual(len(state["candidates"]), len(CANDIDATES))
+
+
+class TestScoutSelectivity(unittest.TestCase):
+    """The Strategist caught the Scout adding prospects the price could not
+    serve, which Outreach then filtered out — API spend for nothing."""
+
+    def test_only_defensible_verticals_are_prospected(self):
+        from answerrank.agents.scout import defensible_verticals
+        from answerrank.knowledge import plan_fit
+        for key in defensible_verticals(997):
+            self.assertNotEqual(plan_fit(key, 997)["verdict"], "weak", key)
+
+    def test_a_higher_price_narrows_the_field(self):
+        from answerrank.agents.scout import defensible_verticals
+        self.assertLessEqual(len(defensible_verticals(1997)),
+                             len(defensible_verticals(499)))
+
+    def test_never_returns_an_empty_list(self):
+        from answerrank.agents.scout import defensible_verticals
+        self.assertTrue(defensible_verticals(50_000))
+
+    def test_scout_and_outreach_now_agree(self):
+        """Discovery and qualification should not disagree about a vertical."""
+        from answerrank.agents.scout import defensible_verticals
+        from answerrank.qualify import score_fit
+        for key in defensible_verticals(997):
+            biz = Business(name="Test Co", city="Austin", state="TX", vertical=key,
+                           website="https://test.com", email="a@test.com")
+            fit = score_fit(biz, visibility_score=10.0, monthly_price=997)
+            self.assertTrue(fit.worth_pitching, f"{key} discovered but unpitchable")

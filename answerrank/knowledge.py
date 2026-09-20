@@ -241,8 +241,25 @@ GENERIC = Vertical(
 )
 
 
+#: Markets under exploration. Readable by the audit machinery so a candidate
+#: can be measured, but deliberately excluded from every decision function —
+#: a market we have not adopted must not influence pricing or targeting.
+PROVISIONAL: dict[str, "Vertical"] = {}
+
+
 def get(vertical: str) -> Vertical:
-    return VERTICALS.get(vertical, GENERIC)
+    """Adopted verticals first, then anything under exploration."""
+    return VERTICALS.get(vertical) or PROVISIONAL.get(vertical, GENERIC)
+
+
+def register_provisional(v: "Vertical") -> None:
+    """Make a candidate market auditable without adopting it."""
+    if v.key not in VERTICALS:
+        PROVISIONAL[v.key] = v
+
+
+def is_adopted(vertical: str) -> bool:
+    return vertical in VERTICALS
 
 
 # ---------------------------------------------------------------------------
@@ -371,3 +388,38 @@ def best_verticals(monthly_price: float) -> list[dict[str, object]]:
     order = {"strong": 0, "workable": 1, "weak": 2}
     return sorted(rows, key=lambda r: (order[str(r["verdict"])],
                                        -float(r["first_job_ratio"])))
+
+
+def from_candidate(candidate) -> Vertical:
+    """A provisional Vertical for a market we have not adopted yet.
+
+    The Explorer needs to run real audits in a candidate trade to find out
+    whether the visibility gap it assumes is actually there. That requires a
+    Vertical, and building one from the candidate's own figures keeps the
+    measurement honest — it tests the market as described, not an idealised
+    version of it.
+    """
+    label = candidate.label
+    return Vertical(
+        key=candidate.key,
+        label=label,
+        service=label.replace(" contractor", "").replace(" clinic", ""),
+        urgent_scenario=f"I need a {label} urgently",
+        jobs=[f"{label} work"],
+        economics=Economics(
+            avg_ticket=candidate.avg_ticket,
+            # Unknown until researched; a conservative multiple of ticket.
+            lifetime_value=candidate.avg_ticket * 2.5,
+            typical_cac=candidate.avg_ticket * 0.2,
+            # Volume scales inversely with ticket size: nobody needs a $4,500
+            # restoration job as often as a $400 pest treatment. Without this,
+            # high-ticket candidates generate revenue claims no owner believes.
+            monthly_queries=int(max(60, min(400, 240_000 / max(candidate.avg_ticket, 100)))),
+            booking_rate=max(0.004, min(0.025, 0.025 * candidate.urgency)),
+        ),
+        peak_months=[6],
+        objections=["We get enough work already"],
+        decision_maker="owner",
+        buyer_phrases=[f"{label} near me", f"best {label}", f"emergency {label}"],
+        spend_signals=["Google Ads presence", "branded vehicle"],
+    )

@@ -20,6 +20,7 @@ from pathlib import Path
 
 import requests
 
+from .. import knowledge
 from ..models import Business, Prospect
 from ..prompts import VERTICALS
 from .base import Agent
@@ -32,7 +33,22 @@ DEFAULT_MARKETS = [
     ("Kansas City", "MO"), ("Boise", "ID"), ("Greenville", "SC"), ("Tucson", "AZ"),
 ]
 
-DEFAULT_VERTICALS = ["hvac", "plumbing", "roofing", "dental", "legal"]
+#: Fallback if nothing is defensible at the configured price.
+FALLBACK_VERTICALS = ["hvac", "plumbing"]
+
+
+def defensible_verticals(monthly_price: float) -> list[str]:
+    """Only prospect trades the retainer can honestly be sold to.
+
+    The Strategist flagged this: the Scout was adding roofing prospects at a
+    price roofing cannot justify, so the Outreach agent then filtered them
+    out. That is API spend and pipeline noise generated for nothing. Selecting
+    at the point of discovery is cheaper than rejecting at the point of sale.
+    """
+    ranked = knowledge.best_verticals(monthly_price)
+    good = [str(r["vertical"]) for r in ranked
+            if r["verdict"] in {"strong", "workable"}]
+    return good or FALLBACK_VERTICALS
 
 
 class ScoutAgent(Agent):
@@ -45,6 +61,7 @@ class ScoutAgent(Agent):
         super().__init__(store, settings)
         self.target = target_per_run
         self.seed_file = seed_file or os.environ.get("ANSWERRANK_SEED_FILE", "")
+        self.verticals = defensible_verticals(settings.pricing.growth_monthly)
 
     # ---------------- sources ----------------
 
@@ -106,13 +123,14 @@ class ScoutAgent(Agent):
         stems = ["Apex", "Summit", "Ironclad", "BlueRidge", "Cornerstone", "Vanguard",
                  "Beacon", "Redwood", "Northgate", "Sterling", "Copperfield", "Harbor"]
         suffix = {"hvac": "Heating & Air", "plumbing": "Plumbing Co", "roofing": "Roofing",
-                  "dental": "Family Dental", "legal": "Law Group"}
+                  "dental": "Family Dental", "legal": "Law Group",
+                  "medical": "Medical Clinic", "insurance": "Insurance"}
         out = []
         existing = len(self.store.get_prospects(limit=10_000))
         for i in range(count):
             n = existing + i
-            vert = DEFAULT_VERTICALS[n % len(DEFAULT_VERTICALS)]
-            city, state = DEFAULT_MARKETS[(n // len(DEFAULT_VERTICALS)) % len(DEFAULT_MARKETS)]
+            vert = self.verticals[n % len(self.verticals)]
+            city, state = DEFAULT_MARKETS[(n // len(self.verticals)) % len(DEFAULT_MARKETS)]
             stem = stems[n % len(stems)]
             tag = hashlib.sha1(f"{stem}{vert}{city}{n}".encode()).hexdigest()[:4]
             name = f"{stem} {suffix.get(vert, 'Services')}"
@@ -130,7 +148,7 @@ class ScoutAgent(Agent):
         found: list[Business] = self.from_seed_file()
 
         if len(found) < self.target and self.settings.api_key("serper"):
-            for vertical in DEFAULT_VERTICALS:
+            for vertical in self.verticals:
                 if len(found) >= self.target:
                     break
                 for city, state in DEFAULT_MARKETS:
@@ -152,4 +170,5 @@ class ScoutAgent(Agent):
             self.store.upsert_prospect(Prospect(business=biz, stage="discovered"))
             added += 1
 
-        return added, f"added {added} new prospects, skipped {skipped} duplicates/ineligible"
+        return added, (f"added {added} new prospects across "
+                       f"{'/'.join(self.verticals)}, skipped {skipped}")
