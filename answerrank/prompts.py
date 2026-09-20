@@ -99,7 +99,9 @@ def build_prompts(vertical: str, city: str, state: str = "", limit: int = 10) ->
         (f"Recommend a trustworthy {label} near {where} with good reviews.", "trust"),
         (f"What are the top 5 {label}s in {where}?", "discovery"),
         (f"I need {service} in {where}. Which local companies should I compare?", "comparison"),
-        (f"Which {label} in {where} offers 24/7 emergency service?", "emergency"),
+        ((f"Which {label} in {where} offers 24/7 emergency service?", "emergency")
+         if v.has_emergencies else
+         (f"Which {label} in {where} has the best reviews?", "trust")),
         (f"Who has the best pricing for {service} in {where}?", "comparison"),
         (f"Is there a licensed and insured {label} in {where} you would recommend?", "trust"),
     ]
