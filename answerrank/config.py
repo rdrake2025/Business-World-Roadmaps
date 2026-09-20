@@ -66,6 +66,12 @@ class OutreachPolicy:
 
     max_emails_per_domain_per_day: int = 30
     max_emails_total_per_day: int = 120
+    #: Warm-up ramp for a brand new sending domain, as (day, cap) steps. A
+    #: domain with no sending history that opens at 120 a day is read as a
+    #: compromised account, and the reputation damage is not recoverable —
+    #: the domain is simply finished. Volume has to be earned over about a
+    #: month. Each tuple is "from this day of sending, this many per day".
+    warmup_steps: tuple = ((1, 10), (4, 20), (8, 40), (15, 70), (22, 100), (29, 0))
     min_seconds_between_sends: int = 90
     require_physical_address: bool = True
     require_unsubscribe: bool = True
@@ -76,6 +82,28 @@ class OutreachPolicy:
     complaint_rate_ceiling: float = 0.001
     suppress_after_days: int = 90
 
+    def warmup_cap(self, days_sending: int) -> int:
+        """The daily ceiling this far into the ramp. 0 days means day one.
+
+        Returns the full cap once the ramp is complete, so an established
+        domain is never throttled by a setting it has outgrown.
+        """
+        day = max(1, days_sending + 1)
+        cap = self.max_emails_total_per_day
+        for from_day, step_cap in self.warmup_steps:
+            if day >= from_day:
+                cap = step_cap or self.max_emails_total_per_day
+        return min(cap, self.max_emails_total_per_day)
+
+    def warmup_note(self, days_sending: int) -> str:
+        day = max(1, days_sending + 1)
+        cap = self.warmup_cap(days_sending)
+        if cap >= self.max_emails_total_per_day:
+            return f"Warm-up complete — full cap of {cap} a day."
+        remaining = next((d - day for d, _ in self.warmup_steps if d > day), 0)
+        return (f"Day {day} of warm-up: {cap} a day. "
+                + (f"Next step up in {remaining} day(s)." if remaining else ""))
+
 
 @dataclass
 class Settings:
@@ -85,6 +113,12 @@ class Settings:
     from_email: str = "hello@answerrank.io"
     physical_address: str = "SET_YOUR_REGISTERED_BUSINESS_ADDRESS"
     website: str = "https://answerrank.io"
+    #: Which mailbox provider the sending domain uses. Decides the SPF include
+    #: and the DKIM selector the readiness check looks for.
+    email_provider: str = ""
+    #: ISO date the domain started sending. Drives the warm-up ramp; empty
+    #: means the ramp has not started and the first send sets it.
+    warmup_start: str = ""
 
     # Which answer engines to probe. Unavailable ones are skipped gracefully.
     engines: list[str] = field(
@@ -153,7 +187,8 @@ def load_settings(path: str | Path | None = None) -> Settings:
             settings = _coerce(settings, yaml.safe_load(fh) or {})
 
     # Env overrides win over the file.
-    for key in ("brand", "from_email", "physical_address", "website", "database_path", "output_dir"):
+    for key in ("brand", "from_email", "physical_address", "website",
+                "database_path", "output_dir", "email_provider", "warmup_start"):
         env_val = os.environ.get(f"ANSWERRANK_{key.upper()}")
         if env_val:
             setattr(settings, key, env_val)

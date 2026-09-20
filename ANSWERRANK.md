@@ -289,7 +289,42 @@ and retention at the same time.
 | `clients` | Client health scores, worst first, with the one action for each |
 | `learn [--days N]` | What the recorded outcomes actually show |
 | `playbook TRADE` | How to sell one trade: positioning, objections, discovery |
+| `domain NAME --provider X` | Sending-domain setup: the exact DNS records, then whether they are live |
 | `web` | Serve the site and the phone console |
+
+## Turning the domain on
+
+```bash
+python3 run.py domain yourdomain.com --provider google
+```
+
+Prints the exact rows to paste into the registrar — MX, SPF, DKIM, DMARC —
+with what each one is for, then checks live DNS and tells you which are
+actually published. Run it again after adding them; it is idempotent and safe
+to run as many times as it takes.
+
+It refuses rather than warns. A domain that sends unauthenticated mail is not
+recoverable — you buy a new one — so nothing sends until every blocking row
+passes.
+
+Two things it is strict about, because both are silent failures:
+
+- **DKIM with an empty key is treated as missing.** `v=DKIM1; p=` means the
+  key is *revoked* under RFC 6376, and it is sometimes published on a wildcard
+  to say "we sign nothing here". Reporting that domain as authenticated while
+  it sends unsigned mail would be the worst thing this check could do.
+- **Lookups go over DNS-over-HTTPS**, not `dig`. `dig` does not ship with
+  Windows, so the previous check could never pass on the machine this is
+  actually run from — sending was blocked by a resolver that was never there.
+
+### Warm-up is enforced, not suggested
+
+A domain with no sending history that opens at 120 a day is read as a
+compromised account, and that reputation does not come back. The cap ramps
+over about a month — 10 a day, then 20, 40, 70, 100, then full — and the send
+path will not exceed it. Day one is stamped in the database on the first real
+send rather than set in the config, because a warm-up that can be reset by
+editing a file is a warm-up that gets reset the first time the cap feels slow.
 
 ## Safety rails
 

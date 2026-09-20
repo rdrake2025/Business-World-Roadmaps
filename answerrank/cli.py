@@ -885,6 +885,148 @@ def cmd_playbook(args, settings: Settings) -> int:
     return 0
 
 
+def _write_config_values(path: Path, values: dict[str, str]) -> list[str]:
+    """Update top-level keys in answerrank.yml, creating it if absent.
+
+    Deliberately line-based rather than a YAML round-trip: the config file is
+    meant to be read and edited by a human, and a serialiser would strip every
+    comment explaining what the values are for.
+    """
+    changed = []
+    if not path.exists():
+        path.write_text("# AnswerRank configuration\n", encoding="utf-8")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for key, value in values.items():
+        rendered = f'{key}: "{value}"'
+        for i, line in enumerate(lines):
+            if line.strip().startswith(f"{key}:") and not line.startswith(" "):
+                if line.strip() != rendered:
+                    lines[i] = rendered
+                    changed.append(key)
+                break
+        else:
+            lines.append(rendered)
+            changed.append(key)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return changed
+
+
+def cmd_domain(args, settings: Settings) -> int:
+    """Set up the sending domain: the records to add, then whether they are live.
+
+    This is the last step between a working system and one that can earn, and
+    the one most likely to be done wrong — the three records that matter are
+    invisible until mail is already in a spam folder.
+    """
+    from . import dns_setup
+
+    domain = args.domain.strip().lower().removeprefix("http://")
+    domain = domain.removeprefix("https://").split("/")[0].removeprefix("www.")
+    if "." not in domain:
+        print(f"{domain!r} does not look like a domain. Example: answerrank.io")
+        return 1
+
+    provider_key = (args.provider or settings.email_provider or "").lower()
+    provider = dns_setup.PROVIDERS.get(provider_key)
+    mailbox = args.mailbox or "hello"
+
+    # ---------------- write it down ----------------
+    if not args.check_only:
+        changed = _write_config_values(Path(args.config or "answerrank.yml"), {
+            "from_email": f"{mailbox}@{domain}",
+            "website": f"https://{domain}",
+            "email_provider": provider_key,
+        })
+        if changed:
+            print(f"Updated answerrank.yml: {', '.join(changed)}")
+
+    _hr(f"SENDING DOMAIN: {domain.upper()}")
+    if provider:
+        print(f"  Mailbox provider   {provider.label} ({provider.monthly_cost})")
+        print(f"  Send limit         {provider.daily_limit:,} a day on their side")
+    elif provider_key:
+        print(f"  Mailbox provider   {provider_key} (not one I have records for)")
+        print(_wrap(dns_setup.GENERIC_GUIDANCE))
+    else:
+        print("  Mailbox provider   not chosen yet")
+        print(_wrap("Pass --provider with one of: "
+                    + ", ".join(sorted(dns_setup.PROVIDERS)) + ". Without it I "
+                    "can still check what is published, but I cannot tell you "
+                    "the exact values to add."))
+
+    # ---------------- what to add ----------------
+    _hr("ADD THESE AT YOUR REGISTRAR")
+    print(_wrap("Wherever you bought the domain, find DNS settings. Add each "
+                "row below. The Host column is sometimes called Name; @ means "
+                "the domain itself."))
+    for record in dns_setup.records_for(domain, provider_key):
+        print(f"\n  {record.kind}")
+        print(f"    Host   {record.host}")
+        print(f"    Value  {record.value}")
+        if record.priority is not None:
+            print(f"    Priority {record.priority}")
+        print(_wrap(record.why, indent="    "))
+
+    if provider:
+        _hr("THE ONE RECORD NOBODY CAN GENERATE FOR YOU")
+        print(_wrap(f"DKIM. Get it here, then paste it as the TXT record above:"))
+        print(_wrap(provider.dkim_where, indent="    "))
+
+    # ---------------- is it live ----------------
+    _hr("CHECKING WHAT IS ACTUALLY PUBLISHED")
+    print("  (DNS changes take anywhere from a minute to an hour to appear)\n")
+    result = dns_setup.readiness(domain, provider_key)
+    for signal in result.signals:
+        mark = "\u2713" if signal.ok else ("\u2717" if signal.blocking else "!")
+        print(f"  {mark} {signal.name:<16} {signal.detail[:44]}")
+        if not signal.ok and signal.fix:
+            print(_wrap(signal.fix, indent="      "))
+
+    # ---------------- then what ----------------
+    if result.ready:
+        _hr("THE DOMAIN IS READY")
+        if provider:
+            print("  Set these so the system can send as you:\n")
+            print(f"    SMTP_HOST      {provider.smtp_host}")
+            print(f"    SMTP_PORT      {provider.smtp_port}")
+            print(f"    SMTP_USERNAME  {mailbox}@{domain}")
+            print(f"    SMTP_PASSWORD  an app password, not your login password")
+            print(_wrap(f"Get the app password here: {provider.app_password_where}",
+                        indent="    "))
+            print(f"\n    IMAP_HOST      {provider.imap_host}")
+            print(_wrap("Optional, and worth it: with IMAP set the Concierge "
+                        "polls for replies on its own instead of waiting for "
+                        "you to paste them in.", indent="    "))
+        pol = settings.outreach
+        _hr("WARM-UP — THIS IS NOT OPTIONAL")
+        print(_wrap(f"A domain with no sending history that opens at "
+                    f"{pol.max_emails_total_per_day} a day is read as a "
+                    f"compromised account, and that reputation does not come "
+                    f"back. The system ramps you automatically and will not "
+                    f"let you exceed it:"))
+        print()
+        for from_day, cap in pol.warmup_steps:
+            shown = cap or pol.max_emails_total_per_day
+            print(f"    from day {from_day:<3} {shown:>4} emails a day")
+        print()
+        print(_wrap("Day one starts on your first real send, recorded in the "
+                    "database rather than the config so it cannot be quietly "
+                    "reset when the cap feels slow."))
+        _hr("NEXT")
+        print("  python3 run.py doctor --probe     # everything else that gates sending")
+        print("  python3 run.py inbox              # read what the agents drafted")
+    else:
+        _hr("NOT READY YET")
+        print(_wrap("Add the records above, wait a few minutes, then run this "
+                    "again. Nothing will send until every blocking row passes "
+                    "\u2014 that refusal is the feature. A domain burned by "
+                    "sending unauthenticated mail cannot be recovered, and you "
+                    "would be buying a new one."))
+        print(f"\n  python3 run.py domain {domain}"
+              + (f" --provider {provider_key}" if provider_key else ""))
+    return 0 if result.ready else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="answerrank",
@@ -987,6 +1129,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--probe", action="store_true",
                    help="also probe the live unsubscribe endpoint over the network")
     s.set_defaults(func=cmd_doctor)
+
+    s = sub.add_parser("domain", help="set up the sending domain and check its DNS")
+    s.add_argument("domain", help="the domain you bought, e.g. answerrank.io")
+    s.add_argument("--provider", help="google | zoho | microsoft | fastmail")
+    s.add_argument("--mailbox", default="hello", help="the part before the @")
+    s.add_argument("--check-only", action="store_true",
+                   help="check DNS without writing to answerrank.yml")
+    s.set_defaults(func=cmd_domain)
 
     s = sub.add_parser("brief", help="full qualification brief for one prospect")
     s.add_argument("prospect", help="name fragment or id")

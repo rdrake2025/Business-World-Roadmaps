@@ -1779,3 +1779,119 @@ class TestQualificationBrief(unittest.TestCase):
         visible = Business(name="Ace", city="Austin", state="TX", vertical="hvac",
                            website="https://ace.com", email="o@ace.com")
         self.assertEqual(qualify.priority(visible, 90, 0, 997), 0.0)
+
+
+class TestSendingDomain(unittest.TestCase):
+    """The step between a working system and one that can earn."""
+
+    def test_an_empty_dkim_key_is_not_a_configured_one(self):
+        """A revoked key reported as healthy is the worst failure available.
+
+        `v=DKIM1; p=` with nothing after it means the key is revoked under
+        RFC 6376, and it is published deliberately — sometimes on a wildcard —
+        to say "we sign nothing here". Accepting it would tell the operator
+        their domain is authenticated while it sends unsigned mail.
+        """
+        from answerrank.dns_setup import dkim_key_is_real
+        self.assertFalse(dkim_key_is_real("v=DKIM1; p="))
+        self.assertFalse(dkim_key_is_real("v=DKIM1; k=rsa; p=tooshort"))
+        self.assertFalse(dkim_key_is_real("unrelated txt record"))
+        self.assertTrue(dkim_key_is_real("v=DKIM1; k=rsa; p=" + "A" * 200))
+
+    def test_records_cover_all_four_of_what_a_sender_needs(self):
+        from answerrank.dns_setup import PROVIDERS, records_for
+        for key in PROVIDERS:
+            rows = records_for("example.org", key)
+            kinds = [r.kind for r in rows]
+            hosts = [r.host for r in rows]
+            self.assertIn("MX", kinds, key)
+            self.assertIn("_dmarc", hosts, key)
+            self.assertTrue(any("_domainkey" in h for h in hosts), key)
+            self.assertTrue(any(r.value.startswith("v=spf1") for r in rows), key)
+
+    def test_every_record_explains_why_it_is_there(self):
+        from answerrank.dns_setup import records_for
+        for record in records_for("example.org", "google"):
+            self.assertTrue(record.why.strip())
+
+    def test_the_dmarc_policy_offered_is_never_p_none(self):
+        """p=none has not satisfied bulk-sender rules since 2026."""
+        from answerrank.dns_setup import PROVIDERS, records_for
+        for key in list(PROVIDERS) + [""]:
+            dmarc = next(r for r in records_for("example.org", key)
+                         if r.host == "_dmarc")
+            self.assertIn("p=quarantine", dmarc.value)
+
+    def test_an_unconfigured_domain_is_refused_not_warned(self):
+        from answerrank.dns_setup import readiness
+        result = readiness("yourdomain.com", "google")
+        self.assertFalse(result.ready)
+        self.assertTrue(result.blockers())
+
+    def test_every_provider_has_what_the_operator_needs_to_act(self):
+        from answerrank.dns_setup import PROVIDERS
+        for key, p in PROVIDERS.items():
+            self.assertTrue(p.dkim_where, key)
+            self.assertTrue(p.app_password_where, key)
+            self.assertTrue(p.smtp_host and p.imap_host, key)
+            self.assertTrue(p.spf_include.startswith("include:"), key)
+            self.assertTrue(p.dkim_selectors, key)
+
+
+class TestWarmup(unittest.TestCase):
+    """A new domain opening at full volume is read as a compromised account."""
+
+    def test_day_one_is_heavily_capped(self):
+        policy = Settings().outreach
+        self.assertLessEqual(policy.warmup_cap(0), 10)
+
+    def test_the_ramp_only_ever_increases(self):
+        policy = Settings().outreach
+        caps = [policy.warmup_cap(d) for d in range(0, 45)]
+        self.assertEqual(caps, sorted(caps))
+
+    def test_the_ramp_finishes_at_the_configured_cap(self):
+        policy = Settings().outreach
+        self.assertEqual(policy.warmup_cap(60), policy.max_emails_total_per_day)
+
+    def test_the_ramp_never_exceeds_the_configured_cap(self):
+        policy = Settings().outreach
+        policy.max_emails_total_per_day = 25
+        for day in range(0, 60):
+            self.assertLessEqual(policy.warmup_cap(day), 25)
+
+    def test_a_new_domain_cannot_send_its_whole_queue_on_day_one(self):
+        from answerrank.sending import send_batch
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            store = Store(tmp.name)
+            settings = Settings()
+            settings.physical_address = "PO Box 1, Austin TX 78701"
+            for i in range(40):
+                p = Prospect(business=Business(
+                    name=f"Co {i}", city="Austin", state="TX", vertical="hvac",
+                    website=f"https://c{i}.com", email=f"o{i}@c{i}.com"))
+                store.upsert_prospect(p)
+                store.save_message(OutreachMessage(
+                    prospect_id=p.id, subject="s", body="b", status="approved"))
+            result = send_batch(store, settings, limit=40, dry_run=True)
+            self.assertLessEqual(result["sent"], 10)
+            self.assertEqual(result["warmup_day"], 1)
+        finally:
+            os.unlink(tmp.name)
+
+    def test_the_ramp_clock_starts_on_the_first_real_send_not_the_config(self):
+        """A warm-up that can be reset by editing a file will be reset."""
+        from answerrank.sending import WARMUP_KEY, _days_warming
+        from datetime import date, timedelta
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            store = Store(tmp.name)
+            settings = Settings()
+            settings.warmup_start = (date.today() - timedelta(days=90)).isoformat()
+            store.kv_set(WARMUP_KEY, (date.today() - timedelta(days=5)).isoformat())
+            self.assertEqual(_days_warming(store, settings), 5)
+        finally:
+            os.unlink(tmp.name)

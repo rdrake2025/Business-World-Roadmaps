@@ -20,6 +20,37 @@ from .mailer import Mailer
 from .models import now_iso
 
 
+#: Where the ramp's start date lives once the first real send has happened.
+WARMUP_KEY = "sending.warmup_start"
+
+
+def _days_warming(store, settings) -> int:
+    """Days since this domain first sent anything.
+
+    The date is recorded in the database on the first real send rather than
+    configured by hand, because a warm-up that can be reset by editing a file
+    is a warm-up that will be reset the first time the cap feels slow.
+    """
+    from datetime import date
+
+    stamp = store.kv_get(WARMUP_KEY) or getattr(settings, "warmup_start", "") or ""
+    if not stamp:
+        return 0
+    try:
+        started = date.fromisoformat(stamp[:10])
+    except ValueError:
+        return 0
+    return max(0, (date.today() - started).days)
+
+
+def _begin_warmup(store) -> None:
+    """Stamp day one, once, on the first message that actually goes out."""
+    from datetime import date
+
+    if not store.kv_get(WARMUP_KEY):
+        store.kv_set(WARMUP_KEY, date.today().isoformat())
+
+
 def send_batch(store, settings, limit: int = 25, dry_run: bool = False,
                throttle_seconds: float | None = None,
                extra_checks: list[str] | None = None,
@@ -42,12 +73,15 @@ def send_batch(store, settings, limit: int = 25, dry_run: bool = False,
                 "errors": [], "dry_run": dry_run}
 
     pol = settings.outreach
-    remaining = pol.max_emails_total_per_day - store.sends_today()
+    days_sending = _days_warming(store, settings)
+    cap = pol.warmup_cap(days_sending)
+    remaining = cap - store.sends_today()
     if remaining <= 0:
+        note = pol.warmup_note(days_sending)
         return {"sent": 0, "failed": 0, "blocked": True,
-                "reasons": [f"Daily cap reached ({pol.max_emails_total_per_day}). "
-                            f"Try tomorrow."],
-                "errors": [], "dry_run": dry_run}
+                "reasons": [f"Today's cap of {cap} is used up. {note}"],
+                "errors": [], "dry_run": dry_run,
+                "warmup_day": days_sending + 1, "daily_cap": cap}
 
     approved = store.get_messages("approved", min(limit, remaining))
     if not approved:
@@ -94,6 +128,7 @@ def send_batch(store, settings, limit: int = 25, dry_run: bool = False,
                 vertical=prospect.business.vertical, step=m.sequence_step,
                 kind="sent", note=m.subject[:120])
             sent += 1
+            _begin_warmup(store)
             say(f"  sent to {email}")
         else:
             bounced = "bounce" in detail.lower()
@@ -114,5 +149,6 @@ def send_batch(store, settings, limit: int = 25, dry_run: bool = False,
 
     return {"sent": sent, "failed": failed, "skipped": skipped, "blocked": False,
             "reasons": [], "errors": errors[:5], "dry_run": dry_run,
-            "sends_today": store.sends_today(),
-            "daily_cap": pol.max_emails_total_per_day}
+            "sends_today": store.sends_today(), "daily_cap": cap,
+            "warmup_day": days_sending + 1,
+            "warmup_note": pol.warmup_note(days_sending)}

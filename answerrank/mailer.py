@@ -6,11 +6,12 @@ RFC 8058, spam complaints under 0.3% and bounces under 2%. Non-compliant
 senders see 22-34% of mail filtered or rejected outright; compliant senders
 average around 89% inbox placement.
 
-SPF/DKIM/DMARC are DNS-level and must be configured on the sending domain —
-this module cannot do that for you, and :func:`check_dns_readiness` will tell
-you plainly whether it is done. What this module *does* guarantee is the
-per-message half: the unsubscribe headers, the rate limits, and a hard stop
-when bounce or complaint rates drift toward the enforcement thresholds.
+SPF/DKIM/DMARC are DNS-level and must be configured on the sending domain.
+:mod:`answerrank.dns_setup` prints the exact records and verifies them live;
+:func:`check_dns_readiness` is the gate that refuses to send until it is
+done. What this module guarantees is the per-message half: the unsubscribe
+headers, the rate limits, and a hard stop when bounce or complaint rates
+drift toward the enforcement thresholds.
 """
 
 from __future__ import annotations
@@ -69,32 +70,17 @@ def build_message(to_email: str, subject: str, body: str, settings) -> EmailMess
     return msg
 
 
-def check_dns_readiness(domain: str) -> list[str]:
-    """Best-effort check of SPF/DMARC. Returns blocking problems."""
-    problems: list[str] = []
-    try:
-        import subprocess
+def check_dns_readiness(domain: str, provider: str = "") -> list[str]:
+    """Blocking DNS problems, or an empty list when the domain is ready.
 
-        def txt(name: str) -> str:
-            out = subprocess.run(
-                ["dig", "+short", "TXT", name], capture_output=True, text=True, timeout=10
-            )
-            return out.stdout or ""
+    Delegates to :mod:`answerrank.dns_setup`. It used to shell out to ``dig``,
+    which does not exist on Windows — so on the machine this system is
+    actually run from, the check could never pass and sending was blocked
+    permanently by a resolver that was never there.
+    """
+    from .dns_setup import readiness
 
-        spf = txt(domain)
-        if "v=spf1" not in spf:
-            problems.append(f"No SPF record found on {domain}. Add one before sending.")
-
-        dmarc = txt(f"_dmarc.{domain}")
-        if "v=DMARC1" not in dmarc:
-            problems.append(f"No DMARC record on _dmarc.{domain}. Required for bulk sending.")
-        elif "p=none" in dmarc.replace(" ", ""):
-            problems.append(
-                f"DMARC on {domain} is p=none. Bulk senders need p=quarantine or p=reject."
-            )
-    except (OSError, subprocess.SubprocessError) as exc:  # noqa: F821
-        problems.append(f"Could not verify DNS ({exc}); verify SPF/DKIM/DMARC manually.")
-    return problems
+    return readiness(domain, provider).blockers()
 
 
 class Mailer:
