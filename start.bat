@@ -17,6 +17,24 @@ echo    ANSWERRANK
 echo  ================================================================
 echo.
 
+REM ---------------------------------------------------------------- update
+REM  Requiring a manual `git pull` after every change put a terminal between
+REM  the operator and their own business. Update here instead, quietly, and
+REM  never block startup on it: an offline laptop must still run.
+git rev-parse --is-inside-work-tree >nul 2>&1
+if !errorlevel! equ 0 (
+    echo  [0/5] Checking for updates...
+    git stash push --quiet --include-untracked -m "start.bat autostash" >nul 2>&1
+    set "STASHED=!errorlevel!"
+    git pull --quiet --ff-only >nul 2>&1
+    if !errorlevel! equ 0 (
+        echo        Up to date
+    ) else (
+        echo        Could not update - continuing with what you have
+    )
+    if "!STASHED!"=="0" git stash pop --quiet >nul 2>&1
+)
+
 REM ---------------------------------------------------------------- python
 echo  [1/5] Looking for Python...
 
@@ -126,6 +144,9 @@ echo.
 echo  ================================================================
 echo    STARTING - leave this window open
 echo  ================================================================
+echo.
+echo    CONSOLE  http://localhost:8000/app     (approve, send, money)
+echo    OPS      http://localhost:8000/ops     (live agent panel)
 echo.
 echo    The link for your phone is printed below.
 echo    Close this window (or press Ctrl+C) to stop.

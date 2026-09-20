@@ -19,6 +19,23 @@ ok()   { printf '  %s✓%s %s\n' "$GRN" "$OFF" "$1"; }
 warn() { printf '  %s!%s %s\n' "$YEL" "$OFF" "$1"; }
 die()  { printf '\n  %s✗ %s%s\n\n' "$RED" "$1" "$OFF"; exit 1; }
 
+# ---------------------------------------------------------------- update
+# Pull quietly so a change never needs a terminal, and never block startup:
+# an offline laptop must still run.
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    step "Checking for updates"
+    stashed=1
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        git stash push --quiet --include-untracked -m "start.sh autostash" && stashed=0
+    fi
+    if git pull --quiet --ff-only >/dev/null 2>&1; then
+        ok "up to date"
+    else
+        warn "could not update — continuing with what you have"
+    fi
+    [ "$stashed" -eq 0 ] && git stash pop --quiet >/dev/null 2>&1
+fi
+
 # ---------------------------------------------------------------- python
 step "Checking Python"
 PY=""
@@ -98,6 +115,8 @@ cat <<BANNER
     python run.py dashboard
     python run.py budget
     python run.py forecast
+
+  ${BOLD}Console:${OFF} http://localhost:8000/app   ${BOLD}Ops panel:${OFF} http://localhost:8000/ops
 
   ${BOLD}On your phone:${OFF} same Wi-Fi as this laptop, open the link below,
   then add it to your home screen — it runs like an app.
