@@ -2067,3 +2067,160 @@ class TestOneVerticalLibrary(unittest.TestCase):
 def knowledge_verticals():
     from answerrank import knowledge
     return list(knowledge.VERTICALS)
+
+
+class TestCrawlerAccess(unittest.TestCase):
+    """Upstream of every other measurement: can the engines read the site?"""
+
+    def _blocks(self, robots: str, token: str) -> bool:
+        from answerrank.crawlers import _blocks, _groups
+        return _blocks(_groups(robots), token)
+
+    def test_robots_parsing(self):
+        cases = [
+            ("User-agent: *\nDisallow: /\n", "GPTBot", True),
+            ("User-agent: *\nDisallow:\n", "GPTBot", False),
+            ("User-agent: GPTBot\nDisallow: /\n", "GPTBot", True),
+            ("User-agent: GPTBot\nDisallow: /\n", "PerplexityBot", False),
+            ("User-agent: gptbot\nDisallow: /\n", "GPTBot", True),
+            ("User-agent: *\nDisallow: /admin\n", "GPTBot", False),
+            ("# note\nUser-agent: *\nDisallow: / # all\n", "GPTBot", True),
+            ("", "GPTBot", False),
+        ]
+        for robots, token, expected in cases:
+            self.assertEqual(self._blocks(robots, token), expected,
+                             f"{token} against {robots!r}")
+
+    def test_a_rule_naming_the_agent_beats_the_wildcard(self):
+        """Every major crawler implements this, so we must too — otherwise we
+        tell an owner they are blocked when they are explicitly allowed."""
+        robots = "User-agent: *\nDisallow: /\n\nUser-agent: GPTBot\nAllow: /\n"
+        self.assertFalse(self._blocks(robots, "GPTBot"))
+        self.assertTrue(self._blocks(robots, "PerplexityBot"))
+
+    def test_a_training_block_is_not_reported_as_lost_visibility(self):
+        """Blocking GPTBot does not remove a site from ChatGPT search, and
+        claiming otherwise would be disproven the moment the owner checked."""
+        from answerrank.crawlers import CRAWLERS, Access
+        access = Access(domain="apex.com", robots_found=True)
+        training_only = {"GPTBot", "ClaudeBot", "Google-Extended", "CCBot"}
+        for c in CRAWLERS:
+            (access.blocked if c.token in training_only
+             else access.allowed).append(c)
+        self.assertTrue(access.ok)
+        self.assertIn("not the answers customers see", access.headline())
+
+    def test_a_search_block_is_reported(self):
+        from answerrank.crawlers import CRAWLERS, Access
+        access = Access(domain="apex.com", robots_found=True)
+        for c in CRAWLERS:
+            (access.blocked if c.token == "PerplexityBot"
+             else access.allowed).append(c)
+        self.assertFalse(access.ok)
+        self.assertIn("robots.txt", access.headline())
+        self.assertIn("PerplexityBot", access.fix())
+
+    def test_an_unreadable_robots_file_is_never_reported_as_all_clear(self):
+        """A 403 is not a 404. Saying "nothing to fix" when the truth is
+        unknown is the one direction this check must not be wrong in."""
+        from answerrank.crawlers import Access
+        access = Access(domain="apex.com", error="robots.txt returned HTTP 403")
+        self.assertFalse(access.ok)
+        self.assertIn("unknown", access.headline())
+        self.assertNotIn("Nothing to fix", access.headline())
+
+    def test_a_genuinely_absent_robots_file_is_all_clear(self):
+        from answerrank.crawlers import Access
+        access = Access(domain="apex.com", robots_found=False)
+        self.assertTrue(access.ok)
+        self.assertIn("Nothing to fix", access.headline())
+
+    def test_every_crawler_says_what_a_block_costs(self):
+        from answerrank.crawlers import CRAWLERS
+        for c in CRAWLERS:
+            self.assertTrue(c.token and c.operator and c.surface, c.token)
+
+    def test_no_website_is_handled(self):
+        from answerrank.crawlers import check_access
+        self.assertFalse(check_access("").ok)
+
+
+class TestBlockedSiteOutreach(unittest.TestCase):
+    def _blocked_prospect(self):
+        note = ("apexhvac.com blocks OAI-SearchBot in its own robots.txt. That "
+                "removes it from ChatGPT search results. | Apex appears in 1 of 10.")
+        return Prospect(business=Business(
+            name="Apex Heating & Air", city="Austin", state="TX", vertical="hvac",
+            website="https://apexhvac.com", email="o@apexhvac.com"),
+            score=12, notes=note)
+
+    def test_the_opener_makes_the_argument_the_finding_supports(self):
+        """Not "you are losing a competition" but "you withdrew from it"."""
+        from answerrank.agents.outreach import first_touch
+        subject, body = first_touch(self._blocked_prospect(), Settings())
+        self.assertIn("blocks AI search", subject)
+        self.assertIn("robots.txt", body)
+
+    def test_the_blocked_opener_invites_them_to_check_it_themselves(self):
+        from answerrank.agents.outreach import first_touch
+        _subject, body = first_touch(self._blocked_prospect(), Settings())
+        self.assertIn("/robots.txt", body)
+
+    def test_the_blocked_opener_still_passes_the_playbook(self):
+        from answerrank.agents.outreach import first_touch
+        from answerrank.playbook import sequence_check
+        subject, body = first_touch(self._blocked_prospect(), Settings())
+        self.assertFalse(sequence_check(1, body))
+        self.assertLessEqual(len(subject), 60)
+
+    def test_an_unblocked_prospect_gets_the_normal_opener(self):
+        from answerrank.agents.outreach import first_touch
+        prospect = Prospect(business=Business(
+            name="Apex", city="Austin", state="TX", vertical="hvac",
+            website="https://apex.com", email="o@apex.com"),
+            score=12, notes="Apex appears in 1 of 10 AI answers.")
+        subject, body = first_touch(prospect, Settings())
+        self.assertNotIn("blocks AI search", subject)
+        self.assertNotIn("robots.txt", body)
+
+
+class TestSchemaTypes(unittest.TestCase):
+    """The one signal that tells an engine what the business actually is."""
+
+    def test_no_trade_falls_back_to_the_generic_type(self):
+        """This lived as a table inside the Fixer covering 7 of 22 trades,
+        so fifteen published a generic LocalBusiness."""
+        import json
+        from answerrank import knowledge
+        from answerrank.agents.fixer import localbusiness_schema
+        for key in knowledge.VERTICALS:
+            biz = Business(name="T", city="Austin", state="TX", vertical=key,
+                           website="https://t.com")
+            found = json.loads(localbusiness_schema(biz))["@type"]
+            self.assertNotEqual(found, "LocalBusiness", key)
+
+    def test_every_type_is_one_we_know_exists(self):
+        """A subtly wrong type is worse than a generic one: the engine drops
+        the whole block rather than reading past it."""
+        from answerrank import knowledge
+        for key, v in knowledge.VERTICALS.items():
+            self.assertIn(v.schema_type, knowledge.KNOWN_SCHEMA_TYPES, key)
+
+    def test_the_schema_type_comes_from_the_trade(self):
+        import json
+        from answerrank import knowledge
+        from answerrank.agents.fixer import localbusiness_schema
+        for key in ("auto_repair", "veterinary", "moving", "med_spa"):
+            biz = Business(name="T", city="Austin", state="TX", vertical=key,
+                           website="https://t.com")
+            self.assertEqual(json.loads(localbusiness_schema(biz))["@type"],
+                             knowledge.get(key).schema_type)
+
+    def test_an_unknown_trade_still_produces_valid_markup(self):
+        import json
+        from answerrank.agents.fixer import localbusiness_schema
+        biz = Business(name="T", city="Austin", state="TX",
+                       vertical="underwater_basket_weaving", website="https://t.com")
+        doc = json.loads(localbusiness_schema(biz))
+        self.assertEqual(doc["@context"], "https://schema.org")
+        self.assertTrue(doc["@type"])

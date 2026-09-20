@@ -150,6 +150,10 @@ class Audit:
     competitors: dict[str, int] = field(default_factory=dict)  # name -> mentions
     engine_breakdown: dict[str, float] = field(default_factory=dict)
     findings: list[str] = field(default_factory=list)
+    #: What the site's own robots.txt allows. Empty when not checked. This is
+    #: upstream of every other measurement: a business the engines are told to
+    #: leave cannot be named however good its content is.
+    crawler_access: dict[str, Any] = field(default_factory=dict)
     is_free_teaser: bool = False
     created_at: str = field(default_factory=now_iso)
     id: str = field(default_factory=lambda: new_id("aud"))

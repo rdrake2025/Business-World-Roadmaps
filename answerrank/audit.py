@@ -16,6 +16,7 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 
+from . import crawlers
 from .config import Settings
 from .engines.base import AnswerEngine
 from .engines.live import build_engines
@@ -30,8 +31,13 @@ DEPTHS = {"teaser": 4, "full": 10, "deep": 16}
 
 def run_audit(business: Business, settings: Settings, depth: str = "full",
               engines: list[AnswerEngine] | None = None,
-              max_workers: int = 6) -> Audit:
-    """Probe every (prompt x engine) pair and score the result."""
+              max_workers: int = 6, check_crawlers: bool = False) -> Audit:
+    """Probe every (prompt x engine) pair and score the result.
+
+    ``check_crawlers`` additionally reads the site's robots.txt. It is off by
+    default so this function stays a pure measurement of the engines; the
+    Auditor agent turns it on, which is where the other budget decisions live.
+    """
     limit = DEPTHS.get(depth, DEPTHS["full"])
     engine_names = settings.available_engines()
     engines = engines or build_engines(
@@ -81,7 +87,26 @@ def run_audit(business: Business, settings: Settings, depth: str = "full",
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
         audit.results = list(pool.map(probe, jobs))
 
-    return score_audit(audit)
+    audit = score_audit(audit)
+
+    if check_crawlers and business.website:
+        access = crawlers.check_access(business.website, settings.request_timeout)
+        audit.crawler_access = {
+            "ok": access.ok,
+            "robots_found": access.robots_found,
+            "blocked": [c.token for c in access.blocked],
+            "critical": [c.token for c in access.critical_blocks],
+            "headline": access.headline(),
+            "fix": access.fix(),
+        }
+        # Goes first when it bites. Everything else in the audit measures how
+        # well the business competes for a place in the answer; this one says
+        # it removed itself from the running, which explains the rest of the
+        # page and is the cheapest thing on it to fix.
+        if access.critical_blocks:
+            audit.findings.insert(0, access.headline())
+
+    return audit
 
 
 def estimate_cost(depth: str, engine_count: int) -> float:

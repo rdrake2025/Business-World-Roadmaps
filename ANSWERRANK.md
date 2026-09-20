@@ -293,6 +293,39 @@ and retention at the same time.
 | `domain NAME --provider X` | Sending-domain setup: the exact DNS records, then whether they are live |
 | `web` | Serve the site and the phone console |
 
+## The finding that sells itself
+
+Before anything else, the Auditor reads the prospect's own `robots.txt`. A
+site that blocks the answer engines cannot be named in their answers however
+good its content is, and it happens constantly — a plugin or a previous
+agency pastes in a "block AI scrapers" rule, not knowing the same line
+removes the business from the answers its customers are reading.
+
+That finding leads the outreach when present, because it is a stronger and
+more checkable claim than a low score:
+
+> apexhvac.com blocks OAI-SearchBot, PerplexityBot in its own robots.txt.
+> That removes it from ChatGPT search results; Perplexity answers and
+> citations — not because of competition, but because the site asks them to
+> leave.
+
+The owner can verify it in ten seconds, and the fix is one line and free.
+Giving it away is the point: it earns the paid conversation.
+
+The distinctions here are encoded rather than assumed, because getting one
+wrong would be disproven immediately and cost the account:
+
+- Blocking `Google-Extended` does **not** remove a site from AI Overviews.
+  That surface is served from the normal Googlebot index.
+- Blocking `GPTBot` does **not** remove a site from ChatGPT search.
+  `OAI-SearchBot` builds that index; GPTBot is the training crawler.
+- A training-only block is reported as *not costing visibility*, in as many
+  words.
+
+A `robots.txt` that returns 403 is reported as unknown, never as all-clear.
+A refusal is not an absence, and false reassurance is the one direction this
+check must not be wrong in.
+
 ## Getting a real prospect you can actually write to
 
 Local search results give a name, a website and a phone number. They never
