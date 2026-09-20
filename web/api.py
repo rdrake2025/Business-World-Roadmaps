@@ -393,25 +393,37 @@ class Api:
         savings = getattr(personal, "savings", 0.0)
 
         target = self.settings.profit_target_monthly
-        reached = [m for m in milestones(getattr(personal, "job_take_home", 0.0))
-                   if profit >= m["profit"]]
-        upcoming = [m for m in milestones(getattr(personal, "job_take_home", 0.0))
-                    if profit < m["profit"]]
+
+        # Two different true answers, and showing only one of them is why the
+        # panel read as broken: five clients at $5,985 MRR sat beside a headline
+        # of -$138 and "0% of target".
+        #
+        #   booked   — what actually hit the ledger in the last 30 days. Honest,
+        #              and lags badly: a client signed yesterday shows nothing.
+        #   run rate — what the current client base earns in a month once
+        #              billed. This is what "am I at $5,000/month?" actually
+        #              asks, so it drives the meter — labelled as a run rate,
+        #              never presented as money already received.
+        delivery = self.settings.pricing.delivery_cost_monthly * clients
+        run_rate = mrr - delivery - burn
+        gauge = milestones(getattr(personal, "job_take_home", 0.0))
+        upcoming = [m for m in gauge if run_rate < m["profit"]]
 
         return {
             "mrr": round(mrr, 2),
             "clients": clients,
             "profit_30d": round(profit, 2),
+            "run_rate_profit": round(run_rate, 2),
             "revenue_30d": round(pnl.get("revenue", 0.0), 2),
             "costs_30d": round(pnl.get("costs", 0.0), 2),
             "target": target,
-            "pct_to_target": round(min(100.0, max(0.0, profit / target * 100)), 1),
+            "pct_to_target": round(min(100.0, max(0.0, run_rate / target * 100)), 1),
             "monthly_burn": round(burn, 2),
             "runway_months": round(runway_months(savings, burn, disposable), 1),
             "split": reinvestment_split(profit),
             "quit": quit_threshold(getattr(personal, "job_take_home", 0.0)),
             "next_milestone": upcoming[0] if upcoming else None,
-            "milestones_hit": len(reached),
+            "milestones_hit": len(gauge) - len(upcoming),
             "cost_breakdown": self.store.cost_breakdown(30),
         }
 

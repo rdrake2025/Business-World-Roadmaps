@@ -118,8 +118,14 @@
        border-bottom:1px solid var(--rule); }
   .r:last-child { border-bottom:0; }
   .r .grow { flex:1; min-width:0; }
-  .r .nm { font-weight:620; font-size:13.5px; }
-  .r .sub { font-size:12px; color:var(--ink-2); margin-top:2px; }
+  /* The Scout writes summaries like "hvac/plumbing/veterinary/..." with no
+     spaces. Without a break rule that single token is unbreakable and pushes
+     the whole page into a horizontal scroll. */
+  .r .nm { font-weight:620; font-size:13.5px; overflow-wrap:anywhere; }
+  .r .sub { font-size:12px; color:var(--ink-2); margin-top:2px;
+            overflow-wrap:anywhere; }
+  .card { overflow:hidden; }
+  main { overflow-x:hidden; }
   .r.tap { cursor:pointer; }
   .r.tap:hover { background:var(--sunk); margin:0 -20px; padding-left:20px; padding-right:20px; }
 
@@ -221,7 +227,7 @@
         <div>
           <div class="figure mono" id="mProfit">–</div>
           <div class="cap" style="font-size:12.5px;color:var(--muted);margin-top:4px">
-            profit, last 30 days
+            monthly profit at the current run rate
           </div>
         </div>
       </div>
@@ -238,6 +244,8 @@
           <div class="n">months funded</div></div>
         <div class="tile"><div class="k">Burn</div><div class="v mono" id="mBurn">–</div>
           <div class="n">fixed, monthly</div></div>
+        <div class="tile"><div class="k">Banked</div><div class="v mono" id="mBooked">–</div>
+          <div class="n">actually billed, 30d</div></div>
       </div>
       <div id="milestone" style="margin-top:16px"></div>
     </div>
@@ -346,6 +354,10 @@
       '<div class="track"><div class="fill" style="width:' + pct.toFixed(1) + '%"></div></div>' +
       '<div class="val mono">' + esc(display) + '</div></div>';
   }
+  function clip(text, n){
+    text = String(text || "");
+    return text.length > n ? text.slice(0, n - 1).trimEnd() + "…" : text;
+  }
   function ago(seconds){
     if(seconds === null || seconds === undefined) return "never";
     if(seconds < 90) return "just now";
@@ -383,7 +395,7 @@
 
   function loadMoney(){
     return api("/api/money").then(function(d){
-      $("mProfit").textContent = money(d.profit_30d);
+      $("mProfit").textContent = money(d.run_rate_profit);
       $("mBar").style.width = d.pct_to_target + "%";
       $("mBar").style.background = d.pct_to_target >= 100 ? "var(--good)" : "var(--series-1)";
       $("mNote").textContent = d.pct_to_target.toFixed(0) + "% of the " +
@@ -394,11 +406,13 @@
       $("mRunway").textContent = (d.runway_months === null ||
                                   d.runway_months >= 900) ? "∞" : d.runway_months;
       $("mBurn").textContent = money(d.monthly_burn);
+      $("mBooked").textContent = money(d.profit_30d);
       var m = d.next_milestone;
       $("milestone").innerHTML = m
-        ? '<div class="note lead"><b>Next milestone:</b> ' + esc(m.label || "") +
-          (m.profit ? ' — at ' + money(m.profit) + '/mo profit' : '') + '</div>'
-        : '';
+        ? '<div class="note lead"><b>Next milestone</b> — ' +
+          money(m.profit) + '/mo profit, about ' + m.clients + ' client' +
+          (m.clients === 1 ? "" : "s") + '.<br>' + esc(m.meaning || "") + '</div>'
+        : '<div class="note"><b>Every milestone reached.</b></div>';
     }).catch(function(){});
   }
 
@@ -501,7 +515,8 @@
         var band = a.status === "error" ? "fail" : (a.status === "ok" ? "ok" : "idle");
         return '<div class="r"><div style="min-width:104px">' + status(band) + '</div>' +
           '<div class="grow"><div class="nm">' + esc(a.name) + '</div>' +
-          '<div class="sub">' + esc(a.summary || a.role || "") + '</div></div>' +
+          '<div class="sub">' + esc(clip(a.summary || a.role || "", 150)) +
+          '</div></div>' +
           '<div class="sub mono" style="white-space:nowrap;min-width:92px;text-align:right">' +
           ago(a.seconds_since) + '</div>' +
           '<div class="sub mono" style="white-space:nowrap;min-width:80px;text-align:right">' +
