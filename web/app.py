@@ -308,6 +308,10 @@ class Application:
             str(d.get("category", "")), d.get("amount", 0),
             str(d.get("description", "")), bool(d.get("revenue"))))
 
+    def api_research(self, environ, start):
+        refresh = _query(environ).get("refresh") in {"1", "true", "yes"}
+        return self._json(start, self.api.research(refresh))
+
     def api_markets(self, environ, start):
         return self._json(start, self.api.markets())
 
@@ -408,6 +412,7 @@ class Application:
             "/api/win": self.api_win,
             "/api/expense": self.api_expense,
             "/api/markets": self.api_markets,
+            "/api/research": self.api_research,
         }
 
     def __call__(self, environ, start_response) -> Iterable[bytes]:

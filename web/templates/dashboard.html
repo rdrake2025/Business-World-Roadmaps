@@ -304,6 +304,18 @@
   </div>
 </section>
 
+<!-- ============ RESEARCH ============ -->
+<section>
+  <h2>What the researchers found <span id="resCount"
+      style="text-transform:none;letter-spacing:0;font-weight:400"></span></h2>
+  <div class="card wide">
+    <div id="researchRows"><div class="empty">Loading…</div></div>
+    <div class="acts">
+      <button class="act" id="btnResearch">Re-run the researchers</button>
+    </div>
+  </div>
+</section>
+
 <!-- ============ AGENTS ============ -->
 <section>
   <h2>The fleet</h2>
@@ -508,6 +520,38 @@
     }).catch(function(){});
   }
 
+  function loadResearch(){
+    return api("/api/research").then(function(d){
+      $("resCount").textContent = "— one per agent, " + d.researchers.length +
+        " of them" + (d.blocking ? " · " + d.blocking + " blocking" : "");
+      if(!d.findings.length){
+        $("researchRows").innerHTML = '<div class="note">' +
+          '<b>Nothing the evidence supports saying.</b> That is the common and ' +
+          'correct answer — a researcher that invented a finding every cycle ' +
+          'would be one more thing you stop reading.</div>';
+        return;
+      }
+      $("researchRows").innerHTML = d.findings.map(function(f){
+        var band = f.severity === "blocking" ? "act"
+                 : (f.severity === "improve" ? "warn" : "idle");
+        var word = f.severity === "blocking" ? "Blocking"
+                 : (f.severity === "improve" ? "Improve" : "Note");
+        return '<div class="r" style="align-items:flex-start">' +
+          '<div style="min-width:96px;padding-top:2px">' +
+            '<span class="st ' + band + '"><span class="dot"></span>' +
+            esc(word) + '</span></div>' +
+          '<div class="grow">' +
+            '<div class="nm">' + esc(f.subject) + ' — ' + esc(f.claim) + '</div>' +
+            '<div class="sub">' + esc(f.evidence) + '</div>' +
+            '<div class="sub" style="margin-top:5px;color:var(--ink)">→ ' +
+              esc(f.proposal) + '</div>' +
+          '</div>' +
+          '<div class="sub mono" style="min-width:82px;text-align:right">' +
+            esc(f.confidence) + '</div></div>';
+      }).join("");
+    }).catch(function(){});
+  }
+
   function loadAgents(){
     return api("/api/telemetry").then(function(d){
       var list = d.agents || [];
@@ -529,7 +573,8 @@
     var btn = $("btnRefresh");
     if(!quiet) btn.classList.add("spin");
     return Promise.all([loadHealth(), loadMoney(), loadForecast(), loadPipeline(),
-                        loadClients(), loadBrain(), loadMarkets(), loadAgents()])
+                        loadClients(), loadBrain(), loadMarkets(),
+                        loadResearch(), loadAgents()])
       .then(function(){ btn.classList.remove("spin"); })
       .catch(function(){ btn.classList.remove("spin"); });
   }
@@ -597,6 +642,18 @@
 
   // ---------------------------------------------------------------- events
   $("btnRefresh").addEventListener("click", function(){ loadAll(); });
+
+  $("btnResearch").addEventListener("click", function(){
+    if(busy) return;
+    busy = true;
+    var b = this; b.disabled = true; b.textContent = "Investigating…";
+    api("/api/research?refresh=1").then(function(){
+      return loadResearch();
+    }).catch(function(){ toast("Could not run the researchers"); })
+      .then(function(){
+        busy = false; b.disabled = false; b.textContent = "Re-run the researchers";
+      });
+  });
   $("scrim").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", function(e){ if(e.key === "Escape") closeDrawer(); });
 

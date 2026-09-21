@@ -1027,6 +1027,44 @@ def cmd_domain(args, settings: Settings) -> int:
     return 0 if result.ready else 1
 
 
+def cmd_research(args, settings: Settings) -> int:
+    """What each agent's researcher found about that agent's own work."""
+    from . import research
+    from .agents.researcher import ResearcherAgent
+
+    store = _store(settings)
+    agent = ResearcherAgent(store, settings)
+
+    if args.refresh:
+        agent.execute()
+    findings = store.research_findings(args.subject or "")
+
+    if args.subject:
+        _hr(f"RESEARCH ON {args.subject.upper()}")
+    else:
+        _hr(f"{len(research.RESEARCHERS)} RESEARCHERS, ONE PER AGENT")
+        print(f"  {'Agent':<13}Question")
+        for cls in research.RESEARCHERS:
+            print(f"  {cls.subject:<13}{cls.question}")
+        _hr("WHAT THEY FOUND")
+
+    if not findings:
+        print(_wrap("Nothing the evidence supports saying. That is the common "
+                    "and correct answer \u2014 a researcher that invented a finding "
+                    "every cycle would be one more thing you stop reading."))
+        print("\n  Refresh with:  python3 run.py research --refresh")
+        return 0
+
+    for f in findings:
+        mark = {"blocking": "\u2717", "improve": "!", "note": "\u00b7"}.get(
+            f["severity"], "\u00b7")
+        print(f"\n  {mark} [{f['subject']}] {f['claim']}")
+        print(_wrap(f"Evidence: {f['evidence']}", indent="      "))
+        print(_wrap(f"\u2192 {f['proposal']}", indent="      "))
+        print(f"      ({f['confidence']})")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="answerrank",
@@ -1154,6 +1192,11 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("learn", help="what the recorded outcomes actually show")
     s.add_argument("--days", type=int, default=90)
     s.set_defaults(func=cmd_learn)
+
+    s = sub.add_parser("research", help="what each agent's researcher found")
+    s.add_argument("--subject", help="one agent name, e.g. outreach")
+    s.add_argument("--refresh", action="store_true", help="re-run the researchers now")
+    s.set_defaults(func=cmd_research)
 
     s = sub.add_parser("playbook", help="how to sell one trade")
     s.add_argument("vertical")

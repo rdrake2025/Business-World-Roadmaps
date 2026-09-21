@@ -91,6 +91,13 @@ CREATE TABLE IF NOT EXISTS market_findings (
 );
 CREATE INDEX IF NOT EXISTS idx_market_time ON market_findings(market, created_at);
 
+CREATE TABLE IF NOT EXISTS research_findings (
+    id TEXT PRIMARY KEY, subject TEXT, claim TEXT, evidence TEXT,
+    proposal TEXT, severity TEXT, confidence TEXT, created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_research_subject
+    ON research_findings(subject, created_at);
+
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY, value TEXT, created_at TEXT
 );
@@ -390,6 +397,41 @@ class Store:
         with self.conn() as cx:
             row = cx.execute(sql, args).fetchone()
         return row["t"] if row and row["t"] else None
+
+    # ---------------- research ----------------
+
+    def save_research(self, findings: list[dict[str, Any]]) -> int:
+        """Replace this cycle's findings. A finding is a current observation,
+        not a log — keeping every past one would bury today's."""
+        if findings is None:
+            return 0
+        stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with self.conn() as cx:
+            cx.execute("DELETE FROM research_findings")
+            for f in findings:
+                cx.execute(
+                    """INSERT INTO research_findings
+                       (id,subject,claim,evidence,proposal,severity,confidence,created_at)
+                       VALUES (?,?,?,?,?,?,?,?)""",
+                    (f"res_{uuid.uuid4().hex[:12]}", f.get("subject", ""),
+                     f.get("claim", ""), f.get("evidence", ""),
+                     f.get("proposal", ""), f.get("severity", "improve"),
+                     f.get("confidence", "provisional"), stamp))
+        return len(findings)
+
+    def research_findings(self, subject: str = "") -> list[dict[str, Any]]:
+        """Current findings, most serious first."""
+        order = ("CASE severity WHEN 'blocking' THEN 0 WHEN 'improve' THEN 1 "
+                 "ELSE 2 END, subject")
+        with self.conn() as cx:
+            if subject:
+                rows = cx.execute(
+                    f"SELECT * FROM research_findings WHERE subject = ? ORDER BY {order}",
+                    (subject,)).fetchall()
+            else:
+                rows = cx.execute(
+                    f"SELECT * FROM research_findings ORDER BY {order}").fetchall()
+        return [dict(r) for r in rows]
 
     # ---------------- market findings ----------------
 
