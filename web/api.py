@@ -511,6 +511,21 @@ class Api:
         return {"ok": True, "kind": "revenue" if revenue else "cost",
                 "amount": amount, "pnl": self.store.pnl(30)}
 
+    def research(self, refresh: bool = False) -> dict[str, Any]:
+        """What each agent's researcher found about that agent's own work."""
+        from answerrank import research as research_mod
+        from answerrank.agents.researcher import ResearcherAgent
+
+        if refresh:
+            ResearcherAgent(self.store, self.settings).execute()
+        findings = self.store.research_findings()
+        return {
+            "findings": findings,
+            "blocking": sum(1 for f in findings if f["severity"] == "blocking"),
+            "researchers": [{"subject": c.subject, "question": c.question}
+                            for c in research_mod.RESEARCHERS],
+        }
+
     def markets(self) -> dict[str, Any]:
         """Candidate trades we do not serve yet, and what has been measured."""
         from answerrank import markets as markets_mod

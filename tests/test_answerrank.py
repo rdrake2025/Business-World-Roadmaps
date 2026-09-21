@@ -2730,3 +2730,197 @@ class TestCompetitorExtraction(unittest.TestCase):
                 words |= {w.lower().strip(",.") for w in phrase.split() if len(w) > 3}
             self.assertTrue(words & set(BIZ_SUFFIXES),
                             f"{key}: no trade word the extractor recognises")
+
+
+class TestResearchers(unittest.TestCase):
+    """Every agent is shadowed by a researcher that studies its work.
+
+    The discipline that makes this useful rather than noise: a researcher
+    that lacks the evidence to conclude returns nothing. Thirteen researchers
+    each inventing something every cycle would be thirteen things the operator
+    stops reading, and the one real finding would be lost among twelve pieces
+    of filler.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def _agent(self):
+        from answerrank.agents.researcher import ResearcherAgent
+        return ResearcherAgent(self.store, self.settings)
+
+    # ---- the structural guarantee ----
+
+    def test_every_doing_agent_has_exactly_one_researcher(self):
+        from answerrank import research
+        from answerrank.orchestrator import AGENT_ORDER
+        doers = {cls.name for cls in AGENT_ORDER} - {"researcher"}
+        shadows = [cls.subject for cls in research.RESEARCHERS]
+        self.assertEqual(sorted(doers), sorted(shadows))
+        self.assertEqual(len(shadows), len(set(shadows)), "a duplicated subject")
+
+    def test_every_researcher_states_the_question_it_answers(self):
+        from answerrank import research
+        for cls in research.RESEARCHERS:
+            self.assertTrue(cls.subject, cls.__name__)
+            self.assertTrue(cls.question.strip().endswith("?"), cls.__name__)
+
+    # ---- silence is the correct common output ----
+
+    def test_an_empty_business_produces_no_findings(self):
+        count, summary = self._agent().execute()
+        self.assertEqual(count, 0)
+        self.assertIn("none found anything", summary)
+
+    def test_every_researcher_survives_an_empty_database(self):
+        from answerrank import research
+        for r in research.build(self.store, self.settings):
+            self.assertEqual(r.run(), [], r.subject)
+
+    def test_a_researcher_that_crashes_does_not_take_the_tick_down(self):
+        from answerrank import research
+
+        class Exploding(research.Researcher):
+            subject = "scout"
+            question = "Does this blow up?"
+
+            def investigate(self):
+                raise RuntimeError("boom")
+
+        found = Exploding(self.store, self.settings).run()
+        self.assertEqual(len(found), 1)
+        self.assertIn("could not run", found[0].claim)
+
+    # ---- each researcher catches the thing it exists to catch ----
+
+    def test_outreach_researcher_catches_a_bounce_rate_over_the_ceiling(self):
+        from answerrank.research import OutreachResearcher
+        for i in range(60):
+            self.store.record_outcome(prospect_id=f"p{i}", step=1, kind="sent")
+        for i in range(3):
+            self.store.record_outcome(prospect_id=f"p{i}", step=1, kind="bounced")
+        found = OutreachResearcher(self.store, self.settings).run()
+        self.assertTrue(any("bounce" in f.claim.lower() for f in found))
+        self.assertTrue(any(f.severity == "blocking" for f in found))
+
+    def test_outreach_researcher_is_silent_below_the_sample_floor(self):
+        from answerrank.research import OutreachResearcher
+        for i in range(5):
+            self.store.record_outcome(prospect_id=f"p{i}", step=1, kind="sent")
+        self.assertEqual(OutreachResearcher(self.store, self.settings).run(), [])
+
+    def test_retention_researcher_catches_an_unwarned_churn(self):
+        from answerrank.research import RetentionResearcher
+        self.store.upsert_client(Client(business=Business(
+            name="Gone", city="Austin", state="TX", vertical="hvac",
+            website="https://gone.com"), status="churned", mrr=997.0))
+        found = RetentionResearcher(self.store, self.settings).run()
+        self.assertTrue(found)
+        self.assertEqual(found[0].severity, "blocking")
+
+    def test_retention_researcher_is_quiet_when_the_churn_was_flagged(self):
+        from answerrank.research import RetentionResearcher
+        client = Client(business=Business(
+            name="Gone", city="Austin", state="TX", vertical="hvac",
+            website="https://gone.com"), status="churned", mrr=997.0)
+        self.store.upsert_client(client)
+        self.store.record_outcome(prospect_id=client.id, kind="at_risk")
+        self.assertEqual(RetentionResearcher(self.store, self.settings).run(), [])
+
+    def test_scout_researcher_catches_a_trade_that_never_qualifies(self):
+        from answerrank.research import ScoutResearcher
+        for i in range(30):
+            p = Prospect(business=Business(
+                name=f"Co {i}", city="Austin", state="TX", vertical="hvac",
+                website=f"https://c{i}.com"),
+                stage="suppressed" if i % 2 == 0 else "queued")
+            self.store.upsert_prospect(p)
+        found = ScoutResearcher(self.store, self.settings).run()
+        self.assertTrue(any("unpitchable" in f.claim for f in found))
+
+    def test_prospector_researcher_catches_an_uncontactable_market(self):
+        from answerrank.research import ProspectorResearcher
+        for i in range(20):
+            p = Prospect(business=Business(
+                name=f"Co {i}", city="Austin", state="TX", vertical="hvac",
+                website=f"https://c{i}.com"))
+            p.contact_checked_at = now_iso()
+            self.store.upsert_prospect(p)
+        found = ProspectorResearcher(self.store, self.settings).run()
+        self.assertTrue(any("contact address" in f.claim for f in found))
+
+    def test_analyst_researcher_checks_the_analysts_own_floor(self):
+        import json
+        from answerrank.research import AnalystResearcher
+        self.store.kv_set("analyst.learnings",
+                          json.dumps(["Plumbers reply at 18%."]))
+        self.store.kv_set("analyst.funnel", json.dumps({"sent": 4}))
+        found = AnalystResearcher(self.store, self.settings).run()
+        self.assertTrue(found)
+        self.assertEqual(found[0].severity, "blocking")
+
+    def test_onboarder_researcher_catches_an_unapproved_welcome(self):
+        from answerrank.research import OnboarderResearcher
+        client = Client(business=Business(
+            name="Held", city="Austin", state="TX", vertical="hvac",
+            website="https://held.com"), status="active", mrr=997.0)
+        self.store.upsert_client(client)
+        self.store.save_message(OutreachMessage(
+            prospect_id=client.id, subject="You're in", body="hi",
+            sequence_step=0, status="drafted"))
+        found = OnboarderResearcher(self.store, self.settings).run()
+        self.assertTrue(found)
+        self.assertEqual(found[0].severity, "blocking")
+
+    # ---- what a finding must contain ----
+
+    def test_every_finding_carries_evidence_and_a_proposal(self):
+        for i in range(60):
+            self.store.record_outcome(prospect_id=f"p{i}", step=1, kind="sent")
+        for i in range(3):
+            self.store.record_outcome(prospect_id=f"p{i}", step=1, kind="bounced")
+        for f in self._agent().investigate():
+            self.assertTrue(f.evidence.strip(), f.subject)
+            self.assertTrue(f.proposal.strip(), f.subject)
+            self.assertIn(f.severity, {"blocking", "improve", "note"})
+            self.assertIn(f.confidence, {"confident", "provisional"})
+
+    def test_findings_are_stored_worst_first(self):
+        for i in range(60):
+            self.store.record_outcome(prospect_id=f"p{i}", step=1, kind="sent")
+        for i in range(3):
+            self.store.record_outcome(prospect_id=f"p{i}", step=1, kind="bounced")
+        self.store.upsert_client(Client(business=Business(
+            name="Gone", city="Austin", state="TX", vertical="hvac",
+            website="https://gone.com"), status="churned", mrr=997.0))
+        self._agent().execute()
+        rows = self.store.research_findings()
+        self.assertTrue(rows)
+        self.assertEqual(rows[0]["severity"], "blocking")
+
+    def test_a_refresh_replaces_findings_rather_than_piling_them_up(self):
+        for i in range(60):
+            self.store.record_outcome(prospect_id=f"p{i}", step=1, kind="sent")
+        for i in range(3):
+            self.store.record_outcome(prospect_id=f"p{i}", step=1, kind="bounced")
+        agent = self._agent()
+        agent.execute()
+        first = len(self.store.research_findings())
+        agent.execute()
+        self.assertEqual(len(self.store.research_findings()), first)
+
+    def test_findings_can_be_read_for_one_agent(self):
+        for i in range(60):
+            self.store.record_outcome(prospect_id=f"p{i}", step=1, kind="sent")
+        for i in range(3):
+            self.store.record_outcome(prospect_id=f"p{i}", step=1, kind="bounced")
+        self._agent().execute()
+        rows = self.store.research_findings("outreach")
+        self.assertTrue(rows)
+        self.assertTrue(all(r["subject"] == "outreach" for r in rows))

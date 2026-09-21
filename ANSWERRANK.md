@@ -208,6 +208,7 @@ outreach — treat it like a password; restarting issues a new one.
 | `explorer` | 12h | Samples candidate markets to find the next vertical worth entering |
 | `analyst` | 12h | Reads recorded outcomes and reports what is actually converting |
 | `strategist` | 24h | Reads the evidence and recommends the single next move |
+| `researcher` | 6h | Runs a researcher against every agent and reports what holds |
 
 The orchestrator runs them on independent schedules in one process. An agent
 that crashes is recorded as a failed run; the fleet keeps going. "Due" is
@@ -219,7 +220,54 @@ on. The Analyst runs late, once the tick has produced whatever it is going to,
 and the Strategist runs last so its single recommendation is made with the
 Analyst's findings already written.
 
-### The three that close the loop
+### A researcher for every agent
+
+The fleet acts. The Analyst measures the funnel. Nothing asked whether each
+*individual* agent was doing its own job well — so a Scout finding unpitchable
+businesses, an Auditor asking questions nobody is ever named in, or a
+Retention model that flags nothing before a client leaves would all keep
+running and reporting success for months.
+
+Each doing-agent is now shadowed by a researcher that reads the evidence that
+agent leaves in the database and answers one question about it:
+
+| Researcher | The question it exists to answer |
+| --- | --- |
+| concierge | Are inbound replies being read correctly? |
+| onboarder | Do new clients actually hear from us? |
+| scout | Is discovery finding businesses actually worth pitching? |
+| prospector | Can the businesses we find actually be reached? |
+| auditor | Do the questions we ask measure anything? |
+| fixer | Does the work we deliver actually move the score? |
+| reporter | Do the monthly reports start a conversation? |
+| outreach | Which part of the sequence earns replies? |
+| bookkeeper | Is any cost growing faster than the business? |
+| retention | Does the health score see a churn coming? |
+| explorer | Were our guesses about a market right when we measured it? |
+| analyst | Is the Analyst concluding on enough evidence? |
+| strategist | Is the recommended move ever acted on? |
+
+They are subordinate: they investigate and report, they never act. Acting is
+the operator's decision, or the Strategist's. A single coordinator runs all
+thirteen so the fleet stays legible — twenty-six entries in the agent list
+would be a worse tool, not a better one — while each researcher remains a
+separate, named, separately tested unit.
+
+**A researcher with insufficient evidence returns nothing.** Silence is the
+correct and common output. Thirteen researchers each inventing a finding every
+cycle would be thirteen things the operator stops reading by the end of the
+first week, and the one real finding would be lost among twelve pieces of
+filler. Every finding carries the arithmetic it rests on, so the reasoning can
+be checked rather than trusted.
+
+```bash
+python3 run.py research --refresh
+```
+
+A test asserts the pairing is exact: every agent in the fleet has exactly one
+researcher, and no researcher shadows an agent that does not exist.
+
+## The three that close the loop
 
 Everything else in the fleet *acts*. These three are what let it improve.
 

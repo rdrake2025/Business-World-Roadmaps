@@ -34,6 +34,7 @@ from .agents.onboarder import OnboarderAgent
 from .agents.outreach import OutreachAgent
 from .agents.prospector import ProspectorAgent
 from .agents.reporter import ReporterAgent
+from .agents.researcher import ResearcherAgent
 from .agents.retention import RetentionAgent
 from .agents.scout import ScoutAgent
 from .agents.strategist import StrategistAgent
@@ -58,12 +59,14 @@ log = logging.getLogger("answerrank.orchestrator")
 # new work in the queue — it is the only event in the system that a human is
 # waiting on. The Analyst runs late, after the tick has produced whatever it
 # is going to produce, and the Strategist runs last so its single
-# recommendation is made with the Analyst's findings already written.
+# recommendation is made with the Analyst's findings already written. The
+# Researcher runs last of all: studying a half-finished tick tells you about
+# the tick, not about the agent.
 AGENT_ORDER = [ConciergeAgent, OnboarderAgent, ScoutAgent, ProspectorAgent,
                AuditorAgent,
                FixerAgent, ReporterAgent,
                OutreachAgent, BookkeeperAgent, RetentionAgent, ExplorerAgent,
-               AnalystAgent, StrategistAgent]
+               AnalystAgent, StrategistAgent, ResearcherAgent]
 
 
 def build_fleet(store: Store, settings: Settings) -> list[Agent]:
