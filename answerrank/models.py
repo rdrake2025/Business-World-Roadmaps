@@ -148,6 +148,10 @@ class Audit:
     score: float = 0.0
     subscores: dict[str, float] = field(default_factory=dict)
     competitors: dict[str, int] = field(default_factory=dict)  # name -> mentions
+    #: Mentions won by *every* competitor seen, including the long tail that
+    #: ``competitors`` truncates. Share of voice needs the real denominator;
+    #: dividing by the top ten alone flattered whoever was being measured.
+    competitor_mentions_total: int = 0
     engine_breakdown: dict[str, float] = field(default_factory=dict)
     findings: list[str] = field(default_factory=list)
     #: What the site's own robots.txt allows. Empty when not checked. This is

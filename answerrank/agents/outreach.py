@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 from .. import knowledge, playbook, qualify
 from ..models import OutreachMessage, Prospect, now_iso
 from .base import Agent
+from .scout import SIMULATED_MARKER
 
 
 def _compliance_block(settings) -> str:
@@ -228,6 +229,11 @@ class OutreachAgent(Agent):
         if not email or "@" not in email:
             return False
         if self.store.is_suppressed(email):
+            return False
+        # Fixture data must never reach a real mailbox. These domains do not
+        # exist, so each one is a hard bounce against a 2% ceiling.
+        if SIMULATED_MARKER in (prospect.notes or ""):
+            self.log.debug("skipping %s: fixture data", prospect.business.name)
             return False
 
         # The price this trade can actually defend, not one flat number.

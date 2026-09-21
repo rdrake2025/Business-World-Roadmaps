@@ -69,6 +69,20 @@ def _query(environ: dict[str, Any]) -> dict[str, str]:
             urllib.parse.parse_qs(environ.get("QUERY_STRING", "")).items() if v}
 
 
+def _int(raw: Any, default: int, lo: int = 1, hi: int = 1000) -> int:
+    """A bounded integer from untrusted input.
+
+    Two problems this closes. ``int("twenty")`` raised straight out of the
+    handler, and a negative limit reaches SQLite as ``LIMIT -1``, which
+    means no limit at all — the exact opposite of what the caller asked for.
+    """
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, value))
+
+
 class Application:
     def __init__(self, settings: Settings | None = None, store: Store | None = None):
         self.settings = settings or SETTINGS
@@ -245,12 +259,12 @@ class Application:
     def api_inbox(self, environ, start):
         q = _query(environ)
         return self._json(start, self.api.inbox(
-            q.get("status", "drafted"), min(int(q.get("limit", 25) or 25), 100)))
+            q.get("status", "drafted"), _int(q.get("limit"), 25, 1, 100)))
 
     def api_prospects(self, environ, start):
         q = _query(environ)
         return self._json(start, self.api.prospects(
-            q.get("stage") or None, min(int(q.get("limit", 40) or 40), 200)))
+            q.get("stage") or None, _int(q.get("limit"), 40, 1, 200)))
 
     def api_reports(self, environ, start):
         return self._json(start, self.api.reports())
@@ -279,7 +293,7 @@ class Application:
     def api_send(self, environ, start):
         d = self._body_json(environ)
         return self._json(start, self.api.send(
-            min(int(d.get("limit", 25)), 100), bool(d.get("dry_run"))))
+            _int(d.get("limit"), 25, 1, 100), bool(d.get("dry_run"))))
 
     def api_health(self, environ, start):
         return self._json(start, self.api.health())
@@ -443,8 +457,17 @@ class Application:
 
         try:
             return handler(environ, start_response)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             log.exception("unhandled error on %s", path)
+            # An API route answers in JSON even when it fails. The console
+            # calls res.json() on everything, so an HTML error page did not
+            # read as an error — the panel simply went blank and stayed that
+            # way, which is the hardest kind of failure to diagnose from a
+            # phone.
+            if path.startswith("/api/"):
+                return self._json(start_response,
+                                  {"error": f"{type(exc).__name__}: {exc}"[:300]},
+                                  "500 Internal Server Error")
             body = b"<h1>Something went wrong</h1>"
             start_response("500 Internal Server Error",
                            [("Content-Type", "text/html"), ("Content-Length", str(len(body)))])

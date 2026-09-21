@@ -13,11 +13,23 @@ record, which is what lets the Analyst measure anything at all.
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any, Callable
 
 from .mailer import Mailer
 from .models import now_iso
+
+#: Only one batch may be in flight at a time.
+#:
+#: The daily cap is read once, before the loop, and then trusted for the
+#: whole batch. That was safe while sending was a command someone typed. It
+#: is not safe now that the fleet runs in a thread beside the web server: an
+#: Outreach tick and a tap on the console's Send button read the same "12 of
+#: 40 used" and both send 28. Overshooting a warm-up cap is the specific
+#: thing the ramp exists to prevent, and the damage — a throttled sending
+#: domain — takes weeks to undo.
+_SEND_LOCK = threading.Lock()
 
 
 #: Where the ramp's start date lives once the first real send has happened.
@@ -72,6 +84,20 @@ def send_batch(store, settings, limit: int = 25, dry_run: bool = False,
         return {"sent": 0, "failed": 0, "blocked": True, "reasons": blockers,
                 "errors": [], "dry_run": dry_run}
 
+    if not _SEND_LOCK.acquire(blocking=False):
+        return {"sent": 0, "failed": 0, "blocked": True,
+                "reasons": ["A send is already running. Wait for it to finish."],
+                "errors": [], "dry_run": dry_run}
+    try:
+        return _send_batch_locked(store, settings, limit, dry_run,
+                                  throttle_seconds, say)
+    finally:
+        _SEND_LOCK.release()
+
+
+def _send_batch_locked(store, settings, limit: int, dry_run: bool,
+                       throttle_seconds: float | None,
+                       say: Callable[[str], None]) -> dict[str, Any]:
     pol = settings.outreach
     days_sending = _days_warming(store, settings)
     cap = pol.warmup_cap(days_sending)
@@ -97,6 +123,13 @@ def send_batch(store, settings, limit: int = 25, dry_run: bool = False,
     errors: list[str] = []
 
     for m in approved:
+        # Re-read rather than trusting the count taken before the loop. A
+        # throttled batch can run for an hour, which is long enough to cross
+        # midnight — and the cap is a per-day figure.
+        if not dry_run and store.sends_today() >= cap:
+            say(f"  stopping: daily cap of {cap} reached mid-batch")
+            break
+
         prospect = by_id.get(m.prospect_id)
         if not prospect or not prospect.business.email:
             skipped += 1

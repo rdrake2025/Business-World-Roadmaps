@@ -99,13 +99,23 @@ class Orchestrator:
     # ---------------- scheduling ----------------
 
     def _last_success(self, agent_name: str) -> datetime | None:
-        for run in self.store.recent_runs(200):
-            if run["agent"] == agent_name and run["status"] == "ok" and run["finished_at"]:
-                try:
-                    return datetime.fromisoformat(run["finished_at"])
-                except ValueError:
-                    return None
-        return None
+        """When this agent last finished cleanly.
+
+        This used to scan the most recent 200 runs and take the first match.
+        The fleet writes roughly 200 runs a day, so an agent on a daily
+        interval — the Bookkeeper, Retention, the Strategist — was reliably
+        pushed out of that window by the chattier agents, read as never
+        having run, and therefore judged due on every tick. Intervals exist
+        to bound what the fleet spends; a window that forgets makes the
+        longest intervals the ones least honoured.
+        """
+        stamp = self.store.last_success_at(agent_name)
+        if not stamp:
+            return None
+        try:
+            return datetime.fromisoformat(stamp)
+        except ValueError:
+            return None
 
     def is_due(self, agent: Agent, now: datetime | None = None) -> bool:
         now = now or datetime.now(timezone.utc)
@@ -179,6 +189,21 @@ class Orchestrator:
         """Ask the loop to finish the current agent and exit."""
         self._stop = True
 
+    def _housekeep(self) -> None:
+        """Trim run history once a day.
+
+        ``agent_runs`` is the only table that grows purely with uptime, and
+        the operator is told they can back this database up by copying the
+        file. Thirty days is more history than anything here reads.
+        """
+        today = datetime.now(timezone.utc).date().isoformat()
+        if self.store.kv_get("last_prune") == today:
+            return
+        removed = self.store.prune_agent_runs(30)
+        self.store.kv_set("last_prune", today)
+        if removed:
+            log.info("pruned %s agent runs older than 30 days", removed)
+
     def run_forever(self, install_signals: bool = True) -> None:
         """Tick until stopped.
 
@@ -207,6 +232,7 @@ class Orchestrator:
             try:
                 for line in self.tick():
                     log.info(line)
+                self._housekeep()
             except Exception:  # noqa: BLE001 - the loop must never die
                 log.exception("tick failed; continuing")
 

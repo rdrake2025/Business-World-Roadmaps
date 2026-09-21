@@ -267,7 +267,11 @@ def cmd_win(args, settings: Settings) -> int:
     prospect = matches[0]
     mrr = args.mrr if args.mrr is not None else settings.pricing.plan_price(args.plan)
     client = Client(business=prospect.business, plan=args.plan, mrr=mrr, status="active")
-    store.upsert_client(client)
+    _client_id, created = store.start_client(client)
+    if not created:
+        print(f"{prospect.business.name} is already on the books — nothing changed.")
+        print(f"  MRR is ${store.mrr():,.0f}.")
+        return 1
 
     prospect.stage = "won"
     store.upsert_prospect(prospect)

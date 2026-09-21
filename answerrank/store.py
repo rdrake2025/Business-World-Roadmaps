@@ -8,6 +8,7 @@ their rich fields as JSON blobs so the schema never blocks a product change.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -27,6 +28,8 @@ from .models import (
     ProbeResult,
     Prospect,
 )
+
+log = logging.getLogger("answerrank.store")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS prospects (
@@ -67,9 +70,15 @@ CREATE INDEX IF NOT EXISTS idx_message_status ON messages(status);
 
 CREATE TABLE IF NOT EXISTS ledger (
     id TEXT PRIMARY KEY, kind TEXT, category TEXT, amount REAL,
-    description TEXT, client_id TEXT, occurred_at TEXT
+    description TEXT, client_id TEXT, occurred_at TEXT,
+    -- Names what a recurring charge is and which month it belongs to, so
+    -- "bill each client once a month" is enforced by the database rather
+    -- than by a caller remembering to look first.
+    dedupe_key TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ledger_time ON ledger(occurred_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_dedupe ON ledger(dedupe_key)
+    WHERE dedupe_key IS NOT NULL AND dedupe_key != '';
 
 CREATE TABLE IF NOT EXISTS agent_runs (
     id TEXT PRIMARY KEY, agent TEXT, status TEXT, started_at TEXT,
@@ -112,8 +121,34 @@ class Store:
     def __init__(self, path: str):
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self._migrate()
         with self.conn() as cx:
             cx.executescript(SCHEMA)
+
+    def _migrate(self) -> None:
+        """Add columns that later versions introduced.
+
+        ``CREATE TABLE IF NOT EXISTS`` does nothing to a table that already
+        exists, so a new column is invisible to anyone with a database from
+        an earlier build — which is everyone already running this. The
+        indexes in SCHEMA reference those columns, so without this the whole
+        schema script fails on an existing file and the app will not start.
+        """
+        if not Path(self.path).exists():
+            return
+        wanted = {"ledger": [("dedupe_key", "TEXT")]}
+        with self.conn() as cx:
+            for table, columns in wanted.items():
+                exists = cx.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                ).fetchone()
+                if not exists:
+                    continue
+                have = {r["name"] for r in cx.execute(f"PRAGMA table_info({table})")}
+                for name, decl in columns:
+                    if name not in have:
+                        cx.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
     @contextmanager
     def conn(self) -> Iterator[sqlite3.Connection]:
@@ -127,11 +162,58 @@ class Store:
         finally:
             cx.close()
 
+    @contextmanager
+    def writer(self) -> Iterator[sqlite3.Connection]:
+        """A connection that holds the write lock for the whole block.
+
+        ``conn`` is correct for a single statement. Several methods here read
+        a row, decide something from it, and then write based on that
+        decision. Under SQLite's default deferred transaction the read runs
+        outside the lock, so two threads can both read "not there yet" and
+        both go on to write.
+
+        That stopped being theoretical when the fleet started running in a
+        thread beside the web server: both write prospects, clients and the
+        ledger against the same file. The observed consequences are a
+        duplicate-domain IntegrityError that kills a Scout run, and a client
+        billed twice in one month.
+
+        ``BEGIN IMMEDIATE`` takes the write lock before the first read, so
+        check-then-act becomes atomic and a second writer waits its turn
+        instead of racing.
+        """
+        cx = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+        cx.row_factory = sqlite3.Row
+        cx.execute("PRAGMA journal_mode=WAL")
+        cx.execute("PRAGMA foreign_keys=ON")
+        try:
+            cx.execute("BEGIN IMMEDIATE")
+            try:
+                yield cx
+            except BaseException:
+                # Never let a failed rollback replace the real exception: the
+                # caller needs to see what actually went wrong, and closing
+                # the connection below discards the transaction regardless.
+                try:
+                    cx.execute("ROLLBACK")
+                except sqlite3.Error:
+                    log.warning("rollback failed; closing the connection instead",
+                                exc_info=True)
+                raise
+            cx.execute("COMMIT")
+        finally:
+            cx.close()
+
     # ---------------- prospects ----------------
 
     def upsert_prospect(self, p: Prospect) -> str:
         b = p.business
-        with self.conn() as cx:
+        # ``writer`` and not ``conn``: the SELECT below decides what the
+        # INSERT does, and there is a unique index on domain. Two threads
+        # reading "no such domain" at the same time both insert, and the
+        # second one raises IntegrityError — which, before this, killed the
+        # Scout run that hit it.
+        with self.writer() as cx:
             # Domain is the natural key: never pitch the same business twice.
             if b.domain:
                 row = cx.execute(
@@ -213,6 +295,41 @@ class Store:
                  json.dumps(asdict(c), default=str)),
             )
         return c.id
+
+    def start_client(self, c: Client) -> tuple[str, bool]:
+        """Put a business on the books, once.
+
+        Returns ``(client_id, created)``. If this business already has a
+        live client record, that one is returned untouched and ``created``
+        is False.
+
+        Winning a deal is a button on a phone. A laggy tap gets tapped
+        twice, and ``upsert_client`` keys on the client id — which is freshly
+        generated each time — so the second tap used to create a second
+        active client for the same business. MRR is the number this whole
+        operation is steered by, and it was the number that doubled.
+        """
+        b = c.business
+        with self.writer() as cx:
+            row = cx.execute(
+                """SELECT id FROM clients
+                   WHERE business_id = ? AND status IN ('active','trialing')
+                   ORDER BY started_at ASC LIMIT 1""",
+                (b.id,),
+            ).fetchone()
+            if row:
+                return str(row["id"]), False
+            cx.execute(
+                """INSERT INTO clients (id,business_id,name,city,state,vertical,website,email,
+                   plan,mrr,status,started_at,churned_at,last_report_at,raw)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(id) DO UPDATE SET plan=excluded.plan, mrr=excluded.mrr,
+                     status=excluded.status, raw=excluded.raw""",
+                (c.id, b.id, b.name, b.city, b.state, b.vertical, b.website, b.email,
+                 c.plan, c.mrr, c.status, c.started_at, c.churned_at, c.last_report_at,
+                 json.dumps(asdict(c), default=str)),
+            )
+        return c.id, True
 
     def get_clients(self, status: str | None = "active") -> list[Client]:
         q = "SELECT raw FROM clients"
@@ -490,15 +607,48 @@ class Store:
 
     # ---------------- ledger ----------------
 
+    #: Restates the partial index's predicate. SQLite matches an upsert to a
+    #: partial unique index only when the conflict target repeats its WHERE
+    #: clause verbatim; without it the statement is rejected outright.
+    _DEDUPE_TARGET = "ON CONFLICT(dedupe_key) WHERE dedupe_key IS NOT NULL AND dedupe_key != ''"
+
     def add_ledger(self, e: LedgerEntry) -> str:
+        """Record one entry of money in or out."""
         with self.conn() as cx:
             cx.execute(
-                """INSERT OR REPLACE INTO ledger
-                   (id,kind,category,amount,description,client_id,occurred_at)
-                   VALUES (?,?,?,?,?,?,?)""",
-                (e.id, e.kind, e.category, e.amount, e.description, e.client_id, e.occurred_at),
+                """INSERT INTO ledger
+                   (id,kind,category,amount,description,client_id,occurred_at,dedupe_key)
+                   VALUES (?,?,?,?,?,?,?,NULL)
+                   ON CONFLICT(id) DO UPDATE SET
+                     kind=excluded.kind, category=excluded.category,
+                     amount=excluded.amount, description=excluded.description,
+                     client_id=excluded.client_id, occurred_at=excluded.occurred_at""",
+                (e.id, e.kind, e.category, e.amount, e.description, e.client_id,
+                 e.occurred_at),
             )
         return e.id
+
+    def add_ledger_once(self, e: LedgerEntry, dedupe_key: str) -> bool:
+        """Record an entry unless one carrying this key already exists.
+
+        Returns True when the entry was written. Uniqueness is enforced by an
+        index, so two callers racing cannot both win — which is the point.
+        The check-then-insert this replaced ran as two separate connections,
+        and a console action landing during the Bookkeeper's tick could bill
+        the same client twice in one month.
+        """
+        if not dedupe_key:
+            raise ValueError("add_ledger_once needs a dedupe key")
+        with self.conn() as cx:
+            cur = cx.execute(
+                f"""INSERT INTO ledger
+                    (id,kind,category,amount,description,client_id,occurred_at,dedupe_key)
+                    VALUES (?,?,?,?,?,?,?,?)
+                    {self._DEDUPE_TARGET} DO NOTHING""",
+                (e.id, e.kind, e.category, e.amount, e.description, e.client_id,
+                 e.occurred_at, dedupe_key),
+            )
+            return cur.rowcount > 0
 
     def has_billed(self, client_id: str, month: str) -> bool:
         """Idempotency guard: has this client already been billed this month?"""
@@ -565,6 +715,36 @@ class Store:
                 (run.status, run.finished_at, run.items_processed, run.summary,
                  run.error, run.id),
             )
+
+    def last_success_at(self, agent: str) -> str | None:
+        """When this agent last finished cleanly, or None if it never has.
+
+        The orchestrator used to answer this by scanning the most recent 200
+        runs. The fleet records roughly that many in a day, so any agent on a
+        daily interval fell out of the window, looked as though it had never
+        run, and was therefore due on every single tick — the opposite of the
+        budget the intervals exist to enforce.
+        """
+        with self.conn() as cx:
+            row = cx.execute(
+                """SELECT MAX(finished_at) t FROM agent_runs
+                   WHERE agent = ? AND status = 'ok' AND finished_at != ''""",
+                (agent,),
+            ).fetchone()
+        return row["t"] if row and row["t"] else None
+
+    def prune_agent_runs(self, keep_days: int = 30) -> int:
+        """Drop run history past its usefulness.
+
+        Left alone this table is the only one that grows without bound: about
+        200 rows a day, forever, on a file the operator is told they can back
+        up by copying it.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=keep_days)).isoformat(
+            timespec="seconds")
+        with self.conn() as cx:
+            cur = cx.execute("DELETE FROM agent_runs WHERE started_at < ?", (cutoff,))
+            return cur.rowcount
 
     def recent_runs(self, limit: int = 20) -> list[dict[str, Any]]:
         with self.conn() as cx:

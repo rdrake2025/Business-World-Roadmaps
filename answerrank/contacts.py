@@ -60,6 +60,13 @@ IMAGE_TAIL_RE = re.compile(r"\.(png|jpe?g|gif|webp|svg|ico|bmp|css|js)$", re.I)
 USER_AGENT = ("AnswerRankBot/1.0 (+https://answerrank.io/about; "
               "contact discovery for a one-time outreach)")
 
+#: Hard ceilings on what one page may cost us. A contact page is a few tens
+#: of kilobytes; anything past this is a misconfigured server, an export, or
+#: a file that happens to answer on that URL. The agent runs unattended, so
+#: "download it all and slice afterwards" is a memory leak with a schedule.
+_MAX_PAGE_BYTES = 2_000_000
+_MAX_ROBOTS_BYTES = 200_000
+
 
 @dataclass
 class Contact:
@@ -155,21 +162,60 @@ def classify(email: str, domain: str) -> str:
 # Fetching
 # ---------------------------------------------------------------------------
 
-def _allowed(session, base: str, path: str) -> bool:
-    """Honour robots.txt. A business that asks not to be crawled is not
-    crawled, and we are asking for a favour here, not exercising a right."""
+def _robots(session, base: str) -> "urllib.robotparser.RobotFileParser | None":
+    """Fetch and parse robots.txt once. None means "no rules we could read"."""
     parser = urllib.robotparser.RobotFileParser()
     try:
         resp = session.get(urljoin(base, "/robots.txt"), timeout=10)
         if resp.status_code >= 400:
-            return True  # no robots file is permission by convention
-        parser.parse(resp.text.splitlines())
+            return None  # no robots file is permission by convention
+        parser.parse(resp.text[:_MAX_ROBOTS_BYTES].splitlines())
     except Exception:  # noqa: BLE001 - an unreadable robots file is not a refusal
+        return None
+    return parser
+
+
+def _allowed(parser, base: str, path: str) -> bool:
+    """Honour robots.txt. A business that asks not to be crawled is not
+    crawled, and we are asking for a favour here, not exercising a right.
+
+    The parser is fetched once per site and passed in. It used to be
+    refetched for every candidate path, which meant up to seven requests for
+    the same file per prospect — a lot of noise in someone's access log from
+    a crawler asking them for a favour.
+    """
+    if parser is None:
         return True
     try:
         return parser.can_fetch(USER_AGENT, urljoin(base, path or "/"))
     except Exception:  # noqa: BLE001
         return True
+
+
+def _fetch_html(session, url: str, timeout: int) -> str | None:
+    """One page of HTML, capped, or None if it is not worth reading.
+
+    Streams and stops at the cap rather than letting ``resp.text`` pull an
+    arbitrarily large body into memory first.
+    """
+    resp = session.get(url, timeout=timeout, allow_redirects=True, stream=True)
+    try:
+        if resp.status_code >= 400:
+            return None
+        ctype = resp.headers.get("Content-Type", "text/html").lower()
+        if "html" not in ctype:
+            return None
+        chunks: list[bytes] = []
+        size = 0
+        for chunk in resp.iter_content(64 * 1024):
+            chunks.append(chunk)
+            size += len(chunk)
+            if size >= _MAX_PAGE_BYTES:
+                break
+        encoding = resp.encoding or "utf-8"
+        return b"".join(chunks).decode(encoding, "replace")
+    finally:
+        resp.close()
 
 
 def find_contact(website: str, timeout: int = 12, max_pages: int = 4,
@@ -196,22 +242,22 @@ def find_contact(website: str, timeout: int = 12, max_pages: int = 4,
     seen: list[str] = []
     checked = 0
     try:
+        robots = _robots(session, website)
         for path in CONTACT_PATHS:
             if checked >= max_pages:
                 break
-            if not _allowed(session, website, path):
+            if not _allowed(robots, website, path):
                 return Contact(note="robots.txt asks us not to read this site",
                                considered=tuple(seen))
             url = urljoin(website, path) if path else website
             try:
-                resp = session.get(url, timeout=timeout, allow_redirects=True)
+                html = _fetch_html(session, url, timeout)
             except Exception:  # noqa: BLE001 - one dead page is not a dead site
                 continue
             checked += 1
-            if resp.status_code >= 400 or "html" not in \
-                    resp.headers.get("Content-Type", "text/html").lower():
+            if html is None:
                 continue
-            for email in extract_emails(resp.text[:400_000]):
+            for email in extract_emails(html):
                 if email not in seen:
                     seen.append(email)
             best = rank(seen, domain)

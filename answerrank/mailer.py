@@ -23,6 +23,7 @@ import time
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
+from urllib.parse import quote
 
 log = logging.getLogger("answerrank.mailer")
 
@@ -35,11 +36,33 @@ class SMTPConfig:
     password: str = ""
     use_tls: bool = True
 
+    @staticmethod
+    def _port_from_env() -> int:
+        """587 unless the environment says otherwise, and legibly.
+
+        ``int(os.environ["SMTP_PORT"])`` on a blank or mistyped value raises
+        a bare ValueError from inside a dataclass constructor, which reaches
+        the operator as a traceback with nothing actionable in it. They are
+        editing this in a .bat file.
+        """
+        raw = (os.environ.get("SMTP_PORT") or "").strip()
+        if not raw:
+            return 587
+        try:
+            port = int(raw)
+        except ValueError:
+            log.warning("SMTP_PORT=%r is not a number; using 587", raw)
+            return 587
+        if not 1 <= port <= 65535:
+            log.warning("SMTP_PORT=%s is out of range; using 587", port)
+            return 587
+        return port
+
     @classmethod
     def from_env(cls) -> "SMTPConfig":
         return cls(
-            host=os.environ.get("SMTP_HOST", ""),
-            port=int(os.environ.get("SMTP_PORT", "587")),
+            host=os.environ.get("SMTP_HOST", "").strip(),
+            port=cls._port_from_env(),
             username=os.environ.get("SMTP_USERNAME", ""),
             password=os.environ.get("SMTP_PASSWORD", ""),
             use_tls=os.environ.get("SMTP_TLS", "true").lower() != "false",
@@ -60,7 +83,14 @@ def build_message(to_email: str, subject: str, body: str, settings) -> EmailMess
 
     # RFC 8058 one-click unsubscribe. Both headers are required: the URL alone
     # is not enough for Gmail/Yahoo to treat it as one-click.
-    unsub = f"{settings.website}/unsubscribe?e={to_email}"
+    #
+    # The address is percent-encoded. Pasted in raw, a perfectly ordinary
+    # ``info+sales@`` arrives at the handler as ``info sales@``, fails
+    # validation, and is never suppressed — while the recipient's mail client
+    # tells them they unsubscribed. The next message to that address is a
+    # spam complaint, and complaints are capped at 0.3% before the domain is
+    # throttled wholesale.
+    unsub = f"{settings.website}/unsubscribe?e={quote(to_email, safe='')}"
     msg["List-Unsubscribe"] = f"<{unsub}>, <mailto:{settings.from_email}?subject=unsubscribe>"
     msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
 

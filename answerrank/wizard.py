@@ -13,10 +13,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import knowledge
 from .budget import write_template as write_budget_template
 from .config import Settings
 
-VERTICALS = ["hvac", "plumbing", "roofing", "dental", "legal", "medical", "insurance"]
+#: Derived, never copied. A hand-maintained list here offered seven trades of
+#: the twenty-two the system supports, and silently replaced anything else
+#: the operator typed with "hvac" — so a plumber setting this up got an HVAC
+#: install without being told. This is the fifth place that pattern appeared.
+VERTICALS = list(knowledge.VERTICALS)
 
 
 def ask(prompt: str, default: str = "", why: str = "", required: bool = False) -> str:
@@ -37,10 +42,37 @@ def ask(prompt: str, default: str = "", why: str = "", required: bool = False) -
 
 def ask_yes(prompt: str, default: bool = True) -> bool:
     d = "Y/n" if default else "y/N"
-    answer = input(f"  {prompt} [{d}]: ").strip().lower()
+    try:
+        answer = input(f"  {prompt} [{d}]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        # Same exit as `ask`. Without this, Ctrl-D at a yes/no prompt ended
+        # setup in a traceback rather than a sentence.
+        print("\n\nSetup cancelled. Nothing was written.")
+        raise SystemExit(1) from None
     if not answer:
         return default
     return answer.startswith("y")
+
+
+def ask_money(prompt: str, default: str, why: str = "") -> float:
+    """A dollar figure, asked until it is one.
+
+    ``float(ask(...))`` ends the whole wizard in a ValueError traceback if
+    the operator types "$297" or "1,997" — losing everything they had
+    already entered, at the first thing they ever run.
+    """
+    while True:
+        raw = ask(prompt, default, why=why)
+        cleaned = raw.replace("$", "").replace(",", "").replace("/mo", "").strip()
+        try:
+            value = float(cleaned)
+        except ValueError:
+            print(f"  \033[31m'{raw}' is not a number. Digits only, e.g. {default}.\033[0m")
+            continue
+        if value < 0:
+            print("  \033[31mThat cannot be negative.\033[0m")
+            continue
+        return value
 
 
 def run(settings: Settings, config_path: str = "answerrank.yml") -> int:
@@ -78,11 +110,23 @@ def run(settings: Settings, config_path: str = "answerrank.yml") -> int:
                       "answerrank.yml.",
                   required=True)
 
-    vertical = ask(f"Starting vertical ({'/'.join(VERTICALS)})", "hvac",
-                   why="Pick ONE. Specificity is what makes the cold email land. "
-                       "HVAC has the highest urgency and the worst AI visibility.")
-    if vertical not in VERTICALS:
-        vertical = "hvac"
+    # Twenty-two trades is too many to print on one line, so the prompt
+    # shows a few and the answer is checked against all of them.
+    sample = "/".join(VERTICALS[:6])
+    while True:
+        vertical = ask(f"Starting vertical ({sample}/… — {len(VERTICALS)} supported)",
+                       "hvac",
+                       why="Pick ONE. Specificity is what makes the cold email "
+                           "land. HVAC has the highest urgency and the worst AI "
+                           "visibility. Type `list` to see them all.").strip().lower()
+        if vertical == "list":
+            for key in VERTICALS:
+                print(f"    {key:<22} {knowledge.get(key).label}")
+            continue
+        if vertical in VERTICALS:
+            break
+        print(f"  \033[31m'{vertical}' is not one of them. Type `list` to see "
+              f"the options.\033[0m")
 
     print("\n" + "-" * 68)
     print("  PRICING — defaults are researched against the 2026 market.")
@@ -90,13 +134,13 @@ def run(settings: Settings, config_path: str = "answerrank.yml") -> int:
     if ask_yes("Use the default ladder ($297 / $499 / $997 / $1997)?"):
         audit, starter, growth, managed = 297, 499, 997, 1997
     else:
-        audit = float(ask("One-time audit", "297"))
-        starter = float(ask("Starter monthly", "499"))
-        growth = float(ask("Growth monthly", "997"))
-        managed = float(ask("Managed monthly", "1997"))
+        audit = ask_money("One-time audit", "297")
+        starter = ask_money("Starter monthly", "499")
+        growth = ask_money("Growth monthly", "997")
+        managed = ask_money("Managed monthly", "1997")
 
-    target = float(ask("Monthly profit target", "5000",
-                       why="What the dashboard measures you against."))
+    target = ask_money("Monthly profit target", "5000",
+                       why="What the dashboard measures you against.")
 
     path = Path(config_path)
     path.write_text(f"""# AnswerRank configuration — written by `run.py setup`

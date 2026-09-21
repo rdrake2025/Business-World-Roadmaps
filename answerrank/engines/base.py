@@ -20,6 +20,7 @@ import re
 import unicodedata
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 # Words that appear inside business names but must not be used to match on
 # their own, or every "Air" would match every other "Air".
@@ -236,6 +237,46 @@ def detect_sentiment(answer: str, business_name: str) -> str:
     if pos > 0:
         return "positive"
     return "neutral"
+
+
+def source_host(source: str) -> str:
+    """The hostname a cited source points at, lowercased and de-www'd.
+
+    Sources arrive as full URLs from Perplexity and Serper, and occasionally
+    as a bare hostname. Both have to reduce to the same thing.
+    """
+    raw = (source or "").strip().lower()
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = "https://" + raw
+    try:
+        host = urlparse(raw).netloc
+    except ValueError:
+        return ""
+    host = host.split("@")[-1].split(":")[0]
+    return host.removeprefix("www.").strip(".")
+
+
+def cites_domain(domain: str, sources: list[str]) -> bool:
+    """Whether any source is genuinely the business's own site.
+
+    This is a host comparison and not a substring search, which is what it
+    used to be. ``"joesac.com" in source`` counts ``notjoesac.com``,
+    ``joesac.com.example.ru`` and a Yelp page whose URL happens to spell the
+    domain out. Citation is a fifth of the score and the component sold as
+    the durable one, so every false positive here is a client paying to
+    watch a number they did not earn — and a number that drops the moment
+    anyone checks it by hand.
+    """
+    domain = (domain or "").strip().lower().removeprefix("www.").strip(".")
+    if not domain or "." not in domain:
+        return False
+    for source in sources or []:
+        host = source_host(source)
+        if host and (host == domain or host.endswith("." + domain)):
+            return True
+    return False
 
 
 @dataclass
