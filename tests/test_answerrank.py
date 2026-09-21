@@ -2673,3 +2673,60 @@ class TestNameMatching(unittest.TestCase):
         for answer in ("Apex Heating & Air, open now.", "(Apex Heating & Air)",
                        "Apex Heating & Air — 24/7", "...Apex Heating & Air!"):
             self.assertTrue(self._match("Apex Heating & Air", answer), answer)
+
+
+class TestCompetitorExtraction(unittest.TestCase):
+    """Who was named instead is the sales argument. Undercounting the
+    competitors argues the client's case for them."""
+
+    def _names(self, answer):
+        from answerrank.engines.base import extract_businesses
+        return extract_businesses(answer)
+
+    def test_bolded_entries(self):
+        self.assertEqual(
+            self._names("**Apex HVAC** - open 24/7\n**Summit Climate Co** - top rated"),
+            ["Apex HVAC", "Summit Climate Co"])
+
+    def test_numbered_and_bulleted_lists(self):
+        self.assertEqual(len(self._names(
+            "1. Lone Star Heating & Air\n2. Cool Breeze Air\n3. AirPro Systems")), 3)
+        self.assertEqual(len(self._names(
+            "- Joe's Plumbing (5 stars)\n- Ace Plumbing, licensed")), 2)
+
+    def test_a_prose_list_is_not_missed(self):
+        """Not every answer is bulleted. "Apex Roofing, Summit Roofs, and Peak
+        Exteriors" is three competitors, not one."""
+        self.assertEqual(
+            self._names("Here are some options: Apex Roofing, Summit Roofs, "
+                        "and Peak Exteriors."),
+            ["Apex Roofing", "Summit Roofs", "Peak Exteriors"])
+        self.assertEqual(len(self._names(
+            "I'd recommend Bayshore Dental, Gulf Coast Smiles and "
+            "Tampa Family Dentistry.")), 3)
+
+    def test_an_answer_naming_nobody_yields_nobody(self):
+        for answer in ("I don't have specific recommendations for that area.",
+                       "You should try calling around to see what is available.",
+                       ""):
+            self.assertEqual(self._names(answer), [])
+
+    def test_the_same_business_is_never_counted_twice(self):
+        names = self._names("**Apex HVAC** is great.\n- Apex HVAC\n1. apex hvac")
+        self.assertEqual(len(names), 1)
+
+    def test_trailing_description_is_trimmed_from_the_name(self):
+        self.assertEqual(self._names("1. Apex HVAC - open 24/7 for emergencies"),
+                         ["Apex HVAC"])
+
+    def test_every_trade_has_a_recognisable_trade_word(self):
+        """The suffix list was written for the original seven verticals. A
+        competitor in a trade it does not know goes uncounted."""
+        from answerrank import knowledge
+        from answerrank.engines.base import BIZ_SUFFIXES
+        for key, v in knowledge.VERTICALS.items():
+            words = set()
+            for phrase in [v.label, v.service] + list(v.jobs):
+                words |= {w.lower().strip(",.") for w in phrase.split() if len(w) > 3}
+            self.assertTrue(words & set(BIZ_SUFFIXES),
+                            f"{key}: no trade word the extractor recognises")

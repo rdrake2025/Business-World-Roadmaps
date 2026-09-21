@@ -37,6 +37,17 @@ BIZ_SUFFIXES = (
     "construction", "contractors", "remodeling", "inc", "llc", "co",
     "company", "group", "associates", "partners", "services", "solutions",
     "& sons", "and sons",
+    # The list above was written for the original seven trades. A competitor
+    # named "Summit Roofs" or "Peak Exteriors" went unrecognised, which
+    # undercounts the competitor gap — and that gap is the entire sales
+    # argument, so undercounting it argues the client's case for them.
+    "roofs", "roofers", "exteriors", "restoration", "spa", "aesthetics",
+    "wellness", "veterinary", "vet", "animal", "hospital", "chiropractic",
+    "chiropractors", "septic", "flooring", "floors", "tile", "carpet",
+    "appliance", "appliances", "garage", "doors", "door", "tree", "arbor",
+    "arborists", "lawn", "landscape", "pools", "collision", "tire", "tires",
+    "transmission", "automotive", "motors", "kitchen", "bath", "renovations",
+    "builders", "exterminators", "termite", "storage", "van", "lines",
 )
 
 NEGATIVE_CUES = ("avoid", "complaints", "poor reviews", "negative", "lawsuit", "scam", "warning")
@@ -183,7 +194,22 @@ def extract_businesses(answer: str) -> list[str]:
             add(m.group(1))
             continue
 
-    # 3. Fallback: capitalized phrases ending in a known business suffix.
+    # 3. Prose lists. Not every answer is bulleted: "Here are some options:
+    #    Apex Roofing, Summit Roofs, and Peak Exteriors." Splitting on the
+    #    separators a person would read as a list recovers the names the
+    #    line-based passes above cannot see.
+    if len(found) < 2:
+        for run in re.findall(
+                r"(?:such as|including|options?(?:\s+are)?|recommend|try|consider)\s*:?\s+"
+                r"([^.!?\n]{6,220})", answer or "", re.I):
+            parts = re.split(r",\s*(?:and\s+)?|\s+and\s+|;\s*", run)
+            for part in parts:
+                part = part.strip()
+                # Only capitalised phrases; a trailing clause is not a name.
+                if re.match(r"^[A-Z][\w'&.\-]*(?:\s+[A-Z0-9][\w'&.\-]*){0,3}$", part):
+                    add(part)
+
+    # 4. Fallback: capitalized phrases ending in a known business suffix.
     if len(found) < 2:
         for m in re.finditer(
             r"\b((?:[A-Z][\w'&.-]*\s+){0,3}[A-Z][\w'&.-]*)\b", answer or ""
