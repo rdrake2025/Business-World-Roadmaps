@@ -37,6 +37,17 @@ BIZ_SUFFIXES = (
     "construction", "contractors", "remodeling", "inc", "llc", "co",
     "company", "group", "associates", "partners", "services", "solutions",
     "& sons", "and sons",
+    # The list above was written for the original seven trades. A competitor
+    # named "Summit Roofs" or "Peak Exteriors" went unrecognised, which
+    # undercounts the competitor gap — and that gap is the entire sales
+    # argument, so undercounting it argues the client's case for them.
+    "roofs", "roofers", "exteriors", "restoration", "spa", "aesthetics",
+    "wellness", "veterinary", "vet", "animal", "hospital", "chiropractic",
+    "chiropractors", "septic", "flooring", "floors", "tile", "carpet",
+    "appliance", "appliances", "garage", "doors", "door", "tree", "arbor",
+    "arborists", "lawn", "landscape", "pools", "collision", "tire", "tires",
+    "transmission", "automotive", "motors", "kitchen", "bath", "renovations",
+    "builders", "exterminators", "termite", "storage", "van", "lines",
 )
 
 NEGATIVE_CUES = ("avoid", "complaints", "poor reviews", "negative", "lawsuit", "scam", "warning")
@@ -45,10 +56,18 @@ POSITIVE_CUES = ("top rated", "highly rated", "best", "excellent", "trusted", "r
 
 
 def normalize(text: str) -> str:
-    """Casefold, strip accents and punctuation, collapse whitespace."""
+    """Casefold, strip accents and punctuation, collapse whitespace.
+
+    Apostrophes are deleted rather than replaced with a space, so "Joe's
+    Plumbing" becomes "joes plumbing" and matches an answer that writes it
+    without the apostrophe — which answers routinely do. Replacing it with a
+    space split the name into "joe" and "s", and "joe" then failed to match
+    "joes", so a real mention of a real client was recorded as an absence.
+    """
     text = unicodedata.normalize("NFKD", text or "")
     text = "".join(c for c in text if not unicodedata.combining(c))
-    text = re.sub(r"[^\w\s&]", " ", text.lower())
+    text = re.sub(r"[\u2018\u2019']", "", text.lower())
+    text = re.sub(r"[^\w\s&]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -56,30 +75,85 @@ def name_tokens(name: str) -> list[str]:
     return [t for t in normalize(name).split() if t not in STOPWORDS and len(t) > 1]
 
 
+#: How far apart the words of a name may sit and still be the same name.
+#: "Apex Heating and Air" spreads four tokens; a whole paragraph mentioning
+#: "Apex" in one sentence and "Air" in another is not a mention of the
+#: business, and treating it as one is what this window exists to prevent.
+NAME_WINDOW_SLACK = 3
+
+
+def _word_in(needle: str, hay: str) -> bool:
+    """Substring match on whole words only.
+
+    Without this, a business called "Ace" matches the "ace" inside "place",
+    and a one-word trade name scores visibility it does not have.
+    """
+    if not needle:
+        return False
+    return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", hay) is not None
+
+
 def name_matches(business_name: str, haystack: str) -> bool:
     """Does ``business_name`` appear in ``haystack``?
 
-    Requires either the full normalized name as a substring, or all of the
-    distinctive tokens present within a short window of each other. The window
-    check catches "Apex Heating & Air" when the answer says "Apex Air".
+    Either the full name appears as whole words, or enough of its tokens
+    appear *close together* — which is the part that matters and the part the
+    first version of this function only claimed to do. It checked whether each
+    token appeared anywhere in the answer, so "Austin Plumbing" matched an
+    answer that merely mentioned Austin and then recommended a competitor
+    whose name ended in Plumbing.
+
+    Every failure of that kind inflates a client's score: it reports them as
+    visible when they are not. That is the direction this must never be wrong
+    in, because the client can check it in ten seconds and the whole
+    engagement rests on the number being true. So the bar is deliberately set
+    where a fuzzy mention is missed rather than invented.
     """
     hay = normalize(haystack)
     full = normalize(business_name)
-    if not full:
+    if not full or not hay:
         return False
-    if full in hay:
+    if _word_in(full, hay):
         return True
 
     tokens = name_tokens(business_name)
     if not tokens:
         return False
+
     # The distinctive part of a local business name is usually the first token
-    # ("Apex", "Lone Star"). Require it, plus a majority of the rest.
+    # ("Apex", "Lone Star") rather than the trade word every competitor shares.
     distinctive = [t for t in tokens if t not in BIZ_SUFFIXES] or tokens
-    if not all(t in hay for t in distinctive[:2]):
+    anchors = distinctive[:2]
+
+    hay_tokens = hay.split()
+    span = len(tokens) + NAME_WINDOW_SLACK
+    # Enough of the name, close together. A two-token name needs both; a
+    # four-token name needs three, so "Lone Star Plumbing" is not read as a
+    # mention of "Lone Star Heating & Air".
+    needed = max(2, -(-len(tokens) * 6 // 10))
+    if len(tokens) < needed:
         return False
-    present = sum(1 for t in tokens if t in hay)
-    return present >= max(1, int(len(tokens) * 0.6))
+
+    # A two-word name has no redundancy: both words must sit together or it is
+    # not that name. "Denver Roofing" is not mentioned by "roofing in Denver:
+    # Peak Roofing" — the trade word there belongs to a competitor. Longer
+    # names can lose one word and still be recognisable, so they keep the
+    # window.
+    if len(tokens) == 2:
+        for i in range(len(hay_tokens) - 1):
+            if hay_tokens[i] == tokens[0] and hay_tokens[i + 1] == tokens[1]:
+                return True
+        return False
+
+    for i, word in enumerate(hay_tokens):
+        if word != anchors[0]:
+            continue
+        window = hay_tokens[i:i + span]
+        if not all(a in window for a in anchors):
+            continue
+        if sum(1 for t in tokens if t in window) >= needed:
+            return True
+    return False
 
 
 def extract_businesses(answer: str) -> list[str]:
@@ -120,7 +194,22 @@ def extract_businesses(answer: str) -> list[str]:
             add(m.group(1))
             continue
 
-    # 3. Fallback: capitalized phrases ending in a known business suffix.
+    # 3. Prose lists. Not every answer is bulleted: "Here are some options:
+    #    Apex Roofing, Summit Roofs, and Peak Exteriors." Splitting on the
+    #    separators a person would read as a list recovers the names the
+    #    line-based passes above cannot see.
+    if len(found) < 2:
+        for run in re.findall(
+                r"(?:such as|including|options?(?:\s+are)?|recommend|try|consider)\s*:?\s+"
+                r"([^.!?\n]{6,220})", answer or "", re.I):
+            parts = re.split(r",\s*(?:and\s+)?|\s+and\s+|;\s*", run)
+            for part in parts:
+                part = part.strip()
+                # Only capitalised phrases; a trailing clause is not a name.
+                if re.match(r"^[A-Z][\w'&.\-]*(?:\s+[A-Z0-9][\w'&.\-]*){0,3}$", part):
+                    add(part)
+
+    # 4. Fallback: capitalized phrases ending in a known business suffix.
     if len(found) < 2:
         for m in re.finditer(
             r"\b((?:[A-Z][\w'&.-]*\s+){0,3}[A-Z][\w'&.-]*)\b", answer or ""
