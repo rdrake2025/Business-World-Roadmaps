@@ -2580,3 +2580,96 @@ class TestOnboarding(unittest.TestCase):
             self.assertTrue(subject.strip(), key)
             self.assertNotIn("is about make", body, key)
             self.assertLessEqual(max(len(l) for l in body.split("\n")), 78, key)
+
+
+class TestNameMatching(unittest.TestCase):
+    """Whether a business was named is the product. Everything else — the
+    score, the report, the sales email, the renewal — is derived from it.
+
+    The failure that matters is the false positive: reporting a client as
+    visible when they are not. They can check it in ten seconds, and a number
+    they can disprove ends the engagement. So the bar is set where a fuzzy
+    mention is missed rather than invented.
+    """
+
+    def _match(self, business, answer):
+        from answerrank.engines.base import name_matches
+        return name_matches(business, answer)
+
+    # ---- real mentions must be found ----
+
+    def test_an_ampersand_written_as_and_is_still_them(self):
+        self.assertTrue(self._match(
+            "Apex Heating & Air", "I'd recommend Apex Heating and Air."))
+
+    def test_a_dropped_apostrophe_is_still_them(self):
+        """Answers routinely write Joe's as Joes. Splitting the name on the
+        apostrophe recorded a real mention of a real client as an absence."""
+        self.assertTrue(self._match("Joe's Plumbing", "Joes Plumbing is well reviewed."))
+        self.assertTrue(self._match("Joe's Plumbing", "Joe's Plumbing is well reviewed."))
+        self.assertTrue(self._match("Mike's HVAC", "Call Mikes HVAC."))
+
+    def test_a_shortened_name_is_still_them(self):
+        self.assertTrue(self._match(
+            "Apex Heating & Air", "Apex Heating is a solid choice."))
+
+    def test_a_bolded_list_entry_is_found(self):
+        self.assertTrue(self._match(
+            "Cornerstone Family Dental",
+            "**Cornerstone Family Dental** - accepting new patients"))
+
+    def test_an_exact_two_word_name_is_found(self):
+        self.assertTrue(self._match("Ace Plumbing", "Ace Plumbing did my repipe."))
+
+    # ---- the ones that inflate a score ----
+
+    def test_a_generic_name_does_not_match_a_competitors_answer(self):
+        """"Austin Plumbing" is not mentioned by an answer that says
+        "plumbers in Austin" and then recommends someone else."""
+        self.assertFalse(self._match(
+            "Austin Plumbing",
+            "For plumbers in Austin, TX, try Smith Brothers Plumbing."))
+        self.assertFalse(self._match(
+            "Denver Roofing",
+            "Best roofing in Denver: Peak Roofing, Summit Roofs."))
+        self.assertFalse(self._match(
+            "Tampa Dental",
+            "Looking for a dentist in Tampa? Bayshore Dental is excellent."))
+
+    def test_a_different_business_sharing_a_first_word_does_not_match(self):
+        self.assertFalse(self._match(
+            "Lone Star Heating & Air",
+            "Lone Star Plumbing is a different company entirely."))
+        self.assertFalse(self._match(
+            "Apex Heating & Air", "Apex Roofing handles storm damage."))
+
+    def test_words_scattered_across_a_paragraph_are_not_a_mention(self):
+        """The window is the whole point: "Apex" in one sentence and "air" in
+        another is not a mention of Apex Heating & Air."""
+        answer = "Apex was founded in 1998. " + ("filler " * 40) + "The air was cold."
+        self.assertFalse(self._match("Apex Heating & Air", answer))
+
+    def test_a_name_inside_a_longer_word_does_not_match(self):
+        self.assertFalse(self._match("Ace", "There is no place like it."))
+
+    def test_the_trade_words_alone_are_not_a_mention(self):
+        self.assertFalse(self._match(
+            "Premier Auto Repair", "many auto repair shops in the premier district."))
+
+    # ---- invariants ----
+
+    def test_empty_inputs_are_never_a_match(self):
+        for business, answer in (("", "anything"), ("Apex", ""), ("", "")):
+            self.assertFalse(self._match(business, answer))
+
+    def test_a_business_always_matches_its_own_name(self):
+        for name in ("Apex Heating & Air", "Joe's Plumbing", "Summit Climate Co",
+                     "A-1 Garage Doors", "Lone Star Heating & Air",
+                     "Cornerstone Family Dental"):
+            self.assertTrue(self._match(name, f"We recommend {name} in your area."),
+                            name)
+
+    def test_matching_is_not_affected_by_surrounding_punctuation(self):
+        for answer in ("Apex Heating & Air, open now.", "(Apex Heating & Air)",
+                       "Apex Heating & Air — 24/7", "...Apex Heating & Air!"):
+            self.assertTrue(self._match("Apex Heating & Air", answer), answer)
