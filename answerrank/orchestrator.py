@@ -20,12 +20,14 @@ from __future__ import annotations
 import logging
 import signal
 import sys
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
 from .agents.analyst import AnalystAgent
 from .agents.auditor import AuditorAgent
 from .agents.base import Agent
+from .models import AgentRun, now_iso
 from .agents.bookkeeper import BookkeeperAgent
 from .agents.concierge import ConciergeAgent
 from .agents.explorer import ExplorerAgent
@@ -88,6 +90,11 @@ class Orchestrator:
         self.settings = settings
         self.agents = agents or build_fleet(store, settings)
         self._stop = False
+        #: Agents whose previous run never returned. A stuck thread cannot be
+        #: killed in Python, so the next best thing is to refuse to start a
+        #: second copy of it — otherwise a permanently hung agent accumulates
+        #: one leaked thread per cycle, forever.
+        self._stuck: dict[str, threading.Thread] = {}
 
     # ---------------- scheduling ----------------
 
@@ -111,6 +118,52 @@ class Orchestrator:
 
     # ---------------- execution ----------------
 
+    def _run_guarded(self, agent: Agent) -> str:
+        """Run one agent, and give up on it if it never comes back.
+
+        ``Agent.run`` already turns any exception into a recorded failure. It
+        cannot do anything about a run that simply does not return — a socket
+        without a timeout, a DNS lookup against a resolver that accepts and
+        never answers. Left alone that blocks every agent behind it for as
+        long as the process lives, which is the opposite of running 24/7.
+        """
+        previous = self._stuck.get(agent.name)
+        if previous is not None and previous.is_alive():
+            return (f"[ERR] {agent.name:<12} still hung from a previous cycle; "
+                    f"skipped rather than started twice")
+
+        result: dict[str, AgentRun] = {}
+
+        def work() -> None:
+            result["run"] = agent.run()
+
+        worker = threading.Thread(target=work, daemon=True,
+                                  name=f"answerrank-{agent.name}")
+        worker.start()
+        worker.join(agent.max_seconds)
+
+        if worker.is_alive():
+            self._stuck[agent.name] = worker
+            stuck = AgentRun(agent=agent.name, status="error")
+            stuck.error = (f"no response after {agent.max_seconds}s — the fleet "
+                           f"moved on without it")
+            # finish_run is an UPDATE, so the row has to exist first or the
+            # timeout is recorded nowhere and the operator never learns why an
+            # agent went quiet.
+            self.store.start_run(stuck)
+            stuck.finished_at = now_iso()
+            self.store.finish_run(stuck)
+            log.error("%s exceeded its %ss budget; continuing without it",
+                      agent.name, agent.max_seconds)
+            return f"[ERR] {agent.name:<12} {stuck.error}"
+
+        self._stuck.pop(agent.name, None)
+        run = result.get("run")
+        if run is None:  # pragma: no cover - the thread died without recording
+            return f"[ERR] {agent.name:<12} finished without recording a result"
+        marker = "ok " if run.status == "ok" else "ERR"
+        return f"[{marker}] {agent.name:<12} {run.summary or run.error}"
+
     def tick(self, force: bool = False) -> list[str]:
         """Run every due agent once. Returns human-readable lines."""
         lines: list[str] = []
@@ -119,18 +172,28 @@ class Orchestrator:
                 break
             if not force and not self.is_due(agent):
                 continue
-            run = agent.run()
-            marker = "ok " if run.status == "ok" else "ERR"
-            lines.append(f"[{marker}] {agent.name:<12} {run.summary or run.error}")
+            lines.append(self._run_guarded(agent))
         return lines
 
-    def run_forever(self) -> None:
+    def stop(self) -> None:
+        """Ask the loop to finish the current agent and exit."""
+        self._stop = True
+
+    def run_forever(self, install_signals: bool = True) -> None:
+        """Tick until stopped.
+
+        ``install_signals`` is False when the fleet runs inside a thread
+        alongside the web server: `signal.signal` raises outright off the main
+        thread, and that exception would have killed the fleet the moment it
+        started.
+        """
         def handle(signum, _frame):
             log.info("signal %s received — finishing current agent then exiting", signum)
             self._stop = True
 
-        signal.signal(signal.SIGINT, handle)
-        signal.signal(signal.SIGTERM, handle)
+        if install_signals:
+            signal.signal(signal.SIGINT, handle)
+            signal.signal(signal.SIGTERM, handle)
 
         log.info(
             "fleet online: %s | tick=%ss | engines=%s",

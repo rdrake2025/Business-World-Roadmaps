@@ -23,6 +23,11 @@ class Agent(ABC):
     description: str = ""
     #: Default interval between runs, in seconds.
     interval: int = 3600
+    #: Longest a single run may take before the fleet gives up on it and moves
+    #: on. A crash is an exception and is caught; a hang is not an exception —
+    #: it is simply never returning, and without this one stuck network call
+    #: stops every agent behind it indefinitely, with nothing recorded.
+    max_seconds: int = 900
 
     def __init__(self, store: Store, settings: Settings):
         self.store = store

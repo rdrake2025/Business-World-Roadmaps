@@ -559,6 +559,33 @@ def cmd_web(args, settings: Settings) -> int:
     print("  Open it once — it stays signed in, and you can add it to your")
     print("  home screen so it opens like an app.")
 
+    # The fleet runs beside the console, in this same window.
+    #
+    # It did not, and that was the whole automation claim failing silently:
+    # `web` served the pages and nothing ticked, so the agents only moved when
+    # somebody pressed a button. A system that needs a human to press a button
+    # every few hours is not running 24/7, whatever the documentation says.
+    fleet_thread = None
+    if not args.no_fleet:
+        import threading
+
+        from .orchestrator import Orchestrator
+
+        store = _store(settings)
+        orchestrator = Orchestrator(store, settings)
+        fleet_thread = threading.Thread(
+            target=orchestrator.run_forever, kwargs={"install_signals": False},
+            daemon=True, name="answerrank-fleet")
+        fleet_thread.start()
+
+    _hr("RUNNING")
+    if fleet_thread:
+        print(f"  {len(build_fleet(_store(settings), settings))} agents are running "
+              f"in this window, on their own schedules.")
+        print(f"  They keep working while you do nothing. Leave it open.")
+    else:
+        print("  Fleet disabled (--no-fleet). The agents will not run.")
+
     _hr("NOTE")
     print("  Anyone on this network who has that link can approve outreach,")
     print("  so treat it like a password. Restart to issue a new one.")
@@ -1211,7 +1238,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--price", type=float)
     s.set_defaults(func=cmd_markets)
 
-    s = sub.add_parser("web", help="serve the site and the phone console")
+    s = sub.add_parser("web", help="serve the console and run the fleet")
+    s.add_argument("--no-fleet", action="store_true",
+                   help="serve the pages without running the agents")
     s.add_argument("--host", default="0.0.0.0"); s.add_argument("--port", type=int, default=8000)
     s.set_defaults(func=cmd_web)
 

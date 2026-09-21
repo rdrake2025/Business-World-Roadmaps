@@ -210,9 +210,25 @@ outreach — treat it like a password; restarting issues a new one.
 | `strategist` | 24h | Reads the evidence and recommends the single next move |
 | `researcher` | 6h | Runs a researcher against every agent and reports what holds |
 
-The orchestrator runs them on independent schedules in one process. An agent
-that crashes is recorded as a failed run; the fleet keeps going. "Due" is
-computed from the database, so restarts resume rather than replay.
+The orchestrator runs them on independent schedules in one process, started
+by the same window that serves the console — so double-clicking the launcher
+runs the business, not just the pages.
+
+Four properties make unattended operation real rather than claimed, and each
+is verified by experiment as well as by test:
+
+- **A crash is contained.** An agent raising is recorded as a failed run and
+  the fleet continues. Tested against `RuntimeError`, `MemoryError` and
+  `RecursionError` — the last two escape a narrower `except`.
+- **A hang is contained.** A crash is an exception; a hang is simply never
+  returning, which no `except` catches. Every agent carries a time budget,
+  and one that exceeds it is abandoned, recorded, and not started again while
+  the stuck thread is still alive.
+- **A restart resumes.** "Due" is computed from the database, not from
+  memory. Fifteen ticks after a restart produced zero repeat runs where a
+  naive loop would have produced two hundred.
+- **A signal is honoured.** SIGINT and SIGTERM finish the current agent and
+  exit cleanly, so a stop never lands mid-write.
 
 Order is deliberate. The Concierge runs first because an inbound reply outranks
 every piece of new work in the queue — it is the only event a human is waiting
@@ -266,6 +282,18 @@ python3 run.py research --refresh
 
 A test asserts the pairing is exact: every agent in the fleet has exactly one
 researcher, and no researcher shadows an agent that does not exist.
+
+### What it does not survive
+
+Being honest about the boundary: the fleet runs as long as the process runs.
+Closing the window stops it, and a laptop that sleeps stops it too. Because
+restarts resume rather than replay, an intermittently-running laptop loses
+throughput rather than data — the work simply happens more slowly.
+
+Continuous operation needs a machine that stays awake, which is the $6/month
+server in Phase 1 of the budget, triggered by the first paying client. The
+systemd units in `deploy/` are for that machine. Until then, a laptop left
+open overnight is the honest description.
 
 ## The three that close the loop
 
