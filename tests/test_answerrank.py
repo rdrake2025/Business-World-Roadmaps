@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -2924,3 +2925,174 @@ class TestResearchers(unittest.TestCase):
         rows = self.store.research_findings("outreach")
         self.assertTrue(rows)
         self.assertTrue(all(r["subject"] == "outreach" for r in rows))
+
+
+class TestUnattendedOperation(unittest.TestCase):
+    """The claims behind "runs 24/7 and automatically", each as a test.
+
+    Every one of these was verified by experiment first; two of them failed,
+    and the tests exist so they cannot fail again quietly.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+        self.settings.database_path = self.tmp.name
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def _agent(self, name, **kw):
+        from answerrank.agents.base import Agent
+        body = kw.pop("body", lambda self: (1, "done"))
+        attrs = {"name": name, "description": "test", "interval": 60,
+                 "execute": body}
+        attrs.update(kw)
+        return type(name.title(), (Agent,), attrs)(self.store, self.settings)
+
+    # ---- crash isolation ----
+
+    def test_a_crashing_agent_does_not_stop_the_ones_behind_it(self):
+        def boom(self):
+            raise RuntimeError("simulated failure")
+        fleet = [self._agent("first"), self._agent("boom", body=boom),
+                 self._agent("after")]
+        lines = Orchestrator(self.store, self.settings, fleet).tick(force=True)
+        ran = {r["agent"] for r in self.store.recent_runs(50)}
+        self.assertEqual(len(lines), 3)
+        self.assertIn("after", ran)
+
+    def test_even_a_memory_error_is_survived(self):
+        """A bare `except Exception` catches these; a narrower one would not."""
+        for name, err in (("mem", MemoryError), ("rec", RecursionError)):
+            def boom(self, _e=err):
+                raise _e("simulated")
+            fleet = [self._agent(name, body=boom), self._agent(f"{name}_after")]
+            Orchestrator(self.store, self.settings, fleet).tick(force=True)
+            self.assertIn(f"{name}_after",
+                          {r["agent"] for r in self.store.recent_runs(50)})
+
+    def test_every_failure_is_recorded_with_its_cause(self):
+        def boom(self):
+            raise ValueError("the specific cause")
+        fleet = [self._agent("boom", body=boom)]
+        Orchestrator(self.store, self.settings, fleet).tick(force=True)
+        row = self.store.recent_runs(10)[0]
+        self.assertEqual(row["status"], "error")
+        self.assertIn("the specific cause", row["error"])
+
+    # ---- a hang is not an exception ----
+
+    def test_an_agent_that_never_returns_does_not_block_the_fleet(self):
+        """A crash is caught. A hang is simply never returning — and one
+        stuck network call used to stop every agent behind it indefinitely,
+        with nothing recorded."""
+        import time as _time
+
+        def hang(self):
+            _time.sleep(30)
+            return 0, "never reached"
+        fleet = [self._agent("hangs", body=hang, max_seconds=1),
+                 self._agent("after")]
+        started = time.time()
+        Orchestrator(self.store, self.settings, fleet).tick(force=True)
+        elapsed = time.time() - started
+
+        ran = {r["agent"] for r in self.store.recent_runs(50)}
+        self.assertLess(elapsed, 15, "the fleet waited on a hung agent")
+        self.assertIn("after", ran)
+
+    def test_a_hang_is_recorded_so_the_operator_learns_why(self):
+        import time as _time
+
+        def hang(self):
+            _time.sleep(30)
+        fleet = [self._agent("hangs", body=hang, max_seconds=1)]
+        Orchestrator(self.store, self.settings, fleet).tick(force=True)
+        errors = [r for r in self.store.recent_runs(20)
+                  if r["status"] == "error" and "no response" in (r["error"] or "")]
+        self.assertTrue(errors, "a timeout left no trace")
+
+    def test_a_permanently_hung_agent_is_not_started_twice(self):
+        """A stuck thread cannot be killed, so starting a second copy each
+        cycle would leak one thread per tick forever."""
+        import time as _time
+
+        def hang(self):
+            _time.sleep(30)
+        fleet = [self._agent("hangs", body=hang, max_seconds=1)]
+        orch = Orchestrator(self.store, self.settings, fleet)
+        orch.tick(force=True)
+        lines = orch.tick(force=True)
+        self.assertIn("still hung", lines[0])
+
+    def test_every_agent_carries_a_time_budget(self):
+        from answerrank.orchestrator import AGENT_ORDER
+        for cls in AGENT_ORDER:
+            self.assertGreater(cls.max_seconds, 0, cls.name)
+
+    # ---- restart safety ----
+
+    def test_a_restart_resumes_rather_than_replaying(self):
+        """Due-ness is computed from the database, not from memory, so a
+        restarted process does not re-run everything it already did."""
+        fleet = [self._agent("once", interval=3600)]
+        Orchestrator(self.store, self.settings, fleet).tick()
+        first = len(self.store.recent_runs(50))
+
+        fresh_fleet = [self._agent("once", interval=3600)]
+        for _ in range(5):  # a fresh process, ticking repeatedly
+            Orchestrator(self.store, self.settings, fresh_fleet).tick()
+        self.assertEqual(len(self.store.recent_runs(50)), first)
+
+    def test_an_agent_is_due_again_once_its_interval_has_passed(self):
+        fleet = [self._agent("quick", interval=0)]
+        orch = Orchestrator(self.store, self.settings, fleet)
+        orch.tick()
+        orch.tick()
+        self.assertGreaterEqual(len(self.store.recent_runs(50)), 2)
+
+    def test_a_failed_run_does_not_count_as_done(self):
+        """Otherwise a broken agent would go quiet for a whole interval."""
+        def boom(self):
+            raise RuntimeError("nope")
+        fleet = [self._agent("boom", body=boom, interval=3600)]
+        orch = Orchestrator(self.store, self.settings, fleet)
+        orch.tick()
+        orch.tick()
+        self.assertEqual(len(self.store.recent_runs(50)), 2)
+
+    # ---- the fleet runs where the operator actually starts it ----
+
+    def test_serving_the_console_also_runs_the_fleet(self):
+        """start.bat ends in `run.py web`. If that only served pages, the
+        agents would move only when somebody pressed a button — which is not
+        running 24/7, whatever the documentation says."""
+        import inspect
+        from answerrank import cli
+        source = inspect.getsource(cli.cmd_web)
+        self.assertIn("Orchestrator", source)
+        self.assertIn("run_forever", source)
+
+    def test_the_fleet_can_run_off_the_main_thread(self):
+        """`signal.signal` raises outright off the main thread, which would
+        have killed the fleet the moment the web server started it."""
+        import threading
+        fleet = [self._agent("quick", interval=0)]
+        orch = Orchestrator(self.store, self.settings, fleet)
+        error = {}
+
+        def run():
+            try:
+                orch.run_forever(install_signals=False)
+            except Exception as exc:  # noqa: BLE001
+                error["exc"] = exc
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        time.sleep(1.5)
+        orch.stop()
+        t.join(timeout=10)
+        self.assertNotIn("exc", error, f"fleet died off-thread: {error.get('exc')}")
+        self.assertTrue(self.store.recent_runs(10))
