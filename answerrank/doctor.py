@@ -54,7 +54,17 @@ def check_dependencies() -> Check:
 
 
 def check_config(settings: Settings) -> Check:
+    from .config import CONFIG_PROBLEMS
+
     path = Path("answerrank.yml")
+    # A file that exists but will not parse is worse than no file: every
+    # setting silently reverts to a default, including the sender identity.
+    # Loading no longer crashes over it, so this is where it has to be said.
+    if CONFIG_PROBLEMS:
+        return Check("Config file", FAIL, CONFIG_PROBLEMS[0][:120],
+                     "Fix the YAML (check indentation and quotes), then rerun "
+                     "the doctor. Deleting it and running `python3 run.py init` "
+                     "starts from a clean template.")
     if path.exists():
         return Check("Config file", PASS, str(path))
     return Check("Config file", WARN, "using built-in defaults",

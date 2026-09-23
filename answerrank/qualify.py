@@ -35,6 +35,33 @@ STRONG_MARKETS = {
 CONSUMER_MAIL = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com",
                  "aol.com", "icloud.com", "live.com", "msn.com"}
 
+# Hosts where the business does not control the page. This is a hard blocker
+# rather than a soft signal: the deliverables are schema markup and
+# answer-shaped pages published on the client's own site. On someone else's
+# platform there is nowhere to put them, so there is nothing to sell.
+#
+# The branch below used to test ``business.domain`` — the *website* host —
+# against CONSUMER_MAIL, which no website is ever set to, so the check never
+# fired once. What it was reaching for is this.
+NOT_THEIR_SITE = {
+    "facebook.com", "m.facebook.com", "instagram.com", "linkedin.com",
+    "yelp.com", "nextdoor.com", "angi.com", "angieslist.com", "thumbtack.com",
+    "homeadvisor.com", "bbb.org", "google.com", "sites.google.com",
+    "business.site", "wixsite.com", "weebly.com", "blogspot.com",
+    "wordpress.com", "squarespace.com", "godaddysites.com", "myshopify.com",
+    "linktr.ee", "carrd.co",
+}
+
+
+def owns_their_site(domain: str) -> bool:
+    """Whether this host is the business's own, rather than a platform page."""
+    domain = (domain or "").strip().lower().removeprefix("www.")
+    if not domain or "." not in domain:
+        return False
+    if domain in NOT_THEIR_SITE:
+        return False
+    return not any(domain.endswith("." + host) for host in NOT_THEIR_SITE)
+
 
 @dataclass
 class Fit:
@@ -79,8 +106,11 @@ def score_fit(business, visibility_score: float | None = None,
     domain = business.domain
     if not domain:
         blockers.append("No website — nothing to optimise and nothing to sell.")
-    elif domain in CONSUMER_MAIL:
-        blockers.append("Consumer email domain — unlikely to buy a retainer.")
+    elif not owns_their_site(domain):
+        blockers.append(
+            f"Their only web presence is {domain}, a page on someone else's "
+            f"platform. The deliverables go on the client's own site, so "
+            f"there is nowhere to put them.")
     else:
         points += 15
         reasons.append("Owns a real domain")

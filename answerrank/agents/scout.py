@@ -63,6 +63,13 @@ def defensible_verticals(monthly_price: float,
     return [vertical for _price, vertical in priced] or FALLBACK_VERTICALS
 
 
+#: Stamped on the notes of any prospect the Scout invented. The send path
+#: refuses these outright: their domains do not resolve, so every one is a
+#: hard bounce, and bounces are capped at 2% before the sending domain is
+#: throttled wholesale.
+SIMULATED_MARKER = "SIMULATED — fixture data, never contact"
+
+
 class ScoutAgent(Agent):
     name = "scout"
     description = "Discovers local service businesses and adds them to the prospect pool."
@@ -131,7 +138,13 @@ class ScoutAgent(Agent):
         return out
 
     def simulated(self, count: int) -> list[Business]:
-        """Fixtures so the fleet is observable end-to-end with no credentials."""
+        """Fixtures so the fleet is observable end-to-end with no credentials.
+
+        These are invented. The domains do not resolve and the addresses do
+        not exist, so anything built from them is marked at the point it
+        enters the database and refused by the send path — see
+        :data:`SIMULATED_MARKER`.
+        """
         import hashlib
         stems = ["Apex", "Summit", "Ironclad", "BlueRidge", "Cornerstone", "Vanguard",
                  "Beacon", "Redwood", "Northgate", "Sterling", "Copperfield", "Harbor"]
@@ -158,9 +171,19 @@ class ScoutAgent(Agent):
     # ---------------- run ----------------
 
     def execute(self) -> tuple[int, str]:
-        found: list[Business] = self.from_seed_file()
+        seeded = self.from_seed_file()
+        # Count only what the seed file still has to offer. A CSV of fifty
+        # businesses that are all already prospects used to keep ``found``
+        # above target on every run, so live search was never reached and
+        # discovery stopped for good the day the file was imported.
+        fresh_seeds = [b for b in seeded
+                       if b.domain and not self.store.prospect_exists(b.domain)]
+        found: list[Business] = list(fresh_seeds)
 
-        if len(found) < self.target and self.settings.api_key("serper"):
+        has_live_source = bool(self.settings.api_key("serper"))
+        searched = False
+        if len(found) < self.target and has_live_source:
+            searched = True
             for vertical in self.verticals:
                 if len(found) >= self.target:
                     break
@@ -169,7 +192,20 @@ class ScoutAgent(Agent):
                         break
                     found.extend(self.from_serper(vertical, city, state))
 
+        simulated = False
         if not found:
+            # Inventing businesses is for watching the pipeline move with no
+            # credentials. With a live source configured, an empty result is
+            # an outage or an exhausted quota, and filling the database with
+            # fabricated addresses turns that into hard bounces against a
+            # 2% ceiling — on a real sending domain, from a real outage.
+            if has_live_source and not self.settings.demo_mode:
+                return 0, ("no businesses found this run — the search API "
+                           "returned nothing. Nothing invented to cover it.")
+            if seeded and not searched:
+                return 0, (f"seed file has {len(seeded)} businesses, all already "
+                           f"in the pipeline; nothing new to add")
+            simulated = True
             found = self.simulated(self.target)
 
         added = skipped = 0
@@ -180,8 +216,11 @@ class ScoutAgent(Agent):
             if self.store.prospect_exists(biz.domain):
                 skipped += 1
                 continue
-            self.store.upsert_prospect(Prospect(business=biz, stage="discovered"))
+            self.store.upsert_prospect(Prospect(
+                business=biz, stage="discovered",
+                notes=SIMULATED_MARKER if simulated else ""))
             added += 1
 
-        return added, (f"added {added} new prospects across "
+        source = "simulated" if simulated else ("search" if searched else "seed file")
+        return added, (f"added {added} new prospects from {source} across "
                        f"{'/'.join(self.verticals)}, skipped {skipped}")

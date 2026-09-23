@@ -455,7 +455,7 @@ class Api:
 
     def win(self, prospect_id: str, plan: str = "growth") -> dict[str, Any]:
         """Convert a prospect into a paying client. The moment that matters."""
-        from answerrank.models import Client, LedgerEntry
+        from answerrank.models import Client
 
         prospect = next((p for p in self.store.get_prospects(limit=10_000)
                          if p.id == prospect_id), None)
@@ -470,7 +470,9 @@ class Api:
 
         client = Client(business=prospect.business, plan=plan, mrr=price,
                         status="active")
-        self.store.upsert_client(client)
+        client_id, created = self.store.start_client(client)
+        if not created:
+            return {"error": f"{prospect.business.name} is already on the books"}
 
         prospect.stage = "won"
         prospect.notes = (prospect.notes or "") + f" | won on {plan} at ${price:,.0f}"
@@ -480,7 +482,7 @@ class Api:
             step=prospect.touches, kind="won", note=f"{plan} ${price:,.0f}")
 
         return {
-            "client_id": client.id,
+            "client_id": client_id,
             "name": prospect.business.name,
             "plan": plan,
             "mrr": price,

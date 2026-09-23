@@ -26,7 +26,12 @@ from __future__ import annotations
 from collections import Counter
 
 from . import knowledge
-from .engines.base import detect_sentiment, extract_businesses, name_matches
+from .engines.base import (
+    cites_domain,
+    detect_sentiment,
+    extract_businesses,
+    name_matches,
+)
 from .models import Audit, ProbeResult
 
 WEIGHTS = {"presence": 0.40, "prominence": 0.25, "citation": 0.20, "sentiment": 0.15}
@@ -77,10 +82,7 @@ def interpret(answer_text: str, sources: list[str], business_name: str,
             # Named in prose but not in the list structure: real, but weak.
             position = len(named) + 1 if named else 1
 
-    cited = bool(
-        business_domain
-        and any(business_domain in (s or "").lower() for s in sources)
-    )
+    cited = cites_domain(business_domain, sources)
 
     competitors = [
         n for n in named
@@ -133,6 +135,7 @@ def score_audit(audit: Audit) -> Audit:
     audit.subscores = {k: round(v * 100, 1) for k, v in subs.items()}
     audit.score = round(sum(subs[k] * WEIGHTS[k] for k in WEIGHTS) * 100, 1)
     audit.competitors = dict(competitor_counter.most_common(10))
+    audit.competitor_mentions_total = sum(competitor_counter.values())
     audit.engine_breakdown = {
         eng: round(100 * sum(hits) / len(hits), 1) for eng, hits in engine_hits.items()
     }
@@ -141,12 +144,29 @@ def score_audit(audit: Audit) -> Audit:
 
 
 def share_of_voice(audit: Audit) -> dict[str, float]:
-    """Percent of all business mentions that went to each player, us included."""
+    """Percent of all business mentions that went to each player, us included.
+
+    The denominator counts every competitor mention in the sweep, not just
+    the named ones. ``audit.competitors`` keeps the ten strongest so the
+    report has something to list; dividing by those ten alone quietly
+    deleted the long tail and inflated everyone still on the chart.
+    """
     mentions = sum(1 for r in audit.results if r.mentioned)
     totals = Counter(audit.competitors)
     totals[audit.business_name] = mentions
-    grand = sum(totals.values()) or 1
-    return {name: round(100 * c / grand, 1) for name, c in totals.most_common(8)}
+    # Audits written before this field existed fall back to what is charted.
+    competitor_total = max(audit.competitor_mentions_total,
+                           sum(audit.competitors.values()))
+    grand = competitor_total + mentions or 1
+
+    # The client is always on their own chart. ``most_common`` breaks ties by
+    # insertion order and the client is inserted last, so a business level
+    # with its rivals dropped off the bottom of the share-of-voice table in
+    # its own report — which reads as a bug to the person paying for it.
+    rows = [(name, c) for name, c in totals.most_common(8)
+            if name != audit.business_name][:7]
+    rows.insert(0, (audit.business_name, mentions))
+    return {name: round(100 * c / grand, 1) for name, c in rows}
 
 
 def competitor_gap(audit: Audit) -> float:

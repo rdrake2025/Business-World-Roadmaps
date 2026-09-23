@@ -398,9 +398,21 @@ def email_body(*paragraphs: str) -> str:
         # A paragraph carrying its own newlines is a block the author laid out
         # deliberately — a signature, an address — so each line wraps on its
         # own rather than being collapsed into one.
-        out.append("\n".join(textwrap.fill(line, WRAP) if line.strip() else ""
+        out.append("\n".join(_wrap_line(line) if line.strip() else ""
                              for line in para.strip().split("\n")))
     return "\n\n".join(out)
+
+
+_LIST_MARKER = re.compile(r"^(\s*(?:[-*•]|\d+[.)])\s+)")
+
+
+def _wrap_line(line: str) -> str:
+    """One line, wrapped. List items hang under their own text, and a name
+    like OAI-SearchBot is never split at its hyphen."""
+    marker = _LIST_MARKER.match(line)
+    indent = " " * len(marker.group(1)) if marker else ""
+    return textwrap.fill(line, WRAP, subsequent_indent=indent,
+                         break_on_hyphens=False, break_long_words=False)
 
 
 #: ``Sales_Business_Development_README.md`` names weak follow-ups as one of

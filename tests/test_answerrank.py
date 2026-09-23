@@ -9,11 +9,16 @@ Run with: python3 -m unittest discover -s tests -v
 
 from __future__ import annotations
 
+import io
+import json
 import os
+import pathlib
 import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -2291,7 +2296,7 @@ class TestBlendedDealValue(unittest.TestCase):
 
 
 class TestNoTradeIsHalfAdded(unittest.TestCase):
-    """One test standing in for a bug that has now happened four times.
+    """One test standing in for a bug that has now happened five times.
 
     Per-trade data kept escaping into lookup tables elsewhere in the codebase
     — prompt labels, schema types, trade directories — and each copy silently
@@ -2302,9 +2307,45 @@ class TestNoTradeIsHalfAdded(unittest.TestCase):
     authority at all.
 
     This walks every adopted trade through every per-trade surface and fails
-    if any of them falls back. A fifth copy will be caught the day it is
-    written rather than months later.
+    if any of them falls back, and separately hunts for the hand-written
+    copies themselves — because the fifth one (the setup wizard, offering
+    seven trades and silently replacing anything else with "hvac") passed
+    every per-surface check here while still being wrong.
     """
+
+    #: The original seven. Any list literal that is exactly these, anywhere in
+    #: the package, is a copy of the vertical library that stopped growing.
+    ORIGINAL_SEVEN = {"hvac", "plumbing", "roofing", "dental", "legal",
+                      "medical", "insurance"}
+
+    def test_no_module_keeps_its_own_copy_of_the_trade_list(self):
+        """Derive it from knowledge.py or do not have it."""
+        import ast
+
+        root = pathlib.Path(__file__).resolve().parent.parent / "answerrank"
+        offenders = []
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+                    continue
+                values = [e.value for e in node.elts
+                          if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+                if len(values) < 5:
+                    continue
+                overlap = self.ORIGINAL_SEVEN & set(values)
+                if len(overlap) >= 5 and not self.ORIGINAL_SEVEN - set(values):
+                    if set(values) - set(self._verticals()):
+                        continue  # not a vertical list at all
+                    offenders.append(f"{path.relative_to(root.parent)}:{node.lineno}")
+        self.assertEqual(
+            offenders, [],
+            "these hand-maintained trade lists will drift from knowledge.py; "
+            "derive them from knowledge.VERTICALS instead: " + ", ".join(offenders))
+
+    def test_the_setup_wizard_offers_every_trade(self):
+        from answerrank import knowledge, wizard
+        self.assertEqual(set(wizard.VERTICALS), set(knowledge.VERTICALS))
 
     def _verticals(self):
         from answerrank import knowledge
@@ -3096,3 +3137,1057 @@ class TestUnattendedOperation(unittest.TestCase):
         t.join(timeout=10)
         self.assertNotIn("exc", error, f"fleet died off-thread: {error.get('exc')}")
         self.assertTrue(self.store.recent_runs(10))
+
+
+class TestCitationIsAHostMatch(unittest.TestCase):
+    """Citation is a fifth of the score and the component sold as the
+    durable one. It used to be a substring search, which counted any URL
+    that merely spelled the domain out somewhere."""
+
+    def test_lookalike_domains_are_not_citations(self):
+        from answerrank.engines.base import cites_domain
+        for source in ("https://notjoesac.com/page",
+                       "https://joesac.com.phishy.ru/",
+                       "https://yelp.com/biz/joesac.com-reviews",
+                       "https://directory.io/?site=joesac.com"):
+            self.assertFalse(
+                cites_domain("joesac.com", [source]),
+                f"{source} is not a citation of joesac.com")
+
+    def test_the_real_site_still_counts(self):
+        from answerrank.engines.base import cites_domain
+        for source in ("https://joesac.com/about", "http://www.joesac.com",
+                       "joesac.com", "https://hvac.joesac.com/emergency"):
+            self.assertTrue(cites_domain("joesac.com", [source]), source)
+
+    def test_a_bare_word_is_never_a_domain(self):
+        from answerrank.engines.base import cites_domain
+        self.assertFalse(cites_domain("plumbing", ["https://plumbing.com"]))
+        self.assertFalse(cites_domain("", ["https://anything.com"]))
+
+    def test_a_false_citation_no_longer_inflates_the_score(self):
+        """The end-to-end consequence: a business cited nowhere scoring as
+        though it were cited everywhere."""
+        from answerrank.scoring import interpret
+        signals = interpret("Try Smith Plumbing.", ["https://notsmithco.com/x"],
+                            "Smith Plumbing", "smithco.com")
+        self.assertFalse(signals["cited"])
+
+
+class TestShareOfVoiceDenominator(unittest.TestCase):
+    def test_the_long_tail_is_in_the_denominator(self):
+        """`competitors` keeps the top ten so the report has a chart. Using
+        those ten as the whole market inflated everyone still on it."""
+        from answerrank.models import Audit, ProbeResult
+        from answerrank.scoring import share_of_voice
+
+        audit = Audit(business_id="b", business_name="Us", market="Austin, TX",
+                      vertical="hvac")
+        audit.results = [ProbeResult(probe_id="p", engine="mock", prompt="q",
+                                     answer_text="", mentioned=True, cited=False,
+                                     position=1)]
+        audit.competitors = {f"Rival {i}": 1 for i in range(10)}
+        audit.competitor_mentions_total = 30  # twenty more in the tail
+        share = share_of_voice(audit)
+        self.assertAlmostEqual(share["Us"], round(100 / 31, 1), places=1)
+        self.assertLess(share["Us"], 100 / 11,
+                        "share of voice must not ignore the untracked tail")
+
+    def test_older_audits_without_the_field_still_work(self):
+        from answerrank.models import Audit, ProbeResult
+        from answerrank.scoring import share_of_voice
+
+        audit = Audit(business_id="b", business_name="Us", market="Austin, TX",
+                      vertical="hvac")
+        audit.results = [ProbeResult(probe_id="p", engine="mock", prompt="q",
+                                     answer_text="", mentioned=True, cited=False,
+                                     position=1)]
+        audit.competitors = {"Rival": 3}
+        self.assertEqual(audit.competitor_mentions_total, 0)
+        self.assertAlmostEqual(share_of_voice(audit)["Us"], 25.0)
+
+
+class TestMoneyIsCountedOnce(unittest.TestCase):
+    """MRR and profit are the numbers this whole operation is steered by."""
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+        self.settings.database_path = self.tmp.name
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def _prospect(self):
+        from answerrank.models import Business, Prospect
+        biz = Business(name="Ridge HVAC", city="Austin", state="TX",
+                       vertical="hvac", website="https://ridgehvac.com",
+                       email="owner@ridgehvac.com")
+        p = Prospect(business=biz, stage="replied", score=20.0, competitor_gap=40.0)
+        self.store.upsert_prospect(p)
+        return p
+
+    def test_winning_the_same_deal_twice_does_not_double_mrr(self):
+        """A laggy tap on a phone gets tapped again. `upsert_client` keyed on
+        a freshly generated client id, so the second tap booked a second
+        active client for the same business."""
+        from web.api import Api
+
+        prospect = self._prospect()
+        api = Api(self.store, self.settings)
+        first = api.win(prospect.id, "growth")
+        self.assertNotIn("error", first)
+        mrr_after_one = self.store.mrr()
+
+        second = api.win(prospect.id, "growth")
+        self.assertIn("error", second)
+        self.assertEqual(self.store.mrr(), mrr_after_one)
+        self.assertEqual(len(self.store.get_clients("active")), 1)
+
+    def test_start_client_is_idempotent_per_business(self):
+        from answerrank.models import Business, Client
+
+        biz = Business(name="Ridge HVAC", city="Austin", state="TX", vertical="hvac")
+        first_id, created = self.store.start_client(
+            Client(business=biz, plan="growth", mrr=997.0))
+        self.assertTrue(created)
+        second_id, created_again = self.store.start_client(
+            Client(business=biz, plan="growth", mrr=997.0))
+        self.assertFalse(created_again)
+        self.assertEqual(first_id, second_id)
+        self.assertEqual(len(self.store.get_clients("active")), 1)
+
+    def test_a_client_is_billed_once_a_month_whatever_the_caller_does(self):
+        from answerrank.agents.bookkeeper import BookkeeperAgent
+        from answerrank.models import Business, Client
+
+        biz = Business(name="Ridge HVAC", city="Austin", state="TX", vertical="hvac")
+        self.store.start_client(Client(business=biz, plan="growth", mrr=997.0))
+
+        agent = BookkeeperAgent(self.store, self.settings)
+        for _ in range(5):
+            agent.execute()
+        revenue = self.store.pnl(30)["revenue"]
+        self.assertAlmostEqual(revenue, 997.0, places=2)
+
+    def test_concurrent_bookkeepers_cannot_both_bill(self):
+        """The fleet runs in a thread beside the web server, so this is the
+        real arrangement rather than a hypothetical one."""
+        import threading
+        from answerrank.models import LedgerEntry
+
+        wrote: list[bool] = []
+        barrier = threading.Barrier(6)
+
+        def bill():
+            barrier.wait()
+            wrote.append(self.store.add_ledger_once(
+                LedgerEntry(kind="revenue", category="subscription",
+                            amount=997.0, client_id="cli_x"),
+                "subscription:cli_x:2026-09"))
+
+        threads = [threading.Thread(target=bill) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        self.assertEqual(sum(wrote), 1, "exactly one writer may win")
+        self.assertAlmostEqual(self.store.pnl(30)["revenue"], 997.0, places=2)
+
+
+class TestConcurrentWrites(unittest.TestCase):
+    """The fleet thread and the threaded web server write the same file."""
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def test_two_threads_inserting_the_same_domain_do_not_raise(self):
+        """There is a unique index on domain and the upsert targets id, so a
+        check-then-insert that both threads passed ended in IntegrityError —
+        which killed whichever agent run hit it."""
+        import threading
+        from answerrank.models import Business, Prospect
+
+        errors: list[BaseException] = []
+        barrier = threading.Barrier(8)
+
+        def insert():
+            biz = Business(name="Ridge HVAC", city="Austin", state="TX",
+                           vertical="hvac", website="https://ridgehvac.com")
+            barrier.wait()
+            try:
+                self.store.upsert_prospect(Prospect(business=biz))
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=insert) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        self.assertEqual(errors, [], f"concurrent upsert raised: {errors}")
+        self.assertEqual(len(self.store.get_prospects(limit=50)), 1)
+
+    def test_a_failed_writer_block_rolls_back(self):
+        from answerrank.models import Business, Prospect
+
+        self.store.upsert_prospect(Prospect(business=Business(
+            name="Keep", city="Austin", state="TX", website="https://keep.com")))
+        with self.assertRaises(RuntimeError):
+            with self.store.writer() as cx:
+                cx.execute("DELETE FROM prospects")
+                raise RuntimeError("something went wrong mid-transaction")
+        self.assertEqual(len(self.store.get_prospects(limit=50)), 1)
+
+
+class TestAgentIntervalsAreHonoured(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+        self.settings.database_path = self.tmp.name
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def _agent(self, name, **kw):
+        from answerrank.agents.base import Agent
+        body = kw.pop("body", lambda self: (1, "done"))
+        attrs = {"name": name, "description": "test", "interval": 60,
+                 "execute": body}
+        attrs.update(kw)
+        return type(name.title(), (Agent,), attrs)(self.store, self.settings)
+
+    def test_a_daily_agent_stays_due_only_once_however_noisy_the_fleet(self):
+        """Due-ness was read from the most recent 200 runs. The fleet writes
+        roughly that many a day, so a daily agent fell out of the window,
+        looked as though it had never run, and went every single tick — with
+        the longest intervals the least honoured."""
+        from answerrank.models import AgentRun
+
+        daily = self._agent("daily", interval=24 * 3600)
+        Orchestrator(self.store, self.settings, [daily]).tick(force=True)
+        self.assertEqual(len(self.store.recent_runs(500)), 1)
+
+        # Now bury it under a day's worth of chatter from everyone else.
+        for i in range(400):
+            run = AgentRun(agent=f"chatty{i % 6}", status="ok")
+            self.store.start_run(run)
+            run.finished_at = now_iso()
+            self.store.finish_run(run)
+
+        orch = Orchestrator(self.store, self.settings, [daily])
+        self.assertFalse(orch.is_due(daily),
+                         "a daily agent must not come due again within the day")
+        self.assertEqual(orch.tick(), [])
+
+    def test_last_success_ignores_failures(self):
+        def boom(self):
+            raise RuntimeError("nope")
+        agent = self._agent("flaky", interval=24 * 3600, body=boom)
+        Orchestrator(self.store, self.settings, [agent]).tick(force=True)
+        self.assertIsNone(self.store.last_success_at("flaky"))
+        self.assertTrue(Orchestrator(self.store, self.settings, [agent]).is_due(agent))
+
+    def test_run_history_is_pruned(self):
+        """`agent_runs` is the only table that grows purely with uptime, on a
+        file the operator is told to back up by copying it."""
+        from answerrank.models import AgentRun
+
+        old = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat(
+            timespec="seconds")
+        for i in range(5):
+            run = AgentRun(agent="ancient", status="ok")
+            run.started_at = old
+            self.store.start_run(run)
+        run = AgentRun(agent="recent", status="ok")
+        self.store.start_run(run)
+
+        removed = self.store.prune_agent_runs(30)
+        self.assertEqual(removed, 5)
+        remaining = {r["agent"] for r in self.store.recent_runs(50)}
+        self.assertEqual(remaining, {"recent"})
+
+
+class TestUnsubscribeReachesTheRightAddress(unittest.TestCase):
+    def setUp(self):
+        self.settings = Settings()
+        self.settings.website = "https://answerrank.io"
+        self.settings.from_email = "hello@answerrank.io"
+
+    def test_a_plus_address_survives_the_unsubscribe_link(self):
+        """`info+sales@` pasted into a query string arrives as `info sales@`,
+        fails validation and is never suppressed — while the recipient's mail
+        client tells them they unsubscribed. The next message is a complaint,
+        and complaints are capped at 0.3%."""
+        import urllib.parse
+        from answerrank.mailer import build_message
+
+        address = "info+sales@example.com"
+        msg = build_message(address, "Subject", "Body", self.settings)
+        header = msg["List-Unsubscribe"]
+        url = header.split(">")[0].lstrip("<")
+        parsed = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        self.assertEqual(parsed["e"][0], address)
+
+    def test_one_click_headers_are_both_present(self):
+        from answerrank.mailer import build_message
+        msg = build_message("a@b.com", "s", "b", self.settings)
+        self.assertIn("List-Unsubscribe", msg)
+        self.assertEqual(msg["List-Unsubscribe-Post"], "List-Unsubscribe=One-Click")
+
+
+class TestOperatorEditableFiles(unittest.TestCase):
+    """The operator is told to hand-edit these, on Windows, in Notepad."""
+
+    def test_a_broken_config_does_not_take_the_app_down(self):
+        """`answerrank.yml` is read at import of `answerrank.config`, which
+        every entry point imports. A stray tab used to be a YAML traceback
+        and no console."""
+        from answerrank.config import CONFIG_PROBLEMS, load_settings
+
+        with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False,
+                                         encoding="utf-8") as fh:
+            fh.write("brand: Fine\n\tbroken: [unclosed\n")
+            path = fh.name
+        try:
+            settings = load_settings(path)
+            self.assertTrue(settings.brand)
+            self.assertTrue(CONFIG_PROBLEMS)
+        finally:
+            os.unlink(path)
+
+    def test_a_config_that_is_not_a_mapping_is_reported_not_raised(self):
+        from answerrank.config import CONFIG_PROBLEMS, load_settings
+
+        with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False,
+                                         encoding="utf-8") as fh:
+            fh.write("- just\n- a\n- list\n")
+            path = fh.name
+        try:
+            load_settings(path)
+            self.assertTrue(CONFIG_PROBLEMS)
+        finally:
+            os.unlink(path)
+
+    def test_the_doctor_says_so_rather_than_passing_quietly(self):
+        from answerrank.config import CONFIG_PROBLEMS, load_settings
+        from answerrank.doctor import check_config
+
+        with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False,
+                                         encoding="utf-8") as fh:
+            fh.write("brand: Fine\n\tbroken: [unclosed\n")
+            path = fh.name
+        try:
+            settings = load_settings(path)
+            self.assertTrue(CONFIG_PROBLEMS)
+            check = check_config(settings)
+            self.assertEqual(check.status.lower(), "fail")
+            self.assertTrue(check.blocking or check.status.lower() == "fail")
+        finally:
+            os.unlink(path)
+
+    def test_a_config_with_non_ascii_round_trips(self):
+        """Written as UTF-8 and read back with the platform default is cp1252
+        on Windows, which mangles anything the operator actually typed."""
+        from answerrank.config import load_settings
+
+        with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False,
+                                         encoding="utf-8") as fh:
+            fh.write('brand: "Muñoz Heating — Austin"\n')
+            path = fh.name
+        try:
+            self.assertEqual(load_settings(path).brand, "Muñoz Heating — Austin")
+        finally:
+            os.unlink(path)
+
+    def test_a_mistyped_smtp_port_falls_back_instead_of_raising(self):
+        from answerrank.mailer import SMTPConfig
+        for bad in ("", "  ", "not-a-port", "0", "99999"):
+            with unittest.mock.patch.dict(os.environ, {"SMTP_PORT": bad}):
+                self.assertEqual(SMTPConfig.from_env().port, 587)
+
+
+class TestConsoleFailsLoudly(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.settings = Settings()
+        self.settings.database_path = self.tmp.name
+        self.store = Store(self.tmp.name)
+        from web.app import Application
+        self.app = Application(self.settings, self.store)
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def _get(self, path, query=""):
+        captured = {}
+
+        def start(status, headers, exc_info=None):
+            captured["status"] = status
+            captured["headers"] = dict(headers)
+        environ = {"PATH_INFO": path, "REQUEST_METHOD": "GET",
+                   "QUERY_STRING": query,
+                   "HTTP_X_AUTH_TOKEN": self.app.token,
+                   "wsgi.input": io.BytesIO(b"")}
+        body = b"".join(self.app(environ, start))
+        return captured, body
+
+    def test_a_broken_api_route_answers_in_json(self):
+        """The console calls res.json() on everything. An HTML error page did
+        not read as an error — the panel just went blank and stayed blank."""
+        def explode():
+            raise RuntimeError("deliberate")
+
+        with unittest.mock.patch.object(type(self.app.api), "state",
+                                        side_effect=lambda: explode()):
+            captured, body = self._get("/api/state")
+        self.assertTrue(captured["status"].startswith("500"))
+        self.assertEqual(captured["headers"]["Content-Type"], "application/json")
+        self.assertIn("deliberate", json.loads(body)["error"])
+
+    def test_a_nonsense_limit_is_not_a_server_error(self):
+        captured, body = self._get("/api/prospects", "limit=twenty")
+        self.assertTrue(captured["status"].startswith("200"))
+        self.assertIn("items", json.loads(body))
+
+    def test_a_negative_limit_does_not_mean_unlimited(self):
+        """SQLite reads `LIMIT -1` as no limit at all."""
+        from web.app import _int
+        self.assertEqual(_int("-5", 40, 1, 200), 1)
+        self.assertEqual(_int("9999", 40, 1, 200), 200)
+        self.assertEqual(_int(None, 40, 1, 200), 40)
+
+
+class TestContactDiscoveryIsPolite(unittest.TestCase):
+    def test_robots_is_fetched_once_per_site(self):
+        """It was refetched before every candidate path: up to seven requests
+        for the same file, from a crawler asking the site owner a favour."""
+        from answerrank import contacts
+
+        calls = []
+
+        class FakeResponse:
+            status_code = 200
+            headers = {"Content-Type": "text/html"}
+            encoding = "utf-8"
+            text = "User-agent: *\nAllow: /\n"
+
+            def iter_content(self, _n):
+                yield b'<a href="mailto:owner@ridgehvac.com">email</a>'
+
+            def close(self):
+                pass
+
+        class FakeSession:
+            headers = {}
+
+            def get(self, url, **_kw):
+                calls.append(url)
+                return FakeResponse()
+
+            def close(self):
+                pass
+
+        contact = contacts.find_contact("https://ridgehvac.com",
+                                        session=FakeSession())
+        robots_calls = [c for c in calls if c.endswith("/robots.txt")]
+        self.assertEqual(len(robots_calls), 1, calls)
+        self.assertEqual(contact.email, "owner@ridgehvac.com")
+
+    def test_an_oversized_page_is_not_pulled_into_memory_whole(self):
+        from answerrank import contacts
+
+        class HugeResponse:
+            status_code = 200
+            headers = {"Content-Type": "text/html"}
+            encoding = "utf-8"
+
+            def iter_content(self, n):
+                # Far more than the cap; the reader must stop early.
+                for _ in range(200):
+                    yield b"x" * n
+
+            def close(self):
+                pass
+
+        class FakeSession:
+            def get(self, _url, **_kw):
+                return HugeResponse()
+
+        html = contacts._fetch_html(FakeSession(), "https://x.com", 5)
+        self.assertLessEqual(len(html), contacts._MAX_PAGE_BYTES + 65536)
+
+
+class TestDailyCapHolds(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+        self.settings.database_path = self.tmp.name
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def test_only_one_batch_runs_at_a_time(self):
+        """The cap is read once and trusted for the whole batch. Two callers
+        reading "12 of 40 used" together both send 28, and overshooting the
+        warm-up ramp is the one thing it exists to prevent."""
+        import threading
+        from answerrank import sending
+
+        started = threading.Event()
+        release = threading.Event()
+        outcomes = []
+
+        def slow_batch(*_a, **_kw):
+            started.set()
+            release.wait(timeout=10)
+            return {"sent": 1, "blocked": False}
+
+        original = sending._send_batch_locked
+        sending._send_batch_locked = slow_batch
+        patch = unittest.mock.patch(
+            "answerrank.agents.outreach.OutreachAgent.preflight", return_value=[])
+        patch.start()
+        try:
+            def first():
+                outcomes.append(sending.send_batch(self.store, self.settings))
+
+            t = threading.Thread(target=first, daemon=True)
+            t.start()
+            self.assertTrue(started.wait(timeout=10))
+            second = sending.send_batch(self.store, self.settings)
+            release.set()
+            t.join(timeout=10)
+        finally:
+            sending._send_batch_locked = original
+            patch.stop()
+
+        self.assertTrue(second["blocked"], second)
+        self.assertIn("already running", " ".join(second["reasons"]))
+
+
+class TestNothingInventedReachesAMailbox(unittest.TestCase):
+    """The Scout falls back to fabricated businesses so the pipeline is
+    observable without credentials. Those domains do not resolve, so every
+    one is a hard bounce — against a 2% ceiling, on a real sending domain."""
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+        self.settings.database_path = self.tmp.name
+        self.settings.physical_address = "1 Real St, Austin, TX 78701"
+        self.settings.website = "https://answerrank.io"
+        self.settings.from_email = "hello@answerrank.io"
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def test_an_api_outage_is_reported_not_papered_over(self):
+        """With a live source configured, an empty result is an outage or an
+        exhausted quota — not a cue to invent businesses."""
+        with unittest.mock.patch.dict(os.environ, {"SERPER_API_KEY": "sk-live"}):
+            agent = ScoutAgent(self.store, self.settings)
+            with unittest.mock.patch.object(ScoutAgent, "from_serper",
+                                            return_value=[]):
+                added, summary = agent.execute()
+        self.assertEqual(added, 0)
+        self.assertIn("nothing", summary.lower())
+        self.assertEqual(self.store.get_prospects(limit=50), [])
+
+    def test_fixtures_are_marked_where_they_enter(self):
+        agent = ScoutAgent(self.store, self.settings, target_per_run=3)
+        added, _ = agent.execute()
+        self.assertGreater(added, 0)
+        from answerrank.agents.scout import SIMULATED_MARKER
+        for p in self.store.get_prospects(limit=50):
+            self.assertIn(SIMULATED_MARKER, p.notes)
+
+    def test_outreach_refuses_to_draft_for_a_fixture(self):
+        from answerrank.agents.scout import SIMULATED_MARKER
+        from answerrank.models import Business, Prospect
+
+        biz = Business(name="Apex Heating & Air", city="Austin", state="TX",
+                       vertical="hvac", website="https://apexhvac1a2b.com",
+                       email="office@apexhvac1a2b.com")
+        prospect = Prospect(business=biz, stage="audited", score=12.0,
+                            competitor_gap=60.0, notes=SIMULATED_MARKER)
+        agent = OutreachAgent(self.store, self.settings)
+        self.assertFalse(agent._eligible(prospect))
+
+        # The same prospect without the marker is exactly what we do want.
+        prospect.notes = ""
+        self.assertTrue(agent._eligible(prospect))
+
+
+class TestSeedFileDoesNotStallDiscovery(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+        self.settings.database_path = self.tmp.name
+        self.csv = tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False,
+                                               encoding="utf-8", newline="")
+        self.csv.write("name,city,state,vertical,website,email,phone\n")
+        for i in range(30):
+            self.csv.write(
+                f"Seed {i} Plumbing,Austin,TX,plumbing,https://seed{i}.com,"
+                f"owner@seed{i}.com,512-555-0100\n")
+        self.csv.close()
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+        os.unlink(self.csv.name)
+
+    def test_live_search_still_runs_once_the_seed_file_is_exhausted(self):
+        """A CSV of thirty businesses kept `found` above target on every run,
+        so the search branch was never reached — discovery stopped for good
+        the day the file was imported."""
+        with unittest.mock.patch.dict(os.environ, {"SERPER_API_KEY": "sk-live"}):
+            agent = ScoutAgent(self.store, self.settings, target_per_run=25,
+                               seed_file=self.csv.name)
+            first, _ = agent.execute()
+            self.assertGreater(first, 0)
+
+            calls = []
+
+            def fake_search(self, vertical, city, state):
+                calls.append((vertical, city, state))
+                return []
+
+            with unittest.mock.patch.object(ScoutAgent, "from_serper", fake_search):
+                agent.execute()
+        self.assertTrue(calls, "search must run once the seed file is spent")
+
+
+class TestQualificationGateIsLive(unittest.TestCase):
+    """The consumer-mail blocker tested `business.domain` — the *website*
+    host — which no website is ever set to, so it never fired once."""
+
+    def _biz(self, site):
+        from answerrank.models import Business
+        return Business(name="Joes Plumbing", city="Austin", state="TX",
+                        vertical="plumbing", website=site,
+                        email="owner@joesplumbing.com")
+
+    def test_a_platform_page_is_not_a_site_we_can_work_on(self):
+        from answerrank.qualify import score_fit
+        for site in ("https://facebook.com/joesplumbing",
+                     "https://joes.wixsite.com/plumbing",
+                     "https://www.yelp.com/biz/joes-plumbing",
+                     "https://sites.google.com/view/joes"):
+            fit = score_fit(self._biz(site), 20.0, 997.0)
+            self.assertFalse(fit.worth_pitching, site)
+            self.assertTrue(fit.blockers, site)
+
+    def test_their_own_domain_still_qualifies(self):
+        from answerrank.qualify import score_fit
+        fit = score_fit(self._biz("https://joesplumbing.com"), 20.0, 997.0)
+        self.assertTrue(fit.worth_pitching)
+
+    def test_a_lookalike_host_is_not_caught(self):
+        from answerrank.qualify import owns_their_site
+        self.assertTrue(owns_their_site("notfacebook.com"))
+        self.assertTrue(owns_their_site("facebook.com.joesplumbing.com"))
+        self.assertFalse(owns_their_site("pages.facebook.com"))
+
+
+class TestWizardSurvivesRealTyping(unittest.TestCase):
+    def test_a_dollar_sign_does_not_end_setup(self):
+        """`float(ask(...))` on "$297" raised, losing everything already
+        typed, at the first thing the operator ever runs."""
+        from answerrank import wizard
+
+        answers = iter(["$1,997", "-5", "997"])
+        with unittest.mock.patch.object(wizard, "ask",
+                                        side_effect=lambda *a, **k: next(answers)):
+            self.assertEqual(wizard.ask_money("Growth monthly", "997"), 1997.0)
+            self.assertEqual(wizard.ask_money("Growth monthly", "997"), 997.0)
+
+    def test_ctrl_d_at_a_yes_no_prompt_exits_cleanly(self):
+        from answerrank import wizard
+        with unittest.mock.patch("builtins.input", side_effect=EOFError):
+            with self.assertRaises(SystemExit):
+                wizard.ask_yes("Use the defaults?")
+
+
+# ---------------------------------------------------------------------------
+# Found by simulating 30 sales end to end (answerrank/simulate.py). Before
+# these fixes the simulation closed 0 of 30.
+# ---------------------------------------------------------------------------
+
+class _SalesFixture(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+        self.settings.demo_mode = True
+        self.settings.database_path = self.tmp.name
+        self.settings.physical_address = "1 Test St, Austin, TX 78701"
+        self.settings.website = "https://answerrank.example"
+        self.settings.from_email = "hello@answerrank.example"
+        self.settings.outreach.min_seconds_between_sends = 0
+        self.no_network = unittest.mock.patch(
+            "answerrank.crawlers.check_access",
+            side_effect=lambda site, timeout=10: __import__(
+                "answerrank.crawlers", fromlist=["x"]).Access(domain="x.com"))
+        self.no_network.start()
+
+    def tearDown(self):
+        self.no_network.stop()
+        os.unlink(self.tmp.name)
+
+    def _prospect(self, stage="contacted", email="owner@ridgeelectric.com"):
+        biz = Business(name="Ridge Electric", city="Austin", state="TX",
+                       vertical="electrical", website="https://ridgeelectric.com",
+                       email=email)
+        p = Prospect(business=biz, stage=stage, score=18.0, competitor_gap=50.0,
+                     touches=1, notes="Ridge Electric appears in 1 of 4 AI answers")
+        self.store.upsert_prospect(p)
+        return p
+
+    def _concierge(self):
+        from answerrank.agents.concierge import ConciergeAgent
+        return ConciergeAgent(self.store, self.settings)
+
+    def _sent(self):
+        sent = []
+
+        def fake_send(self_, to, subject, body):
+            sent.append((to, subject, body))
+            return True, "sent"
+        return sent, unittest.mock.patch("answerrank.mailer.Mailer.send", fake_send)
+
+
+class TestTheFreeReportIsDelivered(_SalesFixture):
+    """Every opener promises a free report. Every "yes" was answered with
+    "you'll have it within a day", and nothing ever produced it: all thirty
+    simulated buyers went cold waiting."""
+
+    def test_a_yes_drafts_the_report_itself(self):
+        prospect = self._prospect()
+        result = self._concierge().handle_reply(prospect, "Yes please, send it over.")
+        self.assertEqual(result["action"], "send_report")
+        msg = next(m for m in self.store.messages_for(prospect.id)
+                   if m.id == result["message_id"])
+        self.assertEqual(msg.kind, "report")
+        self.assertIn("visibility report", msg.subject.lower())
+        self.assertIn("Questions where you weren't named", msg.body)
+        self.assertIn("The three fixes", msg.body)
+        self.assertNotIn("within a day", msg.body)
+
+    def test_the_report_never_tells_them_to_fix_what_is_fine(self):
+        """Their robots.txt was read and lets every engine in. "Allow the
+        answer engines in robots.txt" was fix number one anyway."""
+        prospect = self._prospect()
+        result = self._concierge().handle_reply(prospect, "yes")
+        msg = next(m for m in self.store.messages_for(prospect.id)
+                   if m.id == result["message_id"])
+        self.assertNotIn("Allow the answer engines", msg.body)
+
+    def test_a_second_yes_after_the_report_moves_to_the_price(self):
+        prospect = self._prospect()
+        concierge = self._concierge()
+        concierge.handle_reply(prospect, "yes")
+        result = concierge.handle_reply(prospect, "Sounds good")
+        self.assertEqual(result["action"], "propose_start")
+
+
+class TestRepliesAreReadCorrectly(unittest.TestCase):
+    """Each of these was misread in the simulation, and each misreading lost
+    a sale or mailed someone who had asked us to stop."""
+
+    def _read(self, text, **kw):
+        from answerrank.agents.concierge import classify
+        return classify(text, **kw)
+
+    def test_chasing_the_report_is_not_hostility(self):
+        """`report you` inside "the report you mentioned" filed the buyer as
+        hostile and suppressed them for chasing what we promised."""
+        self.assertEqual(self._read("Still waiting on the report you mentioned."),
+                         "interested")
+        self.assertEqual(self._read("How did you get this address? Reporting you."),
+                         "hostile")
+
+    def test_asking_about_a_contract_is_not_hostility(self):
+        self.assertEqual(
+            self._read("Is there a contract? I'd want my lawyer to look at it first."),
+            "question")
+
+    def test_hold_off_is_a_no(self):
+        self.assertEqual(self._read("Let's hold off for now, thanks."), "not_interested")
+
+    def test_a_yes_with_a_question_is_still_a_yes(self):
+        self.assertEqual(self._read("Yes. Is this really free?"), "interested")
+        self.assertEqual(self._read("Interested. What did you find?"), "interested")
+
+    def test_a_buyer_saying_yes_is_a_sale_not_a_question(self):
+        for text in ("Alright, sign us up.", "Deal. Send me the invoice.",
+                     "Ok, let's do it. How do we get started?", "start",
+                     "We're in. What do you need from me?"):
+            self.assertEqual(self._read(text), "ready_to_buy", text)
+
+    def test_a_client_is_a_client(self):
+        self.assertEqual(self._read("Who do I send the website login to?",
+                                    is_client=True), "client_message")
+        self.assertEqual(self._read("Unsubscribe", is_client=True), "unsubscribe")
+
+    def test_phrasings_the_simulation_did_not_use(self):
+        """The simulation's replies and this classifier were written by the
+        same hand, so passing them is necessary and not sufficient."""
+        self.assertEqual(self._read("We're in Austin, not Dallas."), "question")
+        self.assertEqual(self._read("What's the deal with this?"), "question")
+        self.assertEqual(self._read("Once we're all set up, send it over"), "interested")
+        self.assertEqual(self._read("Stop."), "unsubscribe")
+
+
+class TestOnlyColdMessagesMoveTheSequence(_SalesFixture):
+    """The send path treated every message as a cold-sequence step, so
+    answering an interested prospect — or welcoming a new client — put them
+    back into the sequence, and the next Outreach run sent them "Closing the
+    loop — last note from me"."""
+
+    def test_answering_a_reply_does_not_demote_it(self):
+        from answerrank.sending import send_batch
+        prospect = self._prospect()
+        result = self._concierge().handle_reply(prospect, "How much does it cost?")
+        answer = next(m for m in self.store.messages_for(prospect.id)
+                      if m.id == result["message_id"])
+        answer.status = "approved"
+        self.store.save_message(answer)
+        sent, patch = self._sent()
+        with patch:
+            send_batch(self.store, self.settings)
+        self.assertTrue(sent)
+        stage = next(p for p in self.store.get_prospects(limit=10)
+                     if p.id == prospect.id).stage
+        self.assertEqual(stage, "replied")
+
+    def test_welcoming_a_client_does_not_put_them_back_in_the_sequence(self):
+        from answerrank.sending import send_batch
+        prospect = self._prospect(stage="won")
+        self.store.save_message(OutreachMessage(
+            prospect_id=prospect.id, subject="You're in", body="Welcome.",
+            sequence_step=0, kind="welcome", status="approved"))
+        sent, patch = self._sent()
+        with patch:
+            send_batch(self.store, self.settings)
+        self.assertEqual(len(sent), 1)
+        stage = next(p for p in self.store.get_prospects(limit=10)
+                     if p.id == prospect.id).stage
+        self.assertEqual(stage, "won")
+
+    def test_a_stale_cold_message_is_withdrawn_not_sent(self):
+        """Approved on Monday, overtaken by a "yes" on Tuesday."""
+        from answerrank.sending import send_batch
+        prospect = self._prospect(stage="replied")
+        self.store.save_message(OutreachMessage(
+            prospect_id=prospect.id, subject="Closing the loop", body="Last note.",
+            sequence_step=3, status="approved"))
+        sent, patch = self._sent()
+        with patch:
+            result = send_batch(self.store, self.settings)
+        self.assertEqual(sent, [])
+        self.assertEqual(result["withdrawn"], 1)
+
+    def test_a_reply_pulls_pending_follow_ups(self):
+        prospect = self._prospect()
+        self.store.save_message(OutreachMessage(
+            prospect_id=prospect.id, subject="Re: follow-up", body="b",
+            sequence_step=2, status="approved"))
+        self._concierge().handle_reply(prospect, "Not interested.")
+        kinds = {(m.kind, m.status) for m in self.store.messages_for(prospect.id)}
+        self.assertIn(("cold", "superseded"), kinds)
+
+    def test_a_plain_no_drafts_nothing_that_could_never_be_sent(self):
+        prospect = self._prospect()
+        result = self._concierge().handle_reply(prospect, "No thanks.")
+        self.assertEqual(result["message_id"], "")
+
+
+class TestAnswersGoBeforeColdMail(_SalesFixture):
+    def test_a_reply_goes_out_when_the_cold_cap_is_spent(self):
+        """Replies queued behind cold mail by creation date: in the
+        simulation the median wait for an answer was seven days."""
+        from answerrank.sending import send_batch
+        for i in range(12):
+            p = Prospect(business=Business(
+                name=f"Co {i}", city="Austin", state="TX", vertical="electrical",
+                website=f"https://c{i}.com", email=f"o@c{i}.com"), stage="audited")
+            self.store.upsert_prospect(p)
+            self.store.save_message(OutreachMessage(
+                prospect_id=p.id, subject="s", body="b", status="approved"))
+        warm = self._prospect(stage="replied")
+        self.store.save_message(OutreachMessage(
+            prospect_id=warm.id, subject="Re: Ridge Electric", body="Answer.",
+            kind="reply", status="approved"))
+        sent, patch = self._sent()
+        with patch:
+            send_batch(self.store, self.settings, limit=100)
+        self.assertEqual(sent[0][0], "owner@ridgeelectric.com")
+        self.assertEqual(sum(1 for s in sent if s[0] != "owner@ridgeelectric.com"), 10,
+                         "day one's cap of 10 applies to cold mail only")
+
+
+class TestBounceBrake(_SalesFixture):
+    def _history(self, sent, bounced):
+        for i in range(sent):
+            self.store.record_outcome(prospect_id=f"p{i}", kind="sent")
+        for i in range(bounced):
+            self.store.record_outcome(prospect_id=f"b{i}", kind="bounced")
+
+    def test_the_ceiling_is_enforced(self):
+        """Configured and promised in the mailer's docstring; read by nothing."""
+        from answerrank.sending import bounce_blocker
+        self._history(sent=120, bounced=4)
+        self.assertIn("paused", bounce_blocker(self.store, self.settings))
+
+    def test_noise_does_not_trip_it(self):
+        """2 bounces in 52 tripped the first version for two weeks."""
+        from answerrank.sending import bounce_blocker
+        self._history(sent=50, bounced=2)
+        self.assertEqual(bounce_blocker(self.store, self.settings), "")
+
+
+class TestClientsAreTreatedAsClients(_SalesFixture):
+    def _client(self):
+        prospect = self._prospect(stage="won")
+        self.store.start_client(Client(business=prospect.business, plan="growth",
+                                       mrr=997.0))
+        return prospect, self.store.get_clients("active")[0]
+
+    def test_a_client_message_is_not_answered_with_a_pitch(self):
+        prospect, client = self._client()
+        result = self._concierge().handle_reply(
+            prospect, "Who do I send the website login to?")
+        self.assertEqual(result["intent"], "client_message")
+        body = next(m for m in self.store.messages_for(prospect.id)
+                    if m.id == result["message_id"]).body
+        self.assertNotIn("free", body.lower())
+        stage = next(p for p in self.store.get_prospects(limit=10)
+                     if p.id == prospect.id).stage
+        self.assertEqual(stage, "won")
+
+    def test_retention_hears_the_client_talking(self):
+        """Recorded against the prospect id, a client talking every week
+        looked to Retention like a client gone silent."""
+        prospect, client = self._client()
+        self._concierge().handle_reply(prospect, "Thanks, looks great.")
+        self.assertIsNotNone(self.store.last_outcome_at(client.id, ("client_message",)))
+
+    def test_a_client_is_welcomed_once_however_long_they_stay(self):
+        """Retention logged an at-risk record daily; after 50 the welcome fell
+        out of the Onboarder's window and was sent again, months in."""
+        from answerrank.agents.onboarder import ONBOARDED, OnboarderAgent
+        prospect, client = self._client()
+        OnboarderAgent(self.store, self.settings).execute()
+        for _ in range(60):
+            self.store.record_outcome(prospect_id=client.id, kind="at_risk")
+        drafted, _ = OnboarderAgent(self.store, self.settings).execute()
+        self.assertEqual(drafted, 0)
+        welcomes = [m for m in self.store.messages_for(prospect.id) if m.kind == "welcome"]
+        self.assertEqual(len(welcomes), 1)
+        self.assertTrue(self.store.has_outcome(client.id, ONBOARDED))
+
+    def test_retention_records_becoming_at_risk_not_every_day_of_it(self):
+        from answerrank.agents.retention import RetentionAgent
+        prospect, client = self._client()
+        agent = RetentionAgent(self.store, self.settings)
+        with unittest.mock.patch.object(
+                RetentionAgent, "score_client",
+                lambda self_, c: __import__("answerrank.agents.retention", fromlist=["x"])
+                .Health(client_id=c.id, name=c.business.name, mrr=c.mrr, score=20.0,
+                        band="act_now", signals=[], action="Call them.",
+                        tenure_days=40)):
+            for _ in range(5):
+                agent.execute()
+        records = [o for o in self.store.outcomes_for(client.id) if o["kind"] == "at_risk"]
+        self.assertEqual(len(records), 1)
+
+
+class TestTrendsAreLikeForLike(_SalesFixture):
+    def _audit(self, score, teaser, days_ago):
+        a = Audit(business_id="biz_x", business_name="X", market="Austin, TX",
+                  vertical="electrical", score=score, is_free_teaser=teaser)
+        a.created_at = (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat(
+            timespec="seconds")
+        self.store.save_audit(a)
+        return a
+
+    def test_the_teaser_is_not_a_baseline(self):
+        """The 4-question teaser scored 38 and the 10-question monthly audit
+        scored 15. A client's first paid report showed the drop in red."""
+        self._audit(37.9, True, 60)
+        self._audit(15.2, False, 30)
+        self._audit(15.2, False, 1)
+        history = self.store.audit_history("biz_x", comparable=True)
+        self.assertEqual([a.score for a in history], [15.2, 15.2])
+        self.assertEqual(len(self.store.audit_history("biz_x")), 3)
+
+    def test_a_new_client_is_not_re_audited_every_hour(self):
+        """Keyed on the last report, a new client was audited hourly until the
+        twelve-hourly Reporter caught up — and every month again after."""
+        prospect = self._prospect(stage="won")
+        self.store.start_client(Client(business=prospect.business, plan="growth",
+                                       mrr=997.0))
+        auditor = AuditorAgent(self.store, self.settings)
+        auditor.execute()
+        auditor.execute()
+        auditor.execute()
+        full = [a for a in self.store.audit_history(prospect.business.id)
+                if not a.is_free_teaser]
+        self.assertEqual(len(full), 1)
+
+
+class TestWrappedEmailsStayReadable(unittest.TestCase):
+    def test_lists_hang_and_names_do_not_split(self):
+        from answerrank.playbook import email_body
+        body = email_body(
+            "1. Allow the answer engines in robots.txt — a site that disallows "
+            "OAI-SearchBot or PerplexityBot cannot appear in their answers at all.")
+        self.assertNotIn("OAI-\n", body)
+        second = body.split("\n")[1]
+        self.assertTrue(second.startswith("   "), repr(second))
+
+
+class TestThirtySalesEndToEnd(unittest.TestCase):
+    """The simulation itself, small enough for the suite: made-up buyers
+    through the real agents, the real send path and the console API, with a
+    fake clock and a fake mailbox. It closed 0 sales before these fixes."""
+
+    def test_every_sale_is_handled_end_to_end(self):
+        from answerrank import simulate
+        logging.getLogger("answerrank").setLevel(logging.WARNING)
+        try:
+            card = simulate.run(sales=5, days=45, tick_hours=4)
+        finally:
+            logging.getLogger("answerrank").setLevel(logging.NOTSET)
+        self.assertTrue(simulate.passed(card), simulate.render(card))
+
+    def test_the_clock_is_put_back(self):
+        import datetime as dt
+        from answerrank import simulate
+        before = (dt.datetime, dt.date)
+        clock = simulate.SimClock(dt.datetime(2030, 1, 1, tzinfo=dt.timezone.utc))
+        with simulate._frozen_time(clock):
+            from answerrank.models import now_iso
+            self.assertTrue(now_iso().startswith("2030-01-01"))
+        self.assertEqual((dt.datetime, dt.date), before)
+        from answerrank.models import now_iso
+        self.assertFalse(now_iso().startswith("2030"))

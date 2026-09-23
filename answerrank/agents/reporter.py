@@ -174,7 +174,8 @@ class ReporterAgent(Agent):
         made = 0
 
         for client in self.store.get_clients("active"):
-            history = self.store.audit_history(client.business.id, limit=6)
+            history = self.store.audit_history(client.business.id, limit=6,
+                                               comparable=True)
             if not history:
                 continue
             audit = history[0]

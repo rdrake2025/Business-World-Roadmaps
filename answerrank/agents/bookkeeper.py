@@ -34,30 +34,44 @@ class BookkeeperAgent(Agent):
         billed = 0
         billed_amount = 0.0
 
+        # Every recurring charge carries a key naming exactly what it is and
+        # which month it belongs to, and the database refuses a second one.
+        # The check-then-insert this replaced was two separate connections:
+        # a console action landing while the tick ran could bill the same
+        # client twice, which shows up as revenue that was never collected.
         for client in self.store.get_clients("active"):
-            if client.mrr <= 0 or self.store.has_billed(client.id, month):
+            if client.mrr <= 0:
                 continue
-            self.store.add_ledger(LedgerEntry(
-                kind="revenue", category="subscription", amount=client.mrr,
-                description=f"{client.plan} plan — {client.business.name} ({month})",
-                client_id=client.id,
-            ))
+            wrote = self.store.add_ledger_once(
+                LedgerEntry(
+                    kind="revenue", category="subscription", amount=client.mrr,
+                    description=f"{client.plan} plan — {client.business.name} ({month})",
+                    client_id=client.id,
+                ),
+                dedupe_key=f"subscription:{client.id}:{month}",
+            )
+            if not wrote:
+                continue
             fee = round(client.mrr * PROCESSOR_PCT + PROCESSOR_FLAT, 2)
-            self.store.add_ledger(LedgerEntry(
-                kind="cost", category="processing", amount=fee,
-                description=f"payment processing — {client.business.name}",
-                client_id=client.id,
-            ))
+            self.store.add_ledger_once(
+                LedgerEntry(
+                    kind="cost", category="processing", amount=fee,
+                    description=f"payment processing — {client.business.name}",
+                    client_id=client.id,
+                ),
+                dedupe_key=f"processing:{client.id}:{month}",
+            )
             billed += 1
             billed_amount += client.mrr
 
         for category, amount in FIXED_COSTS.items():
-            if self.store.has_cost(category, month):
-                continue
-            self.store.add_ledger(LedgerEntry(
-                kind="cost", category=category, amount=amount,
-                description=f"fixed monthly {category} ({month})",
-            ))
+            self.store.add_ledger_once(
+                LedgerEntry(
+                    kind="cost", category=category, amount=amount,
+                    description=f"fixed monthly {category} ({month})",
+                ),
+                dedupe_key=f"fixed:{category}:{month}",
+            )
 
         kpis = self.kpis()
         return billed, (

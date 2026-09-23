@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 DEFAULT_BRAND = "AnswerRank"
 
@@ -506,7 +506,9 @@ def warmup_events(dns_done: date, first_send: date,
 
 def build_calendar(start: date, include_launch: bool = True,
                    brand: str = DEFAULT_BRAND) -> str:
-    stamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    # ``utcnow`` returns a naive datetime and is deprecated from 3.12; the
+    # DTSTAMP it feeds is required to be UTC, so say so explicitly.
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",

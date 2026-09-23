@@ -122,11 +122,26 @@ class Personal:
         return round(self.net_income - self.total_expenses, 2)
 
 
+class BudgetFileError(Exception):
+    """budget.yml exists but cannot be parsed. Says so in plain words."""
+
+
 def load_personal(path: str | Path = "budget.yml") -> Personal:
     data = dict(DEFAULT_PERSONAL)
     p = Path(path)
     if p.exists() and yaml is not None:
-        loaded = yaml.safe_load(p.read_text()) or {}
+        # Explicit UTF-8: the template above is written as UTF-8 and this
+        # reads it back. Python's default is the platform encoding, which on
+        # Windows is cp1252 — so the em-dash in the first line comes back
+        # mangled, and anything the operator types outside Latin-1 fails to
+        # round-trip through their own budget file.
+        try:
+            loaded = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+            raise BudgetFileError(
+                f"{p} could not be read: {exc}. Fix the file or delete it to "
+                f"start again from the template."
+            ) from exc
         data.update(loaded.get("personal", loaded))
     return Personal(
         monthly_income=float(data.get("monthly_income", 2500.0)),

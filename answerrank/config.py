@@ -198,13 +198,40 @@ def _coerce(settings: Settings, data: dict[str, Any]) -> Settings:
     return settings
 
 
+#: Problems found while reading the config file. The doctor reports these;
+#: nothing else needs to know, and nothing should crash over them.
+CONFIG_PROBLEMS: list[str] = []
+
+
 def load_settings(path: str | Path | None = None) -> Settings:
     settings = Settings()
+    CONFIG_PROBLEMS.clear()
 
     config_path = Path(path or os.environ.get("ANSWERRANK_CONFIG") or DEFAULT_CONFIG_PATH)
     if config_path.exists() and yaml is not None:
-        with config_path.open() as fh:
-            settings = _coerce(settings, yaml.safe_load(fh) or {})
+        # UTF-8 explicitly. The wizard writes this file as UTF-8; reading it
+        # back with the platform default garbles it on Windows.
+        #
+        # And a parse failure must not be a traceback. This module is
+        # imported by every entry point and the file is one the operator is
+        # told to hand-edit, so a stray tab in answerrank.yml used to take
+        # down the whole application with a YAML stack trace and no hint of
+        # which line was wrong. Defaults plus a plain warning keep the
+        # console reachable, which is where the problem can be seen.
+        try:
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+            CONFIG_PROBLEMS.append(
+                f"{config_path} could not be read ({exc.__class__.__name__}: "
+                f"{str(exc).splitlines()[0]}). Running on defaults until it is fixed."
+            )
+            raw = {}
+        if not isinstance(raw, dict):
+            CONFIG_PROBLEMS.append(
+                f"{config_path} does not contain a set of settings "
+                f"(found {type(raw).__name__}). Running on defaults.")
+            raw = {}
+        settings = _coerce(settings, raw)
 
     # Env overrides win over the file.
     for key in ("brand", "from_email", "physical_address", "website",

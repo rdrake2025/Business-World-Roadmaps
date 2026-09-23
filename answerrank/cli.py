@@ -152,7 +152,11 @@ def cmd_audit(args, settings: Settings) -> int:
         out_dir.mkdir(parents=True, exist_ok=True)
         slug = (biz.domain or biz.id).replace(".", "_")
         path = out_dir / f"{slug}_{datetime.now(timezone.utc):%Y-%m-%d}.html"
-        path.write_text(render_report(audit, settings, store.audit_history(biz.id), deliverables),
+        # Like for like: a teaser and a full audit ask different numbers of
+        # questions, so a trend between them is noise drawn as a result.
+        history = [a for a in store.audit_history(biz.id)
+                   if a.is_free_teaser == audit.is_free_teaser]
+        path.write_text(render_report(audit, settings, history, deliverables),
                         encoding="utf-8")
         print(f"\n  Report:       {path}")
 
@@ -267,7 +271,11 @@ def cmd_win(args, settings: Settings) -> int:
     prospect = matches[0]
     mrr = args.mrr if args.mrr is not None else settings.pricing.plan_price(args.plan)
     client = Client(business=prospect.business, plan=args.plan, mrr=mrr, status="active")
-    store.upsert_client(client)
+    _client_id, created = store.start_client(client)
+    if not created:
+        print(f"{prospect.business.name} is already on the books — nothing changed.")
+        print(f"  MRR is ${store.mrr():,.0f}.")
+        return 1
 
     prospect.stage = "won"
     store.upsert_prospect(prospect)
@@ -1238,6 +1246,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--price", type=float)
     s.set_defaults(func=cmd_markets)
 
+    s = sub.add_parser("simulate", help="run made-up sales through the real agents")
+    s.add_argument("--sales", type=int, default=30, help="buyers to simulate (default 30)")
+    s.add_argument("--days", type=int, default=100, help="days to run (default 100)")
+    s.add_argument("--seed", type=int, default=7, help="change for a different market")
+    s.add_argument("--keep", action="store_true", help="keep the scratch database")
+    s.set_defaults(func=cmd_simulate)
+
     s = sub.add_parser("web", help="serve the console and run the fleet")
     s.add_argument("--no-fleet", action="store_true",
                    help="serve the pages without running the agents")
@@ -1247,6 +1262,24 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+
+
+def cmd_simulate(args, settings: Settings) -> int:
+    """Made-up buyers, real agents, nothing real touched."""
+    import logging
+
+    from . import simulate
+
+    # The fleet logs every agent run; across a hundred simulated days that
+    # buries the scorecard. Only warnings and worse get through.
+    logging.getLogger("answerrank").setLevel(logging.WARNING)
+    print(f"\nSimulating {args.sales} buyers over {args.days} days. Nothing real is "
+          f"touched: no email is sent, no AI service is called, and your own "
+          f"database is not opened.\nThis takes a few minutes.\n")
+    card = simulate.run(sales=args.sales, days=args.days, seed=args.seed,
+                        say=print, keep=args.keep)
+    print(simulate.render(card))
+    return 0 if simulate.passed(card) else 1
 
 
 def main(argv: list[str] | None = None) -> int:
