@@ -116,8 +116,28 @@ class Api:
             })
         return {"items": items, "count": len(items), "status": status}
 
-    def prospects(self, stage: str | None = None, limit: int = 40) -> dict[str, Any]:
-        rows = self.store.get_prospects(stage, limit)
+    def prospects(self, stage: str | None = None, limit: int = 40,
+                  hot: bool = False, q: str = "") -> dict[str, Any]:
+        """Prospects for the phone, most relevant first.
+
+        This used to return the oldest ``limit`` records in the stage, and
+        the console filtered those for hot leads. Someone who replied
+        yesterday — the most important person in the pipeline — sat outside
+        the oldest forty and never appeared, so there was no way from the
+        phone to log their reply or sign them up.
+        """
+        rows = self.store.get_prospects(stage, 10_000)
+        if hot:
+            rows = [p for p in rows if p.is_hot]
+        # A reply arrives with a name and an address on it. Either finds them.
+        needle = (q or "").strip().lower()
+        if needle:
+            rows = [p for p in rows
+                    if needle in p.business.name.lower()
+                    or needle in (p.business.email or "").lower()
+                    or needle in (p.business.domain or "")]
+        rows.sort(key=lambda p: p.last_touch_at or p.created_at, reverse=True)
+        rows = rows[:limit]
         return {"items": [{
             "id": p.id, "name": p.business.name, "market": p.business.market,
             "vertical": p.business.vertical, "stage": p.stage,
@@ -261,24 +281,64 @@ class Api:
             n += 1
         return {"rejected": n}
 
-    def send(self, limit: int = 25, dry_run: bool = False) -> dict[str, Any]:
-        """One tap from the phone. Same guard rails as the CLI, by construction."""
+    def send(self, limit: int = 25, dry_run: bool = False,
+             background: bool = False) -> dict[str, Any]:
+        """One tap from the phone. Same guard rails as the CLI, by construction.
+
+        ``background`` is how the phone calls it. Sends are paced 90 seconds
+        apart, so a batch of 25 takes over half an hour — and it used to run
+        inside the web request, which the phone gave up on long before it
+        finished: the button looked broken while the emails trickled out
+        behind it. Now it checks the blockers, starts the batch, and answers
+        straight away with how long it will take.
+        """
+        import threading
+
+        from answerrank.agents.outreach import OutreachAgent
         from answerrank.sending import send_batch
 
-        return send_batch(self.store, self.settings, limit=limit, dry_run=dry_run)
+        if not background or dry_run:
+            return send_batch(self.store, self.settings, limit=limit, dry_run=dry_run)
+
+        blockers = OutreachAgent(self.store, self.settings).preflight()
+        if blockers:
+            return {"sent": 0, "blocked": True, "reasons": blockers, "background": True}
+        queued = min(limit, len(self.store.send_queue(limit)))
+        if not queued:
+            return {"sent": 0, "blocked": False, "background": True,
+                    "reasons": ["No approved messages. Approve some first."]}
+
+        def run() -> None:
+            try:
+                result = send_batch(self.store, self.settings, limit=limit)
+                log.info("background send finished: %s sent, %s failed",
+                         result.get("sent"), result.get("failed"))
+            except Exception:  # noqa: BLE001 - never kill the server thread
+                log.exception("background send failed")
+
+        threading.Thread(target=run, daemon=True, name="answerrank-send").start()
+        gap = self.settings.outreach.min_seconds_between_sends
+        minutes = max(1, round(queued * gap / 60))
+        return {"sent": 0, "blocked": False, "background": True, "queued": queued,
+                "reasons": [f"Sending {queued} now, one every {gap}s — about "
+                            f"{minutes} min. You can close this; it keeps going."]}
 
     def clients(self) -> dict[str, Any]:
         """Client health, worst first — the order to work them in."""
         from answerrank.agents.retention import RetentionAgent
 
+        from answerrank import payments
+
         rows = RetentionAgent(self.store, self.settings).portfolio()
         return {
+            "awaiting_payment": payments.waiting_summary(self.store, self.settings),
             "count": len(rows),
             "mrr": round(sum(h.mrr for h in rows), 2),
             "at_risk_mrr": round(sum(h.mrr for h in rows if h.band == "act_now"), 2),
             "clients": [{"id": h.client_id, "name": h.name, "mrr": h.mrr,
                          "score": h.score, "band": h.band, "action": h.action,
-                         "signals": h.signals, "tenure_days": h.tenure_days}
+                         "signals": h.signals, "tenure_days": h.tenure_days,
+                         **self._client_files(h.client_id)}
                         for h in rows],
         }
 
@@ -454,8 +514,15 @@ class Api:
                 "price": price}
 
     def win(self, prospect_id: str, plan: str = "growth") -> dict[str, Any]:
-        """Convert a prospect into a paying client. The moment that matters."""
-        from answerrank.models import Client
+        """They said yes. The moment that matters — and not yet the money.
+
+        A client is created *awaiting payment*. They are welcomed, audited and
+        counted as revenue once the payment arrives, not before: until this
+        build, Won made a client active on the spot and the P&L counted
+        money nobody had sent. A pilot is free and starts immediately.
+        """
+        from answerrank import payments
+        from answerrank.models import Client, OutreachMessage, now_iso
 
         prospect = next((p for p in self.store.get_prospects(limit=10_000)
                          if p.id == prospect_id), None)
@@ -464,33 +531,99 @@ class Api:
         if prospect.stage == "won":
             return {"error": f"{prospect.business.name} is already a client"}
 
-        price = self.settings.pricing.plan_price(plan)
-        if not price:
+        plan = (plan or "growth").lower()
+        if plan not in self.settings.pricing.PLANS:
             return {"error": f"unknown plan {plan!r}"}
+        price = self.settings.pricing.plan_price(plan)
+        pilot = plan == "pilot"
 
         client = Client(business=prospect.business, plan=plan, mrr=price,
-                        status="active")
+                        status="active" if pilot else "awaiting_payment")
         client_id, created = self.store.start_client(client)
         if not created:
             return {"error": f"{prospect.business.name} is already on the books"}
+        client.id = client_id
 
         prospect.stage = "won"
         prospect.notes = (prospect.notes or "") + f" | won on {plan} at ${price:,.0f}"
         self.store.upsert_prospect(prospect)
+        self.store.withdraw_cold(prospect.id)
         self.store.record_outcome(
             prospect_id=prospect.id, vertical=prospect.business.vertical,
             step=prospect.touches, kind="won", note=f"{plan} ${price:,.0f}")
 
+        link = "" if pilot else payments.link_for(
+            self.settings, plan, payments.reference_for(prospect, client),
+            prospect.business.email)
+        if link and not payments.link_already_sent(self.store, prospect,
+                                                   self.settings, plan):
+            subject, body = payments.payment_email(prospect, client, self.settings)
+            self.store.save_message(OutreachMessage(
+                prospect_id=prospect.id, subject=subject, body=body, kind="invoice",
+                sequence_step=0, status="drafted", scheduled_for=now_iso()))
+
+        if pilot:
+            nxt = ("A free pilot starts now: welcome, first audit and month-1 plan "
+                   "on the next cycle. Use it to prove the work moves the score.")
+        elif link:
+            nxt = ("The payment link is in your inbox to approve. They go live — "
+                   "welcome, audit, plan — the moment it's paid.")
+        else:
+            nxt = (f"No payment link is set up for {plan}. Send them an invoice for "
+                   f"${price:,.0f}, then tap Paid when it arrives. (Add a link in "
+                   f"answerrank.yml under payment_links to skip this next time.)")
         return {
             "client_id": client_id,
             "name": prospect.business.name,
             "plan": plan,
             "mrr": price,
+            "status": client.status,
+            "payment_link": link,
             "total_mrr": round(self.store.mrr(), 2),
             "clients": len(self.store.get_clients("active")),
-            "next": ("The Auditor will run their first full audit on the next "
-                     "cycle, and the Fixer will build month 1 of their plan."),
+            "next": nxt,
         }
+
+    def _client_files(self, client_id: str) -> dict[str, Any]:
+        """Links to open this client's latest report and files on the phone,
+        and what their website showed when last checked."""
+        from answerrank.sitecheck import SiteCheck
+
+        client = self.store.get_client(client_id)
+        if client is None:
+            return {"report_url": "", "files": [], "site": []}
+        files, report = [], ""
+        for audit in self.store.audit_history(client.business.id, limit=3,
+                                              comparable=True):
+            for d in self.store.get_deliverables(audit.id):
+                if d.kind == "report_html":
+                    report = report or f"/files/report/{client.id}"
+                elif not any(f["title"] == d.title for f in files):
+                    files.append({"title": d.title.split(" — ")[0],
+                                  "url": f"/files/file/{d.id}"})
+            if files:
+                break
+        if client.plan == "pilot" or len(self.store.audit_history(
+                client.business.id, limit=2, comparable=True)) >= 2:
+            files.insert(0, {"title": "Before & after (case study)",
+                             "url": f"/files/case/{client.id}"})
+        checks = self.store.site_checks(client.business.id, limit=1)
+        return {"report_url": report, "files": files,
+                "site": SiteCheck.from_dict(checks[0]).lines() if checks else []}
+
+    def mark_paid(self, client_id: str) -> dict[str, Any]:
+        """The money arrived. They go live."""
+        from answerrank import payments
+
+        client = self.store.get_client(client_id)
+        if not client:
+            return {"error": "no such client"}
+        if client.status == "active" and client.paid_at:
+            return {"error": f"{client.business.name} is already marked paid"}
+        payments.mark_paid(self.store, client)
+        return {"ok": True, "name": client.business.name,
+                "total_mrr": round(self.store.mrr(), 2),
+                "next": "Welcome email is drafted on the next cycle."}
 
     def log_expense(self, category: str, amount: float, description: str = "",
                     revenue: bool = False) -> dict[str, Any]:

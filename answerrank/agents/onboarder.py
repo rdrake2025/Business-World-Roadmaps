@@ -100,11 +100,7 @@ class OnboarderAgent(Agent):
 
     def _prospect_for(self, client):
         """The original prospect, so the draft lands in the normal inbox."""
-        domain = client.business.domain
-        if not domain:
-            return None
-        return next((p for p in self.store.get_prospects(limit=10_000)
-                     if p.business.domain == domain), None)
+        return self.store.prospect_for_business(client.business)
 
     def execute(self) -> tuple[int, str]:
         pending = self._pending()

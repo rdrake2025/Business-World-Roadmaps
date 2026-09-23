@@ -351,7 +351,13 @@ and retention at the same time.
 | `prospects [--stage]` | Show the pipeline |
 | `inbox [--full]` | Review drafted outreach |
 | `approve` / `send` | Approve and deliver messages |
-| `win NAME --plan growth` | Convert a prospect to a client |
+| `win NAME --plan growth` | They said yes: sign them up (awaiting payment; `--plan pilot` is free) |
+| `paid NAME` | Their payment arrived: they go live and count as revenue |
+| `keys` | Save the mailbox password and API keys (or double-click KEYS.bat) |
+| `case-study NAME` | Before/after write-up for a client — or "too early", or "don't publish" |
+| `server-script --domain D` | Write the one file that sets up the always-on server (deploy/SERVER.md) |
+| `console-link` | Print the phone console address with its login |
+| `simulate [--sales N]` | Run made-up sales through the real agents (or double-click SIMULATE.bat) |
 | `dashboard` | KPIs and progress to target |
 | `forecast` | Model the path to the profit target |
 | `export AUDIT_ID` | Export an audit's deliverables |
@@ -369,6 +375,34 @@ and retention at the same time.
 | `playbook TRADE` | How to sell one trade: positioning, objections, discovery |
 | `domain NAME --provider X` | Sending-domain setup: the exact DNS records, then whether they are live |
 | `web` | Serve the site and the phone console |
+
+## From yes to paid to delivered
+
+What happens after someone says yes, end to end:
+
+1. **They say "sign us up".** The Concierge answers with the payment link for
+   their plan (set the links once with KEYS.bat). You tap **Sign them up** on
+   the phone. They are now *waiting for payment* — not revenue, not welcomed.
+2. **They pay.** With a read-only Stripe key saved, the Bookkeeper sees it by
+   itself within two hours. Without one, tap **They paid** on the Clients tab.
+   One reminder goes out after 3 days; after 10 you are told to call.
+3. **They go live.** Welcome email, first full audit, month-1 files.
+4. **Every month they get an email**, not just a file on your laptop: what
+   changed, what's live on their website, what's next — and, until the fixes
+   are live, the two files and the steps for *their* website builder
+   (WordPress, Wix, Squarespace, GoDaddy, Shopify, Webflow…).
+5. **Their homepage is checked daily** for the fixes. A client three weeks in
+   with nothing live is flagged in Retention with a ten-minute call to fix it.
+6. **Replies are read for you** once KEYS.bat has switched it on: quoted text
+   stripped, out-of-office ignored, bounce notices counted toward the bounce
+   brake, and mail from strangers listed rather than dropped.
+
+The first clients should be **pilots** (`--plan pilot`, free): `case-study
+NAME` then measures before and after like for like, and says plainly when
+it is too early or when the result should not be published.
+
+To send for real, the unsubscribe link has to work from the internet, which
+means a small server: see **deploy/SERVER.md** (about $6/month, no terminal).
 
 ## What the agents are trained to deliver
 

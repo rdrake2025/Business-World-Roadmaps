@@ -1,5 +1,5 @@
 [Unit]
-Description=AnswerRank public web surface (landing + unsubscribe)
+Description=AnswerRank web: landing page, unsubscribe, console (behind Caddy)
 After=network-online.target
 Wants=network-online.target
 
@@ -7,8 +7,11 @@ Wants=network-online.target
 Type=simple
 User=answerrank
 WorkingDirectory=/opt/answerrank
-EnvironmentFile=/opt/answerrank/.env
-ExecStart=/usr/bin/python3 run.py web --port 8000
+EnvironmentFile=-/opt/answerrank/.env
+# --no-fleet: the fleet has its own service (answerrank-fleet). `web` starts one
+# by default, and two fleets for one business send every email twice.
+# 127.0.0.1: only Caddy, which adds HTTPS, is reachable from outside.
+ExecStart=/opt/answerrank/.venv/bin/python run.py web --no-fleet --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=10
 

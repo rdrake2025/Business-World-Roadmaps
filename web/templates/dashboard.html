@@ -615,9 +615,10 @@
         '<option value="growth">Growth — $997/mo</option>' +
         '<option value="starter">Starter — $499/mo</option>' +
         '<option value="managed">Managed — $1,997/mo</option>' +
+        '<option value="pilot">Free pilot — prove it works</option>' +
       '</select>' +
       '<div class="acts"><button class="act primary" id="btnWin" data-pid="' +
-        esc(b.prospect_id) + '">Convert to a paying client</button></div>');
+        esc(b.prospect_id) + '">Sign them up</button></div>');
   }
 
   function clientDrawer(c){
@@ -690,18 +691,18 @@
 
     if(win && !busy){
       var plan = $("winPlan").value;
-      if(!confirm("Convert this prospect to a paying client on the " + plan +
-                  " plan? This starts billing them.")) return;
+      if(!confirm(plan === "pilot" ? "Start a free pilot for this business?" :
+                  "Sign them up on the " + plan + " plan? They go live, and count " +
+                  "as revenue, once they pay.")) return;
       busy = true; win.disabled = true; win.textContent = "Closing…";
       api("/api/win", { id: win.dataset.pid, plan: plan }).then(function(r){
         if(r.error){ toast(r.error, 4500); return; }
-        toast(r.name + " is now a client at " + money(r.mrr) + "/mo. " +
-              "MRR is " + money(r.total_mrr) + ".", 6000);
+        toast(r.name + " signed. " + r.next, 7000);
         closeDrawer();
         return loadAll(true);
       }).catch(function(){ toast("That didn't go through"); })
         .then(function(){ busy = false; win.disabled = false;
-                          win.textContent = "Convert to a paying client"; });
+                          win.textContent = "Sign them up"; });
     }
 
     if(reply && !busy){

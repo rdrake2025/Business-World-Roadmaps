@@ -107,6 +107,16 @@ CREATE TABLE IF NOT EXISTS research_findings (
 CREATE INDEX IF NOT EXISTS idx_research_subject
     ON research_findings(subject, created_at);
 
+CREATE TABLE IF NOT EXISTS inbound (
+    message_id TEXT PRIMARY KEY, sender TEXT, kind TEXT, prospect_id TEXT,
+    received_at TEXT, handled_at TEXT, snippet TEXT
+);
+
+CREATE TABLE IF NOT EXISTS site_checks (
+    id TEXT PRIMARY KEY, business_id TEXT, checked_at TEXT, raw TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_site_checks ON site_checks(business_id, checked_at);
+
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY, value TEXT, created_at TEXT
 );
@@ -314,7 +324,8 @@ class Store:
         with self.writer() as cx:
             row = cx.execute(
                 """SELECT id FROM clients
-                   WHERE business_id = ? AND status IN ('active','trialing')
+                   WHERE business_id = ?
+                   AND status IN ('active','trialing','awaiting_payment','past_due')
                    ORDER BY started_at ASC LIMIT 1""",
                 (b.id,),
             ).fetchone()
@@ -346,6 +357,28 @@ class Store:
             d["business"] = Business(**d["business"])
             out.append(Client(**d))
         return out
+
+    def get_client(self, client_id: str) -> Client | None:
+        with self.conn() as cx:
+            row = cx.execute("SELECT raw FROM clients WHERE id = ?", (client_id,)).fetchone()
+        if not row:
+            return None
+        d = json.loads(row["raw"])
+        d["business"] = Business(**d["business"])
+        return Client(**d)
+
+    def prospect_for_business(self, business: Business) -> Prospect | None:
+        """The prospect record a client was won from — which is where their
+        email address and the conversation with them live."""
+        with self.conn() as cx:
+            row = cx.execute(
+                "SELECT raw FROM prospects WHERE business_id = ? LIMIT 1",
+                (business.id,)).fetchone()
+            if not row and business.domain:
+                row = cx.execute(
+                    "SELECT raw FROM prospects WHERE domain = ? LIMIT 1",
+                    (business.domain,)).fetchone()
+        return _prospect_from_raw(row["raw"]) if row else None
 
     def mrr(self) -> float:
         with self.conn() as cx:
@@ -408,6 +441,15 @@ class Store:
                 (d.id, d.audit_id, d.business_id, d.kind, d.title, d.body, d.filename, d.created_at),
             )
         return d.id
+
+    def get_deliverable(self, deliverable_id: str) -> Deliverable | None:
+        with self.conn() as cx:
+            row = cx.execute("SELECT * FROM deliverables WHERE id = ?",
+                             (deliverable_id,)).fetchone()
+        if not row:
+            return None
+        return Deliverable(**{k: row[k] for k in row.keys()
+                              if k in Deliverable.__dataclass_fields__})
 
     def get_deliverables(self, audit_id: str) -> list[Deliverable]:
         with self.conn() as cx:
@@ -678,6 +720,66 @@ class Store:
         return {r["market"] for r in rows}
 
     # ---------------- key/value ----------------
+
+    def inbound_seen(self, message_id: str) -> bool:
+        with self.conn() as cx:
+            return cx.execute("SELECT 1 FROM inbound WHERE message_id = ?",
+                              (message_id,)).fetchone() is not None
+
+    def record_inbound(self, message_id: str, sender: str, kind: str,
+                       prospect_id: str = "", snippet: str = "") -> None:
+        """Remember a message was read, so it is handled exactly once — by
+        its id, not by the mailbox's read flag, which the operator's phone
+        changes every time they open their email."""
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with self.conn() as cx:
+            cx.execute(
+                """INSERT OR IGNORE INTO inbound
+                   (message_id, sender, kind, prospect_id, received_at, handled_at, snippet)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (message_id, sender, kind, prospect_id, now, now, snippet[:300]))
+
+    def unmatched_inbound(self, days: int = 14) -> list[dict[str, Any]]:
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        with self.conn() as cx:
+            rows = cx.execute(
+                """SELECT * FROM inbound WHERE kind = 'unmatched' AND handled_at >= ?
+                   ORDER BY handled_at DESC""", (since,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def save_site_check(self, business_id: str, check: dict[str, Any]) -> None:
+        with self.conn() as cx:
+            cx.execute(
+                "INSERT INTO site_checks (id, business_id, checked_at, raw) VALUES (?,?,?,?)",
+                (f"chk_{uuid.uuid4().hex[:12]}", business_id,
+                 check.get("checked_at") or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                 json.dumps(check, default=str)))
+
+    def site_checks(self, business_id: str, limit: int = 10) -> list[dict[str, Any]]:
+        """What the client's site showed, newest first."""
+        with self.conn() as cx:
+            rows = cx.execute(
+                """SELECT raw FROM site_checks WHERE business_id = ?
+                   ORDER BY checked_at DESC LIMIT ?""", (business_id, limit)).fetchall()
+        return [json.loads(r["raw"]) for r in rows]
+
+    def instance_id(self) -> str:
+        """A stable id for this database — which is to say, this business
+        copy. Used to tell a laptop from the server running the same business."""
+        existing = self.kv_get("instance_id")
+        if existing:
+            return existing
+        new = f"inst_{uuid.uuid4().hex[:16]}"
+        self.kv_set("instance_id", new)
+        return new
+
+    def fleet_active(self, minutes: int = 30) -> bool:
+        """Whether agents have been running against this database recently."""
+        since = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat(
+            timespec="seconds")
+        with self.conn() as cx:
+            return cx.execute("SELECT 1 FROM agent_runs WHERE started_at >= ? LIMIT 1",
+                              (since,)).fetchone() is not None
 
     def kv_get(self, key: str) -> str | None:
         with self.conn() as cx:

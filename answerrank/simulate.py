@@ -26,6 +26,7 @@ mailbox. It runs against a throwaway directory.
 from __future__ import annotations
 
 import csv
+import json
 import datetime as _dt_module
 import os
 import random
@@ -245,10 +246,25 @@ class Person:
     won_at: _dt_module.datetime | None = None
     lost_reason: str = ""
     stall_since: _dt_module.datetime | None = None
+    #: How they pay once signed: promptly, only after a reminder, or never.
+    pays: str = "prompt"
+    paid_due: _dt_module.datetime | None = None
+    paid_at: _dt_module.datetime | None = None
+    #: How they handle the fix files: install them, install them with the
+    #: blanks still in (then fix it next month), or never get round to it.
+    installs: str = "yes"
+    install_due: _dt_module.datetime | None = None
+    installed_at: _dt_module.datetime | None = None
+    platform: str = "wordpress"
+    reminders: int = 0
 
     @property
     def cold_received(self) -> int:
         return sum(1 for d in self.received if d.kind == "cold")
+
+    @property
+    def reports_received(self) -> int:
+        return sum(1 for d in self.received if d.kind == "client_report")
 
 
 def classify_outbound(subject: str, body: str) -> str:
@@ -258,6 +274,10 @@ def classify_outbound(subject: str, body: str) -> str:
         return "report"
     if s.startswith("You're in"):
         return "welcome"
+    if re.match(r"^[A-Z][a-z]+ report \u2014 ", s):
+        return "client_report"
+    if "buy.stripe.com" in b and s.startswith("Getting "):
+        return "payment_reminder"
     if (s.startswith(("Closing the loop", "One last thing"))
             or "Following up on the AI visibility check" in b
             or "Reply \"yes\" and it's yours" in b
@@ -298,6 +318,9 @@ class World:
         self.bounced: set[str] = set()
         self.bounce_addresses: set[str] = set()
         self.console_gaps: set[str] = set()
+        #: Each business's homepage, as the site check will read it.
+        self.sites: dict[str, str] = {}
+        self.broken_files: list[tuple[str, str]] = []
         self.misreads: list[tuple[str, str, str, str]] = []  # who, true, read, text
         self.response_hours: list[float] = []
         self.awaiting_response: dict[str, _dt_module.datetime] = {}
@@ -342,6 +365,10 @@ class World:
                 p.reply_on_touch = self.rng.choices([1, 2, 3], weights=[50, 30, 20])[0]
                 p.plan = self.rng.choices(["growth", "starter", "managed"],
                                           weights=[60, 25, 15])[0]
+                p.pays = self.rng.choices(["prompt", "after_reminder", "never"],
+                                          weights=[80, 12, 8])[0]
+                p.installs = self.rng.choices(["yes", "blanks", "never"],
+                                              weights=[70, 15, 15])[0]
 
         # Whatever the persona, some emails are wrong to send at all.
         if p.stage in {"unsubscribed", "hostile", "declined"}:
@@ -354,8 +381,33 @@ class World:
         if p.won_at and (kind == "cold" or _is_sales_pitch(body)):
             self.issue("pitched_a_client", p.business,
                        f"'{subject}' — a sales email to a paying client")
+        if p.won_at and not p.paid_at and kind in {"welcome", "client_report"}:
+            self.issue("served_before_paying", p.business,
+                       f"'{subject}' sent to a client who has not paid")
 
-        if p.email in self.awaiting_response and kind in {"reply", "report", "welcome"}:
+        # Paying. They pay through whichever link reaches them.
+        if p.won_at and not p.paid_at and not p.paid_due and "buy.stripe.com" in body:
+            if kind == "payment_reminder":
+                p.reminders += 1
+            if p.pays == "prompt" or (p.pays == "after_reminder"
+                                      and kind == "payment_reminder"):
+                p.paid_due = self.clock.now + timedelta(days=self.rng.randint(0, 2),
+                                                        hours=self.rng.randint(1, 8))
+        elif kind == "payment_reminder":
+            p.reminders += 1
+
+        # Installing the fix files that arrive with a monthly report.
+        if kind == "client_report" and p.installs != "never" and not p.installed_at \
+                and not p.install_due and "(copy everything between the lines)" in body:
+            p.install_due = self.clock.now + timedelta(days=self.rng.randint(2, 7))
+            p._files_email = body  # type: ignore[attr-defined]
+            label = sitecheck_label(p.platform)
+            if label and label not in body:
+                self.issue("wrong_install_steps", p.business,
+                           f"their site is {label}, and the steps sent were not for it")
+
+        if p.email in self.awaiting_response and kind in {"reply", "report", "welcome",
+                                                         "client_report"}:
             asked = self.awaiting_response.pop(p.email)
             self.response_hours.append((self.clock.now - asked).total_seconds() / 3600)
 
@@ -383,6 +435,41 @@ class World:
             self._schedule(p, "client_update")
             p.stage = "client_engaged"
 
+    def people_act(self) -> None:
+        """Payments arriving and fixes being installed, when they fall due."""
+        for p in self.people.values():
+            if p.paid_due and not p.paid_at and p.paid_due <= self.clock.now:
+                p.paid_at = self.clock.now
+            if p.install_due and not p.installed_at and p.install_due <= self.clock.now:
+                self._install(p)
+
+    def _install(self, p: Person) -> None:
+        body = getattr(p, "_files_email", "")
+        blocks = re.findall(r"--- (\S+) \(copy everything between the lines\) ---\n"
+                            r"(.*?)\n--- end of \1 ---", body, re.S)
+        scripts = []
+        for filename, text in blocks:
+            try:
+                json.loads(text)
+            except ValueError as exc:
+                self.broken_files.append((p.business, filename))
+                self.issue("broken_fix_file", p.business,
+                           f"{filename} was not valid JSON as emailed: {exc}")
+                continue
+            if p.installs != "blanks":
+                text = (text.replace("REPLACE_WITH_STREET_ADDRESS", "1400 Main St")
+                            .replace("REPLACE_WITH_ZIP", "78701")
+                            .replace("REPLACE_WITH_PHONE", "+1-512-555-0100"))
+            scripts.append(f'<script type="application/ld+json">{text}</script>')
+        self.sites[p.domain] = site_html(p.platform, "".join(scripts))
+        p.install_due = None
+        if p.installs == "blanks":
+            # Pasted with the blanks still in. Next month's report says so,
+            # sends the files again, and this time they fill them in.
+            p.installs = "yes"
+        else:
+            p.installed_at = self.clock.now
+
     def replies_due(self) -> list[tuple[Person, str, str, _dt_module.datetime]]:
         out = []
         for p in self.people.values():
@@ -409,6 +496,30 @@ class World:
                 p.stage, p.lost_reason = "lost", "asked a question before buying; never got an answer"
             elif p.stage == "buying_waiting" and waited >= 8:
                 p.stage, p.lost_reason = "lost", "said yes; nobody closed the sale"
+
+
+_PLATFORM_HEAD = {
+    "wordpress": '<meta name="generator" content="WordPress 6.6">'
+                 '<link rel="stylesheet" href="/wp-content/themes/site/style.css">',
+    "wix": '<meta name="generator" content="Wix.com Website Builder">'
+           '<link href="https://static.wixstatic.com/frog/main.css">',
+    "squarespace": '<!-- This is Squarespace. -->'
+                   '<link href="https://static1.squarespace.com/static/site.css">',
+    "godaddy": '<meta name="generator" content="Starfield Technologies; Go Daddy '
+               'Website Builder 8.0.0000"><img src="https://img1.wsimg.com/logo.png">',
+    "unknown": "",
+}
+
+
+def site_html(platform: str, head_extra: str = "") -> str:
+    return (f"<!doctype html><html><head><title>Home</title>"
+            f"{_PLATFORM_HEAD.get(platform, '')}{head_extra}</head>"
+            f"<body><h1>Welcome</h1></body></html>")
+
+
+def sitecheck_label(platform: str) -> str:
+    from .sitecheck import PLATFORM_LABEL
+    return "" if platform == "unknown" else PLATFORM_LABEL.get(platform, "")
 
 
 class _SimMailer:
@@ -448,7 +559,11 @@ def _seed_businesses(world: World, n: int, verticals: list[str], path: Path) -> 
         rows.append({"name": name, "city": city, "state": state, "vertical": vertical,
                      "website": f"https://{domain}", "email": email,
                      "phone": f"555-01{i:02d}"})
-        world.people[email] = Person(email=email, business=name, domain=domain)
+        platform = rng.choices(["wordpress", "wix", "squarespace", "godaddy", "unknown"],
+                               weights=[45, 20, 15, 10, 10])[0]
+        world.people[email] = Person(email=email, business=name, domain=domain,
+                                     platform=platform)
+        world.sites[domain] = site_html(platform)
     with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=list(rows[0]))
         writer.writeheader()
@@ -475,7 +590,7 @@ def run(sales: int = 30, days: int = 100, seed: int = 7,
     say = say or (lambda _line: None)
 
     # Import everything the fleet touches before patching the clock.
-    from . import crawlers, sending
+    from . import crawlers, sending, sitecheck
     from .agents.scout import defensible_verticals
     from .config import Settings
     from .orchestrator import Orchestrator
@@ -496,6 +611,8 @@ def run(sales: int = 30, days: int = 100, seed: int = 7,
     settings.website = "https://answerrank.example"
     settings.from_email = "hello@answerrank.example"
     settings.outreach.min_seconds_between_sends = 0
+    settings.payment_links = {plan: f"https://buy.stripe.com/test_{plan}"
+                              for plan in ("starter", "growth", "managed")}
     Path(settings.output_dir).mkdir(parents=True, exist_ok=True)
 
     verticals = defensible_verticals(settings.pricing.growth_monthly,
@@ -514,8 +631,15 @@ def run(sales: int = 30, days: int = 100, seed: int = 7,
     def _no_network_access(website, timeout=10):
         return crawlers.Access(domain=website.split("//")[-1].split("/")[0])
 
+    # The client's homepage, as it stands in the simulated world.
+    def _site_fetch(url, timeout=12):
+        domain = url.split("//")[-1].split("/")[0].removeprefix("www.")
+        html = world.sites.get(domain)
+        return (200, {}, html) if html else (None, {}, "")
+
     patches = [(crawlers, "check_access", _no_network_access),
-               (sending, "Mailer", _SimMailer)]
+               (sending, "Mailer", _SimMailer),
+               (sitecheck, "fetch", _site_fetch)]
     originals = [(obj, name, getattr(obj, name)) for obj, name, _ in patches]
     for obj, name, value in patches:
         setattr(obj, name, value)
@@ -545,6 +669,7 @@ def run(sales: int = 30, days: int = 100, seed: int = 7,
                 link_people()
 
                 # The operator's session: once a day, first thing, phone in hand.
+                world.people_act()
                 if clock.now.hour >= 9 and last_session != clock.now.date():
                     last_session = clock.now.date()
                     world.daily_checks()
@@ -574,13 +699,25 @@ def run(sales: int = 30, days: int = 100, seed: int = 7,
 def _operator_session(world: World, api, store, by_prospect: dict[str, Person],
                       say: Callable[[str], None]) -> None:
     """Everything the operator does, using only what the console offers."""
-    # 1. Paste in every reply that reached the inbox since yesterday.
+    # 1. Paste in every reply that reached the inbox since yesterday. The
+    #    operator finds each person with the console's search box, by the
+    #    address the reply came from — not by an internal id, which a person
+    #    holding a phone does not have.
     for person, text, intent, written_at in world.replies_due():
-        if not person.prospect_id:
-            world.issue("reply_from_unknown", person.business,
-                        "replied, but no prospect record could be found for them")
+        found = api.prospects(q=person.email, limit=5)["items"]
+        match = [f for f in found if f["id"] == person.prospect_id]
+        if not person.prospect_id or not match:
+            world.issue("not_findable", person.business,
+                        "replied, but searching the console for their address "
+                        "did not find them")
             continue
-        result = api.log_reply(person.prospect_id, text)
+        # Half the time they paste the whole email, quoted original and all.
+        if person.received and world.rng.random() < 0.5:
+            last = person.received[-1]
+            text = (f"{text}\n\nOn {last.at:%a, %b %d, %Y at %I:%M %p} AnswerRank "
+                    f"<hello@answerrank.example> wrote:\n"
+                    + "\n".join("> " + line for line in last.body.splitlines()))
+        result = api.log_reply(match[0]["id"], text)
         if "error" in result:
             world.issue("reply_rejected", person.business,
                         f"console refused the reply: {result['error']}")
@@ -615,7 +752,23 @@ def _operator_session(world: World, api, store, by_prospect: dict[str, Person],
                 world.issue("win_failed", person.business, won["error"])
             else:
                 person.stage, person.won_at = "client", world.clock.now
+                person.client_id = won["client_id"]  # type: ignore[attr-defined]
                 world.won.append(person)
+
+    # 1b. Money that arrived since yesterday. The operator sees it in Stripe
+    #     (or their bank) and taps "They paid" on the waiting list.
+    waiting = {row["id"]: row for row in api.clients()["awaiting_payment"]}
+    for person in world.won:
+        cid = getattr(person, "client_id", "")
+        if person.paid_at and not getattr(person, "marked_paid", False):
+            if cid not in waiting:
+                world.issue("paid_but_not_listed", person.business,
+                            "paid, but was not on the console's waiting list")
+                continue
+            result = api.mark_paid(cid)
+            if "error" in result:
+                world.issue("mark_paid_failed", person.business, result["error"])
+            person.marked_paid = True  # type: ignore[attr-defined]
 
     # 2. Approve every draft — a busy operator trusts the drafts.
     drafts = api.inbox("drafted", 100)["items"]
@@ -642,7 +795,6 @@ def _scorecard(world: World, store, settings, sales: int, days: int,
     lost = [p for p in buyers if p.stage == "lost"]
     stuck = [p for p in buyers if not p.won_at and p.stage != "lost"]
     clients = store.get_clients("active")
-    client_ids = {c.id for c in clients}
 
     # Billing: each client once for every calendar month it was active.
     ledger_rows = []
@@ -657,10 +809,61 @@ def _scorecard(world: World, store, settings, sales: int, days: int,
     double_billed = [k for k, n in bills_by_client_month.items() if n > 1]
     unbilled = [c for c in clients if c.id not in revenue_by_client]
 
-    # Onboarding, delivery, reporting.
-    welcomes = Counter(p.email for p in world.won for d in p.received if d.kind == "welcome")
-    no_welcome = [p.business for p in world.won if not welcomes.get(p.email)]
-    extra_welcome = [p.business for p in world.won if welcomes.get(p.email, 0) > 1]
+    # Payment: only the ones who paid are clients in any sense that counts.
+    paid = [p for p in world.won if p.paid_at]
+    never = [p for p in world.won if p.pays == "never"]
+    client_of = {p.email: store.get_client(getattr(p, "client_id", "")) for p in world.won}
+    unpaid_live = [p.business for p in never
+                   if (client_of.get(p.email) and client_of[p.email].status != "awaiting_payment")
+                   or any(d.kind in {"welcome", "client_report"} for d in p.received)]
+    unpaid_billed = [p.business for p in never
+                     if client_of.get(p.email) and revenue_by_client.get(client_of[p.email].id)]
+    remind_after = settings.payment_reminder_days + 1
+    reminder_problems = []
+    for p in world.won:
+        waited = (world.clock.now - p.won_at).days if p.won_at else 0
+        slow = not p.paid_at or (p.paid_at - p.won_at).days >= remind_after
+        if p.reminders > 1:
+            reminder_problems.append(f"{p.business}: {p.reminders} reminders")
+        elif slow and waited >= remind_after + 1 and p.reminders == 0:
+            reminder_problems.append(f"{p.business}: unpaid {waited} days, never reminded")
+    overdue_unflagged = [
+        p.business for p in never
+        if client_of.get(p.email) and (world.clock.now - p.won_at).days
+        >= settings.payment_overdue_days + 1
+        and not store.has_outcome(client_of[p.email].id, "payment_overdue")]
+
+    # What reached paying clients each month.
+    report_gaps = []
+    for p in paid:
+        live_days = (world.clock.now - p.paid_at).days
+        expected = 0 if live_days < 7 else (1 if live_days < 40 else 2)
+        if p.reports_received < expected:
+            report_gaps.append(f"{p.business}: {p.reports_received} report email(s) "
+                               f"in {live_days} days")
+
+    # Fixes: installed ones should be seen; stuck ones should be flagged.
+    from .agents.retention import RetentionAgent
+    health_by_name = {h.name: h for h in RetentionAgent(store, settings).portfolio()}
+    fixes_live = fixes_unseen = stuck_unflagged = 0
+    for p in paid:
+        client = client_of.get(p.email)
+        checks = store.site_checks(client.business.id, limit=1) if client else []
+        seen_live = bool(checks) and checks[0].get("local_business") \
+            and not checks[0].get("placeholders")
+        if p.installed_at and (world.clock.now - p.installed_at).days >= 2:
+            fixes_live += bool(seen_live)
+            fixes_unseen += not seen_live
+        live_days = (world.clock.now - p.paid_at).days
+        if not p.installed_at and live_days > 24:
+            h = health_by_name.get(p.business)
+            if h and not any("not live" in sig for sig in h.signals):
+                stuck_unflagged += 1
+
+    # Onboarding, delivery, reporting — for clients who paid.
+    welcomes = Counter(p.email for p in paid for d in p.received if d.kind == "welcome")
+    no_welcome = [p.business for p in paid if not welcomes.get(p.email)]
+    extra_welcome = [p.business for p in paid if welcomes.get(p.email, 0) > 1]
     no_deliverables, no_report = [], []
     audits_per_client: dict[str, int] = {}
     for c in clients:
@@ -677,8 +880,7 @@ def _scorecard(world: World, store, settings, sales: int, days: int,
                if stage_of.get(p.prospect_id) not in {"won", None}]
 
     # Retention: false alarms on clients who are plainly talking to us.
-    from .agents.retention import RetentionAgent
-    health = RetentionAgent(store, settings).portfolio()
+    health = list(health_by_name.values())
     engaged = {p.business for p in world.won if p.stage == "client_engaged"}
     false_alarms = [h.name for h in health
                     if h.name in engaged and any("No contact on record" in s
@@ -715,7 +917,20 @@ def _scorecard(world: World, store, settings, sales: int, days: int,
         "stuck": [(p.business, p.stage) for p in stuck],
         "clients_on_books": len(clients),
         "mrr": round(store.mrr(), 2),
-        "mrr_expected": round(sum(settings.pricing.plan_price(p.plan) for p in world.won), 2),
+        "mrr_expected": round(sum(settings.pricing.plan_price(p.plan) for p in paid), 2),
+        "paid": len(paid),
+        "never_paid": [p.business for p in never],
+        "unpaid_went_live": unpaid_live,
+        "unpaid_billed": unpaid_billed,
+        "reminder_problems": reminder_problems,
+        "overdue_unflagged": overdue_unflagged,
+        "report_gaps": report_gaps,
+        "client_report_emails": sum(p.reports_received for p in paid),
+        "fixes_live": fixes_live,
+        "fixes_unseen": fixes_unseen,
+        "installs_never": sum(1 for p in paid if not p.installed_at),
+        "stuck_installs_unflagged": stuck_unflagged,
+        "broken_files": world.broken_files,
         "revenue_billed": round(sum(revenue_by_client.values()), 2),
         "double_billed": double_billed,
         "unbilled_clients": [c.business.name for c in unbilled],
@@ -756,8 +971,18 @@ def render(card: dict[str, Any]) -> str:
     for name, stage in card["stuck"]:
         add(f"      stuck {name}: still at '{stage}' when the simulation ended")
 
+    add(f"  {ok(not card['unpaid_went_live'] and not card['unpaid_billed'])} Paid: "
+        f"{card['paid']} of {card['sales_closed']} signed clients paid; "
+        f"{len(card['never_paid'])} never did — "
+        f"{len(card['unpaid_went_live'])} of those went live anyway, "
+        f"{len(card['unpaid_billed'])} were counted as revenue")
+    add(f"  {ok(not card['reminder_problems'] and not card['overdue_unflagged'])} Chasing "
+        f"payment: {len(card['reminder_problems'])} reminder problems, "
+        f"{len(card['overdue_unflagged'])} overdue clients not flagged")
+    for line in card["reminder_problems"][:4]:
+        add(f"      {line}")
     add(f"  {ok(card['mrr'] == card['mrr_expected'])} MRR ${card['mrr']:,.0f} "
-        f"(should be ${card['mrr_expected']:,.0f})")
+        f"(should be ${card['mrr_expected']:,.0f}, paying clients only)")
     add(f"  {ok(not card['double_billed'] and not card['unbilled_clients'])} Billing: "
         f"${card['revenue_billed']:,.0f} billed, {len(card['double_billed'])} double-billed, "
         f"{len(card['unbilled_clients'])} never billed")
@@ -769,6 +994,17 @@ def render(card: dict[str, Any]) -> str:
     if card["audits_per_client"]:
         counts = sorted(card["audits_per_client"].values())
         add(f"      audits per client: {counts[0]}–{counts[-1]}")
+    add(f"  {ok(not card['report_gaps'])} Monthly report emails received by clients: "
+        f"{card['client_report_emails']} ({len(card['report_gaps'])} clients short)")
+    for line in card["report_gaps"][:4]:
+        add(f"      {line}")
+    add(f"  {ok(not card['fixes_unseen'] and not card['broken_files'])} Fixes: live on "
+        f"{card['fixes_live']} client sites and seen by the daily check; "
+        f"{card['fixes_unseen']} installed but not seen; "
+        f"{len(card['broken_files'])} files broken in the email")
+    add(f"  {ok(not card['stuck_installs_unflagged'])} Clients stuck at the install step "
+        f"that Retention did not flag: {card['stuck_installs_unflagged']} "
+        f"(of {card['installs_never']} who never installed)")
     add(f"  {ok(not card['clients_demoted_in_pipeline'])} Paying clients shown as "
         f"something else in the pipeline: {len(card['clients_demoted_in_pipeline'])}")
     add(f"  {ok(not card['retention_false_alarms'])} Retention false alarms on clients "
@@ -827,4 +1063,8 @@ def passed(card: dict[str, Any]) -> bool:
             and not card["retention_false_alarms"]
             and not card["cap_breaches"] and not card["misreads"]
             and not card["agent_errors"]
+            and not card["unpaid_went_live"] and not card["unpaid_billed"]
+            and not card["reminder_problems"] and not card["overdue_unflagged"]
+            and not card["report_gaps"] and not card["fixes_unseen"]
+            and not card["broken_files"] and not card["stuck_installs_unflagged"]
             and not (set(card["issues"]) - tolerated))

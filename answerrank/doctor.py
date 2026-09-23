@@ -158,7 +158,8 @@ def check_unsubscribe(settings: Settings, probe: bool = False) -> Check:
                      "Must return 200. Deploy the web app before sending.", blocking=True)
     except Exception as exc:  # noqa: BLE001
         return Check("Unsubscribe endpoint", FAIL, f"unreachable: {type(exc).__name__}",
-                     f"Deploy the web app so {url} is publicly reachable.", blocking=True)
+                     f"{url} must work from the internet before anything is sent. "
+                     f"See deploy/SERVER.md for the $6/month server setup.", blocking=True)
 
 
 def check_smtp() -> Check:
@@ -167,7 +168,53 @@ def check_smtp() -> Check:
     if cfg.configured():
         return Check("SMTP", PASS, f"{cfg.host}:{cfg.port} as {cfg.username}")
     return Check("SMTP", WARN, "not configured — drafting only",
-                 "Export SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD when ready to send.")
+                 "Double-click KEYS.bat (or: python run.py keys) to save your "
+                 "mailbox and app password. It tests them before saving.")
+
+
+def check_inbox(probe: bool = False) -> Check:
+    """Whether replies are read automatically, and whether the login works."""
+    import os
+
+    host = os.environ.get("IMAP_HOST", "")
+    user = os.environ.get("IMAP_USERNAME") or os.environ.get("SMTP_USERNAME", "")
+    pwd = os.environ.get("IMAP_PASSWORD") or os.environ.get("SMTP_PASSWORD", "")
+    if not host:
+        return Check("Reading replies", WARN, "off — replies are pasted in by hand",
+                     "Run KEYS.bat and answer yes to reading replies automatically.")
+    if not (user and pwd):
+        return Check("Reading replies", WARN, f"{host} set, but no mailbox login",
+                     "Run KEYS.bat to add the mailbox and app password.")
+    if not probe:
+        return Check("Reading replies", PASS, f"{host} as {user} (not tested)")
+    from .keys import test_imap
+    problem = test_imap(host, user, pwd)
+    if problem:
+        return Check("Reading replies", FAIL, problem[:90], problem)
+    return Check("Reading replies", PASS, f"{host} as {user}")
+
+
+def check_payments(settings: Settings) -> Check:
+    """Whether a yes can turn into money without a manual invoice."""
+    import os
+
+    links = {k: v for k, v in (settings.payment_links or {}).items() if v}
+    key = os.environ.get("STRIPE_API_KEY", "")
+    if not links:
+        return Check("Payments", WARN, "no payment links — every sale needs a manual invoice",
+                     "In Stripe, make a Payment Link per plan with a recurring monthly "
+                     "price, then add them to answerrank.yml under payment_links.")
+    missing = [p for p in ("starter", "growth", "managed") if p not in links]
+    detail = f"links for {', '.join(sorted(links))}"
+    if key.startswith("sk_"):
+        return Check("Payments", WARN, detail + "; Stripe key is a full secret key",
+                     "Replace it with a restricted read-only key (rk_...) in KEYS.bat.")
+    if not key:
+        return Check("Payments", PASS, detail + "; tap Paid when money arrives",
+                     "Optional: add a read-only Stripe key in KEYS.bat and payments are "
+                     "confirmed automatically.")
+    return Check("Payments", PASS, detail + ("; missing " + ", ".join(missing) if missing else "")
+                 + "; confirmed automatically")
 
 
 def check_budget() -> Check:
@@ -191,6 +238,8 @@ def run_all(settings: Settings, probe: bool = False) -> list[Check]:
     checks.extend(check_dns(settings))
     checks.append(check_unsubscribe(settings, probe))
     checks.append(check_smtp())
+    checks.append(check_inbox(probe))
+    checks.append(check_payments(settings))
     return checks
 
 

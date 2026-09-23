@@ -24,45 +24,65 @@ PROCESSOR_PCT = 0.029
 PROCESSOR_FLAT = 0.30
 
 
+def bill_month(store, client, month: str = "") -> bool:
+    """Book one client's fee for one month, once. True if it was new.
+
+    Every recurring charge carries a key naming exactly what it is and which
+    month it belongs to, and the database refuses a second one. The
+    check-then-insert this replaced was two separate connections: a console
+    action landing while the tick ran could bill the same client twice,
+    which shows up as revenue that was never collected.
+
+    Only a client who has paid is billed — a client awaiting payment is a
+    promise, and counting promises is how a P&L starts lying.
+    """
+    if client.mrr <= 0 or client.status != "active":
+        return False
+    month = month or datetime.now(timezone.utc).strftime("%Y-%m")
+    wrote = store.add_ledger_once(
+        LedgerEntry(
+            kind="revenue", category="subscription", amount=client.mrr,
+            description=f"{client.plan} plan — {client.business.name} ({month})",
+            client_id=client.id,
+        ),
+        dedupe_key=f"subscription:{client.id}:{month}",
+    )
+    if wrote:
+        fee = round(client.mrr * PROCESSOR_PCT + PROCESSOR_FLAT, 2)
+        store.add_ledger_once(
+            LedgerEntry(
+                kind="cost", category="processing", amount=fee,
+                description=f"payment processing — {client.business.name}",
+                client_id=client.id,
+            ),
+            dedupe_key=f"processing:{client.id}:{month}",
+        )
+    return wrote
+
+
 class BookkeeperAgent(Agent):
     name = "bookkeeper"
-    description = "Bills active clients, books costs, and reports progress to target."
-    interval = 24 * 3600
+    description = ("Confirms payments, chases unpaid clients, bills paying ones, "
+                   "and reports progress to target.")
+    # Every two hours rather than daily: it now confirms payments, and a
+    # client who paid this morning should be welcomed this morning. Billing
+    # is idempotent per month, so running more often cannot double-charge.
+    interval = 2 * 3600
 
     def execute(self) -> tuple[int, str]:
+        from .. import payments
+
         month = datetime.now(timezone.utc).strftime("%Y-%m")
         billed = 0
         billed_amount = 0.0
 
-        # Every recurring charge carries a key naming exactly what it is and
-        # which month it belongs to, and the database refuses a second one.
-        # The check-then-insert this replaced was two separate connections:
-        # a console action landing while the tick ran could bill the same
-        # client twice, which shows up as revenue that was never collected.
+        collections = payments.reconcile(self.store, self.settings)
+        collections += payments.chase(self.store, self.settings)
+
         for client in self.store.get_clients("active"):
-            if client.mrr <= 0:
-                continue
-            wrote = self.store.add_ledger_once(
-                LedgerEntry(
-                    kind="revenue", category="subscription", amount=client.mrr,
-                    description=f"{client.plan} plan — {client.business.name} ({month})",
-                    client_id=client.id,
-                ),
-                dedupe_key=f"subscription:{client.id}:{month}",
-            )
-            if not wrote:
-                continue
-            fee = round(client.mrr * PROCESSOR_PCT + PROCESSOR_FLAT, 2)
-            self.store.add_ledger_once(
-                LedgerEntry(
-                    kind="cost", category="processing", amount=fee,
-                    description=f"payment processing — {client.business.name}",
-                    client_id=client.id,
-                ),
-                dedupe_key=f"processing:{client.id}:{month}",
-            )
-            billed += 1
-            billed_amount += client.mrr
+            if bill_month(self.store, client, month):
+                billed += 1
+                billed_amount += client.mrr
 
         for category, amount in FIXED_COSTS.items():
             self.store.add_ledger_once(
@@ -74,11 +94,17 @@ class BookkeeperAgent(Agent):
             )
 
         kpis = self.kpis()
-        return billed, (
+        waiting = self.store.get_clients("awaiting_payment")
+        summary = (
             f"billed {billed} clients (${billed_amount:,.0f}); MRR ${kpis['mrr']:,.0f}; "
             f"30d profit ${kpis['profit']:,.0f}; "
             f"{kpis['pct_to_target']:.0f}% of ${kpis['target']:,.0f} target"
         )
+        if waiting:
+            summary += f" | {len(waiting)} signed, not yet paid"
+        if collections:
+            summary += " | " + "; ".join(collections[:4])
+        return billed, summary
 
     def kpis(self) -> dict[str, float]:
         pnl = self.store.pnl(30)

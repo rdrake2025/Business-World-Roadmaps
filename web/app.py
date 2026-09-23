@@ -102,8 +102,17 @@ class Application:
         return self._ok(start, render("terms.html"))
 
     def health(self, environ, start):
-        start("200 OK", [("Content-Type", "application/json")])
-        return [json.dumps({"status": "ok", "brand": self.settings.brand}).encode()]
+        """Public. Also answers "is a fleet already running this business?" —
+        see ``cli._fleet_elsewhere`` — so it says which copy it is and whether
+        agents are active, and nothing else."""
+        body = json.dumps({"status": "ok", "brand": self.settings.brand,
+                           "app": "answerrank",
+                           "instance": self.store.instance_id(),
+                           "fleet_active": self.store.fleet_active()}).encode()
+        start("200 OK", [("Content-Type", "application/json"),
+                         ("Content-Length", str(len(body))),
+                         ("Cache-Control", "no-store")])
+        return [body]
 
     def unsubscribe(self, environ, start):
         """GET shows a confirmation page; POST performs the opt-out.
@@ -264,7 +273,8 @@ class Application:
     def api_prospects(self, environ, start):
         q = _query(environ)
         return self._json(start, self.api.prospects(
-            q.get("stage") or None, _int(q.get("limit"), 40, 1, 200)))
+            q.get("stage") or None, _int(q.get("limit"), 40, 1, 200),
+            hot=q.get("hot") in {"1", "true", "yes"}, q=q.get("q", "")[:120]))
 
     def api_reports(self, environ, start):
         return self._json(start, self.api.reports())
@@ -293,7 +303,7 @@ class Application:
     def api_send(self, environ, start):
         d = self._body_json(environ)
         return self._json(start, self.api.send(
-            _int(d.get("limit"), 25, 1, 100), bool(d.get("dry_run"))))
+            _int(d.get("limit"), 25, 1, 100), bool(d.get("dry_run")), background=True))
 
     def api_health(self, environ, start):
         return self._json(start, self.api.health())
@@ -315,6 +325,10 @@ class Application:
         d = self._body_json(environ)
         return self._json(start, self.api.win(str(d.get("id", "")),
                                               str(d.get("plan", "growth"))))
+
+    def api_paid(self, environ, start):
+        d = self._body_json(environ)
+        return self._json(start, self.api.mark_paid(str(d.get("id", ""))))
 
     def api_expense(self, environ, start):
         d = self._body_json(environ)
@@ -424,14 +438,64 @@ class Application:
             "/api/money": self.api_money,
             "/api/forecast": self.api_forecast,
             "/api/win": self.api_win,
+            "/api/paid": self.api_paid,
             "/api/expense": self.api_expense,
             "/api/markets": self.api_markets,
             "/api/research": self.api_research,
         }
 
+    def files(self, environ, start):
+        """Open a client's report or one of their files from the phone.
+
+        These were written to the laptop's disk and nothing could open them
+        from anywhere else, so a report could not even be forwarded by hand.
+        Behind the console login like everything else here; a file is only
+        served from the output directory, whatever the database says.
+        """
+        parts = environ.get("PATH_INFO", "").strip("/").split("/")
+        if len(parts) != 3 or parts[1] not in {"report", "file", "case"}:
+            return self._ok(start, render("notfound.html"), status="404 Not Found")
+        _, kind, ident = parts
+        root = Path(self.settings.output_dir).resolve()
+        if kind == "case":
+            from answerrank import casestudy
+            client = self.store.get_client(ident)
+            if not client:
+                return self._ok(start, render("notfound.html"), status="404 Not Found")
+            _ev, text = casestudy.write_up(self.store, client)
+            body = text.encode("utf-8")
+            start("200 OK", [("Content-Type", "text/plain; charset=utf-8"),
+                             ("Content-Length", str(len(body))),
+                             ("Cache-Control", "no-store")])
+            return [body]
+        if kind == "report":
+            reports = [d for c in [self.store.get_client(ident)] if c
+                       for a in self.store.audit_history(c.business.id, limit=12)
+                       for d in self.store.get_deliverables(a.id) if d.kind == "report_html"]
+            target = Path(reports[0].body).resolve() if reports else None
+            if not target or root not in target.parents or not target.exists():
+                return self._ok(start, render("notfound.html"), status="404 Not Found")
+            body = target.read_bytes()
+            ctype, name = "text/html; charset=utf-8", target.name
+        else:
+            d = self.store.get_deliverable(ident)
+            if not d or d.kind == "report_html":
+                return self._ok(start, render("notfound.html"), status="404 Not Found")
+            body = d.body.encode("utf-8")
+            ctype = ("application/json" if d.filename.endswith(".json")
+                     else "text/plain") + "; charset=utf-8"
+            name = d.filename or f"{d.kind}.txt"
+        start("200 OK", [("Content-Type", ctype), ("Content-Length", str(len(body))),
+                         ("Content-Disposition", f'inline; filename="{name}"'),
+                         ("Cache-Control", "no-store"),
+                         ("X-Content-Type-Options", "nosniff")])
+        return [body]
+
     def __call__(self, environ, start_response) -> Iterable[bytes]:
         path = environ.get("PATH_INFO", "/").rstrip("/") or "/"
         handler = self.routes.get(path)
+        if handler is None and path.startswith("/files/"):
+            handler = self.files
 
         # Resolve first: an unknown path is a 404 regardless of credentials.
         if handler is None:

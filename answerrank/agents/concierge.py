@@ -171,7 +171,8 @@ def report_email(prospect: Prospect, audit, settings) -> tuple[str, str]:
 
 
 def draft_response(intent: str, prospect: Prospect, settings,
-                   text: str = "", report_sent: bool = False) -> tuple[str, str]:
+                   text: str = "", report_sent: bool = False,
+                   payment_link: str = "") -> tuple[str, str]:
     """A reply the operator can send as-is or edit in ten seconds.
 
     ``report_sent`` matters because the right answer to most messages
@@ -190,11 +191,17 @@ def draft_response(intent: str, prospect: Prospect, settings,
                  f"there's no call attached. Want it?")
 
     if intent == "ready_to_buy":
+        # With a payment link configured, the close carries it: the fewer
+        # steps between "yes" and paid, the fewer yeses go cold.
+        how = (f"Here's the link to set it up — ${price:,.0f}/month, renews "
+               f"monthly, cancel any time:\n{payment_link}"
+               if payment_link else
+               f"It's ${price:,.0f}/month, billed monthly, no long contract, cancel "
+               f"any time. I'll send the invoice over today.")
         return ("close_sale", _body(
             "Hi,",
             f"Great — glad to have {biz.name} on board.",
-            f"It's ${price:,.0f}/month, billed monthly, no long contract, cancel "
-            f"any time. I'll send the invoice over today.",
+            how,
             "As soon as that's settled you'll get a short welcome note with the two "
             "things I need from you — about ten minutes of your time — and "
             "I start on the fixes from the report straight away.",
@@ -265,6 +272,99 @@ def draft_response(intent: str, prospect: Prospect, settings,
     return ("needs_human", _body("Hi,", "Thanks for getting back to me.", brand))
 
 
+# ---------------------------------------------------------------------------
+# Reading real mail
+# ---------------------------------------------------------------------------
+
+#: Where a reply stops being the reply and starts being what it replies to.
+_QUOTE_MARKERS = re.compile(
+    r"^\s*(On .{4,200}wrote:\s*$"                  # Gmail, Apple Mail
+    r"|-{2,}\s*Original Message\s*-{2,}"             # Outlook, older clients
+    r"|_{10,}"                                         # Outlook web separator
+    r"|From:\s.+"                                      # forwarded/quoted header block
+    r"|Sent from my (iPhone|iPad|Android|Galaxy)"      # phone signatures
+    r")", re.I | re.M)
+
+
+def strip_quoted(text: str) -> str:
+    """Only what the person wrote, not the email they were replying to.
+
+    Every mail client quotes the original by default, and ours carries an
+    unsubscribe footer. Read whole, "Yes please" plus the quoted footer
+    classifies as an unsubscribe — and would have, for every reply, the
+    moment replies were read automatically. The same text arrives when an
+    operator pastes a whole email thread into the console.
+    """
+    text = (text or "").replace("\r\n", "\n")
+    m = _QUOTE_MARKERS.search(text)
+    if m and m.start() > 0:
+        text = text[:m.start()]
+    kept = [line for line in text.split("\n") if not line.lstrip().startswith(">")]
+    return "\n".join(kept).strip()
+
+
+def html_to_text(html: str) -> str:
+    import html as html_lib
+    text = re.sub(r"(?is)<(script|style).*?</\1>", " ", html or "")
+    text = re.sub(r"(?i)<br\s*/?>|</p>|</div>", "\n", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"[ \t]+", " ", html_lib.unescape(text)).strip()
+
+
+def message_body(msg) -> str:
+    """The plain-text part, or the HTML part flattened if that is all there is."""
+    plain = html = ""
+    parts = msg.walk() if msg.is_multipart() else [msg]
+    for part in parts:
+        ctype = part.get_content_type()
+        if part.get_filename():
+            continue
+        payload = part.get_payload(decode=True)
+        if not payload:
+            continue
+        text = payload.decode(part.get_content_charset() or "utf-8", "replace")
+        if ctype == "text/plain" and not plain:
+            plain = text
+        elif ctype == "text/html" and not html:
+            html = text
+    return plain or html_to_text(html)
+
+
+def mail_kind(msg) -> str:
+    """normal | bounce | auto. Only a normal message is a person talking."""
+    sender = email.utils.parseaddr(msg.get("From", ""))[1].lower()
+    subject = (msg.get("Subject") or "").lower()
+    if sender.split("@")[0] in {"mailer-daemon", "postmaster"} \
+            or msg.get("X-Failed-Recipients") \
+            or msg.get_content_type() == "multipart/report":
+        return "bounce"
+    auto = (msg.get("Auto-Submitted", "no").lower() != "no"
+            or msg.get("X-Autoreply") or msg.get("X-Autorespond")
+            or (msg.get("Precedence", "").lower() in {"auto_reply", "bulk", "junk"})
+            or subject.startswith(("automatic reply", "auto:", "out of office",
+                                   "autoreply", "away:")))
+    return "auto" if auto else "normal"
+
+
+def failed_recipients(msg) -> list[str]:
+    """Which of our addresses a bounce notice is about."""
+    found = [a.strip().lower() for a in (msg.get("X-Failed-Recipients") or "").split(",")
+             if "@" in a]
+    if not found:
+        # The machine-readable part is a message/delivery-status block, whose
+        # payload the email package parses into a list of header groups.
+        texts = [message_body(msg)]
+        for part in msg.walk():
+            if part.get_content_type() == "message/delivery-status":
+                payload = part.get_payload()
+                items = payload if isinstance(payload, list) else [payload]
+                texts.extend(str(item) for item in items)
+        body = "\n".join(texts)
+        found = [m.lower() for m in re.findall(
+            r"(?:Final|Original)-Recipient:\s*rfc822;\s*([^\s>]+@[^\s>]+)", body, re.I)]
+    return sorted(set(found))
+
+
 class ConciergeAgent(Agent):
     name = "concierge"
     description = "Handles inbound replies and drafts the response."
@@ -281,35 +381,53 @@ class ConciergeAgent(Agent):
         return {"host": host, "user": user, "password": pwd,
                 "folder": os.environ.get("IMAP_FOLDER", "INBOX")}
 
-    def _fetch_replies(self) -> list[tuple[str, str]]:
-        """(from_address, body) for unread mail. Empty when not configured."""
+    def _fetch_replies(self, days: int = 4) -> list[dict[str, str]]:
+        """New mail from the last few days, each exactly once. Empty when not
+        configured.
+
+        Three things this used to get wrong, each of which would have bitten
+        the first week it ran for real:
+
+        * It searched UNSEEN. The operator reads their email on their phone,
+          which marks it seen, so any reply they had already glanced at was
+          never handled. Mail is now found by date and remembered by its
+          Message-ID.
+        * Fetching with RFC822 marks every message read — including Stripe
+          receipts and personal mail it then ignored. BODY.PEEK leaves the
+          mailbox exactly as the operator left it.
+        * It could not tell a person from a machine: out-of-office replies got
+          a sales answer, and bounce notices were ignored — which, since Gmail
+          accepts mail first and bounces it later, meant almost no bounce was
+          ever counted.
+        """
         cfg = self._imap_config()
         if not cfg:
             return []
-        out: list[tuple[str, str]] = []
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%d-%b-%Y")
+        own = (self.settings.from_email or "").lower()
+        out: list[dict[str, str]] = []
         try:
             with imaplib.IMAP4_SSL(cfg["host"]) as box:
                 box.login(cfg["user"], cfg["password"])
-                box.select(cfg["folder"])
-                _typ, data = box.search(None, "UNSEEN")
-                for num in (data[0].split() if data and data[0] else [])[:40]:
-                    _typ, raw = box.fetch(num, "(RFC822)")
-                    if not raw or not raw[0]:
+                box.select(cfg["folder"], readonly=True)
+                _typ, data = box.search(None, f"(SINCE {since})")
+                for num in (data[0].split() if data and data[0] else [])[-300:]:
+                    _typ, raw = box.fetch(num, "(BODY.PEEK[])")
+                    if not raw or not isinstance(raw[0], tuple):
                         continue
                     msg = email.message_from_bytes(raw[0][1])
                     sender = email.utils.parseaddr(msg.get("From", ""))[1].lower()
-                    body = ""
-                    if msg.is_multipart():
-                        for part in msg.walk():
-                            if part.get_content_type() == "text/plain":
-                                body = part.get_payload(decode=True).decode(
-                                    "utf-8", "replace")
-                                break
-                    else:
-                        body = (msg.get_payload(decode=True) or b"").decode(
-                            "utf-8", "replace")
-                    if sender:
-                        out.append((sender, body[:4000]))
+                    mid = (msg.get("Message-ID") or "").strip() or \
+                        f"{sender}|{msg.get('Date', '')}|{msg.get('Subject', '')}"
+                    if not sender or sender == own or self.store.inbound_seen(mid):
+                        continue
+                    kind = mail_kind(msg)
+                    out.append({
+                        "id": mid, "sender": sender, "kind": kind,
+                        "subject": msg.get("Subject", ""),
+                        "body": strip_quoted(message_body(msg))[:4000],
+                        "failed": ",".join(failed_recipients(msg)) if kind == "bounce" else "",
+                    })
         except (imaplib.IMAP4.error, OSError) as exc:
             self.log.warning("could not read the mailbox: %s", exc)
         return out
@@ -350,6 +468,7 @@ class ConciergeAgent(Agent):
 
     def handle_reply(self, prospect: Prospect, text: str) -> dict[str, str]:
         """Classify, record, advance, and draft. Returns what it decided."""
+        text = strip_quoted(text) or (text or "").strip()
         client = self._client_for(prospect)
         intent = classify(text, is_client=client is not None)
         report_sent = self._report_sent(prospect)
@@ -400,8 +519,15 @@ class ConciergeAgent(Agent):
             subject, body = report_email(prospect, audit, self.settings)
             action, kind = "send_report", "report"
         else:
+            link = ""
+            if intent == "ready_to_buy":
+                from .. import payments
+                plan = self.settings.pricing.plan_for(
+                    self.settings.quote_for(prospect.business.vertical)) or "growth"
+                link = payments.link_for(self.settings, plan, prospect.id,
+                                         prospect.business.email)
             action, body = draft_response(intent, prospect, self.settings, text,
-                                          report_sent=report_sent)
+                                          report_sent=report_sent, payment_link=link)
             subject, kind = f"Re: {prospect.business.name}", "reply"
 
         message_id = ""
@@ -416,27 +542,75 @@ class ConciergeAgent(Agent):
 
         return {"intent": intent, "action": action, "message_id": message_id}
 
+    def _match(self, sender: str, prospects: list[Prospect]) -> Prospect | None:
+        """Exact address first; failing that, the one business on that domain.
+
+        Cold email goes to info@ and the owner answers from their own address
+        on the same domain. Matching the address alone dropped those replies,
+        which are exactly the ones from the person who can say yes.
+        """
+        exact = [p for p in prospects if (p.business.email or "").lower() == sender]
+        if exact:
+            return exact[0]
+        domain = sender.split("@")[-1]
+        if domain in {"gmail.com", "yahoo.com", "outlook.com", "hotmail.com",
+                      "icloud.com", "aol.com"}:
+            return None
+        same = [p for p in prospects if p.business.domain == domain]
+        return same[0] if len(same) == 1 else None
+
     def execute(self) -> tuple[int, str]:
-        replies = self._fetch_replies()
-        if not replies:
+        mail = self._fetch_replies()
+        if not mail:
             cfg = self._imap_config()
             return 0, ("no new replies" if cfg else
-                       "mailbox not connected — log replies from the console "
-                       "(set IMAP_HOST to poll automatically)")
+                       "mailbox not connected — replies are pasted in from the "
+                       "console (run KEYS.bat to have them read automatically)")
 
-        by_email = {p.business.email.lower(): p
-                    for p in self.store.get_prospects(limit=5000)
-                    if p.business.email}
-        handled = 0
+        prospects = [p for p in self.store.get_prospects(limit=10_000) if p.business.email]
+        handled = bounced = skipped = unmatched = 0
         intents: list[str] = []
-        for sender, body in replies:
-            prospect = by_email.get(sender)
-            if not prospect:
+        for item in mail:
+            if item["kind"] == "bounce":
+                for address in item["failed"].split(","):
+                    target = self._match(address, prospects) if address else None
+                    if address:
+                        self.store.suppress(address, "bounced (notice in mailbox)")
+                    if target:
+                        self.store.record_outcome(
+                            prospect_id=target.id, vertical=target.business.vertical,
+                            kind="bounced", note="bounce notice")
+                        bounced += 1
+                self.store.record_inbound(item["id"], item["sender"], "bounce",
+                                          snippet=item["failed"])
                 continue
-            intents.append(self.handle_reply(prospect, body)["intent"])
+            if item["kind"] == "auto":
+                self.store.record_inbound(item["id"], item["sender"], "auto",
+                                          snippet=item["subject"])
+                skipped += 1
+                continue
+            prospect = self._match(item["sender"], prospects)
+            if prospect is None:
+                # Surfaced, not dropped: it may be a referral writing from a
+                # new address, or a client's bookkeeper.
+                self.store.record_inbound(item["id"], item["sender"], "unmatched",
+                                          snippet=item["subject"] + " — " + item["body"][:200])
+                unmatched += 1
+                continue
+            result = self.handle_reply(prospect, item["body"])
+            self.store.record_inbound(item["id"], item["sender"], "reply",
+                                      prospect.id, item["body"][:300])
+            intents.append(result["intent"])
             handled += 1
 
-        if not handled:
-            return 0, f"{len(replies)} replies, none matched a known prospect"
-        summary = ", ".join(f"{intents.count(i)} {i}" for i in sorted(set(intents)))
-        return handled, f"handled {handled} replies: {summary}"
+        parts = []
+        if handled:
+            parts.append(f"handled {handled} replies: " + ", ".join(
+                f"{intents.count(i)} {i}" for i in sorted(set(intents))))
+        if bounced:
+            parts.append(f"{bounced} bounce notice(s) — addresses suppressed")
+        if skipped:
+            parts.append(f"{skipped} auto-replies ignored")
+        if unmatched:
+            parts.append(f"{unmatched} from senders I don't recognise — check your inbox")
+        return handled, "; ".join(parts) or "nothing new"

@@ -24,9 +24,9 @@ from .budget import (
 )
 from .agents.reporter import render_report
 from .audit import estimate_cost, run_audit
-from .config import SETTINGS, Settings, load_settings
+from .config import SETTINGS, Pricing, Settings, load_settings
 from .mailer import check_dns_readiness
-from .models import Business, Client, LedgerEntry, Prospect, now_iso
+from .models import Business, LedgerEntry
 from .orchestrator import Orchestrator, build_fleet, setup_logging
 from .schedule import build_calendar
 from .scoring import grade
@@ -72,6 +72,15 @@ pricing:
   growth_monthly: 997
   managed_monthly: 1997
 
+# Stripe payment links, one per plan. In Stripe: Payment Links > New, with a
+# RECURRING monthly price, so Stripe charges every month by itself. Paste the
+# https://buy.stripe.com/... address for each plan you sell. Leave blank and
+# you send invoices by hand and tap Paid when the money arrives.
+payment_links:
+  starter: ""
+  growth: ""
+  managed: ""
+
 outreach:
   max_emails_total_per_day: 120
   max_emails_per_domain_per_day: 30
@@ -82,7 +91,7 @@ outreach:
     print(f"Wrote {path}")
     print("\nNext:")
     print("  1. Edit physical_address, from_email and website — sending is blocked until you do.")
-    print("  2. Export provider keys: OPENAI_API_KEY, ANTHROPIC_API_KEY, PERPLEXITY_API_KEY, SERPER_API_KEY")
+    print("  2. Save your keys: python run.py keys   (or double-click KEYS.bat)")
     print("  3. Run: python3 run.py tick")
     return 0
 
@@ -113,9 +122,101 @@ def cmd_tick(args, settings: Settings) -> int:
     return 0
 
 
+def _fleet_elsewhere(settings: Settings, store) -> str:
+    """The address of another copy of this business already running its
+    agents, or "".
+
+    Two fleets for one business send every email twice, from two databases
+    that each think they are the only one. That is the natural result of
+    moving to a server and then double-clicking start.bat on the laptop out
+    of habit, so it is checked rather than documented.
+    """
+    url = (settings.website or "").rstrip("/")
+    if not url.startswith("https://") or getattr(settings, "demo_mode", False):
+        return ""
+    try:
+        import requests
+        data = requests.get(f"{url}/health", timeout=6).json()
+    except Exception:  # noqa: BLE001 - unreachable means nothing is there
+        return ""
+    if (isinstance(data, dict) and data.get("app") == "answerrank"
+            and data.get("fleet_active") and data.get("instance")
+            and data.get("instance") != store.instance_id()):
+        return url
+    return ""
+
+
 def cmd_run(args, settings: Settings) -> int:
     setup_logging(args.verbose)
-    Orchestrator(_store(settings), settings).run_forever()
+    store = _store(settings)
+    elsewhere = _fleet_elsewhere(settings, store)
+    if elsewhere and not getattr(args, "force", False):
+        print(f"Your agents are already running on {elsewhere}. Starting them here too "
+              f"would send every email twice. Use {elsewhere}/app instead.")
+        return 1
+    Orchestrator(store, settings).run_forever()
+    return 0
+
+
+def cmd_case_study(args, settings: Settings) -> int:
+    """Before and after for one client, written up — or told it's too early."""
+    from . import casestudy
+
+    store = _store(settings)
+    matches = [c for status in ("active", "past_due", "churned")
+               for c in store.get_clients(status)
+               if args.client.lower() in c.business.name.lower() or c.id == args.client]
+    if len(matches) != 1:
+        print("No single client matches that." if not matches else
+              "More than one matches: " + ", ".join(c.business.name for c in matches))
+        return 1
+    ev, text = casestudy.write_up(store, matches[0])
+    out = Path(settings.output_dir) / "case-studies"
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"{(matches[0].business.domain or matches[0].id).replace('.', '_')}.md"
+    path.write_text(text, encoding="utf-8")
+    print(text)
+    print(f"\n  Saved to {path}  (verdict: {ev.verdict.replace('_', ' ')})")
+    return 0
+
+
+def cmd_server_script(args, settings: Settings) -> int:
+    """Write the one file that sets up the always-on server."""
+    from . import server
+
+    try:
+        path, link, warnings = server.write(args.domain)
+    except ValueError as exc:
+        print(f"  {exc}")
+        return 1
+    _hr("SERVER SETUP FILE")
+    print(f"  Written: {path}")
+    print("  It contains your keys. Keep it private and delete it once the")
+    print("  server is running.\n")
+    for w in warnings:
+        print(f"  ! {w}")
+    print("  Then follow deploy/SERVER.md. In short:")
+    print("   1. Create an Ubuntu 24.04 server (DigitalOcean or Hetzner, ~$6/mo).")
+    print("   2. On the creation page, open the user data / cloud config box and")
+    print("      paste the whole contents of that file.")
+    print(f"   3. At your domain registrar, point an A record for {args.domain}")
+    print("      at the server's IP address.")
+    print("   4. Wait about 10 minutes, then run the doctor on this laptop.\n")
+    print("  Your console, once it's up (save this — it's your login):")
+    print(f"    {link}\n")
+    print("  After that, don't run start.bat for the business any more: the")
+    print("  server runs the agents, and your phone uses the link above.")
+    return 0
+
+
+def cmd_console_link(args, settings: Settings) -> int:
+    """Print the console address, or install a known token first."""
+    from web import auth
+
+    store = _store(settings)
+    token = auth.set_token(store, args.set) if args.set else auth.get_or_create_token(store)
+    base = (args.base or settings.website or "http://localhost:8000").rstrip("/")
+    print(f"{base}/app?t={token}")
     return 0
 
 
@@ -255,7 +356,9 @@ def cmd_send(args, settings: Settings) -> int:
 
 
 def cmd_win(args, settings: Settings) -> int:
-    """Convert a prospect into a paying client."""
+    """They said yes. Same code path as the Won button on the phone."""
+    from web.api import Api
+
     store = _store(settings)
     matches = [p for p in store.get_prospects(limit=10_000)
                if args.prospect.lower() in p.business.name.lower() or p.id == args.prospect]
@@ -268,20 +371,39 @@ def cmd_win(args, settings: Settings) -> int:
             print(f"  {p.id}  {p.business.name} ({p.business.market})")
         return 1
 
-    prospect = matches[0]
-    mrr = args.mrr if args.mrr is not None else settings.pricing.plan_price(args.plan)
-    client = Client(business=prospect.business, plan=args.plan, mrr=mrr, status="active")
-    _client_id, created = store.start_client(client)
-    if not created:
-        print(f"{prospect.business.name} is already on the books — nothing changed.")
-        print(f"  MRR is ${store.mrr():,.0f}.")
+    result = Api(store, settings).win(matches[0].id, args.plan)
+    if "error" in result:
+        print(result["error"])
         return 1
+    if args.mrr is not None:
+        client = store.get_client(result["client_id"])
+        client.mrr = args.mrr
+        store.upsert_client(client)
+        result["mrr"] = args.mrr
+    print(f"\u2713 {result['name']} signed on {result['plan']} at ${result['mrr']:,.0f}/mo "
+          f"({result['status'].replace('_', ' ')}).")
+    if result.get("payment_link"):
+        print(f"  Payment link: {result['payment_link']}")
+    print(f"  {result['next']}")
+    return 0
 
-    prospect.stage = "won"
-    store.upsert_prospect(prospect)
 
-    print(f"✓ {client.business.name} is now a {args.plan} client at ${mrr:,.0f}/mo.")
-    print(f"  MRR is now ${store.mrr():,.0f}.")
+def cmd_paid(args, settings: Settings) -> int:
+    """The money arrived — they go live."""
+    from web.api import Api
+
+    store = _store(settings)
+    waiting = [c for c in store.get_clients("awaiting_payment")
+               if args.client.lower() in c.business.name.lower() or c.id == args.client]
+    if len(waiting) != 1:
+        print("No single unpaid client matches that." if not waiting else
+              "More than one matches: " + ", ".join(c.business.name for c in waiting))
+        return 1
+    result = Api(store, settings).mark_paid(waiting[0].id)
+    if "error" in result:
+        print(result["error"])
+        return 1
+    print(f"\u2713 {result['name']} is paid and live. MRR is now ${result['total_mrr']:,.0f}.")
     return 0
 
 
@@ -574,6 +696,13 @@ def cmd_web(args, settings: Settings) -> int:
     # somebody pressed a button. A system that needs a human to press a button
     # every few hours is not running 24/7, whatever the documentation says.
     fleet_thread = None
+    elsewhere = "" if args.no_fleet else _fleet_elsewhere(settings, _store(settings))
+    if elsewhere:
+        _hr("ALREADY RUNNING ELSEWHERE")
+        print(f"  Your agents run on {elsewhere}. Starting a second copy here")
+        print(f"  would send every email twice, so this window will not.")
+        print(f"  Open {elsewhere}/app on your phone instead.\n")
+        return 1
     if not args.no_fleet:
         import threading
 
@@ -1121,6 +1250,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_tick)
 
     s = sub.add_parser("run", help="run the fleet continuously (24/7)")
+    s.add_argument("--force", action="store_true",
+                   help="start even if another copy of this business is running")
     s.set_defaults(func=cmd_run)
 
     s = sub.add_parser("audit", help="audit one business now")
@@ -1152,11 +1283,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--skip-dns", action="store_true")
     s.set_defaults(func=cmd_send)
 
-    s = sub.add_parser("win", help="convert a prospect to a paying client")
+    s = sub.add_parser("win", help="they said yes: sign them up (awaiting payment)")
     s.add_argument("prospect"); s.add_argument("--plan", default="growth",
-                                               choices=["starter", "growth", "managed"])
+                                               choices=list(Pricing.PLANS))
     s.add_argument("--mrr", type=float); s.add_argument("--force", action="store_true")
     s.set_defaults(func=cmd_win)
+
+    s = sub.add_parser("paid", help="their payment arrived: make them live")
+    s.add_argument("client")
+    s.set_defaults(func=cmd_paid)
 
     s = sub.add_parser("dashboard", help="KPIs and progress to target")
     s.set_defaults(func=cmd_dashboard)
@@ -1246,12 +1381,28 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--price", type=float)
     s.set_defaults(func=cmd_markets)
 
+    s = sub.add_parser("keys", help="save your mailbox password and API keys")
+    s.set_defaults(func=cmd_keys)
+
     s = sub.add_parser("simulate", help="run made-up sales through the real agents")
     s.add_argument("--sales", type=int, default=30, help="buyers to simulate (default 30)")
     s.add_argument("--days", type=int, default=100, help="days to run (default 100)")
     s.add_argument("--seed", type=int, default=7, help="change for a different market")
     s.add_argument("--keep", action="store_true", help="keep the scratch database")
     s.set_defaults(func=cmd_simulate)
+
+    s = sub.add_parser("case-study", help="before/after write-up for a client (pilots)")
+    s.add_argument("client")
+    s.set_defaults(func=cmd_case_study)
+
+    s = sub.add_parser("server-script", help="write the file that sets up your server")
+    s.add_argument("--domain", required=True, help="e.g. getanswerrank.com")
+    s.set_defaults(func=cmd_server_script)
+
+    s = sub.add_parser("console-link", help="print the console address with its login")
+    s.add_argument("--set", help="use this token (the server setup does this)")
+    s.add_argument("--base", help="address to print, e.g. https://yourdomain.com")
+    s.set_defaults(func=cmd_console_link)
 
     s = sub.add_parser("web", help="serve the console and run the fleet")
     s.add_argument("--no-fleet", action="store_true",
@@ -1262,6 +1413,12 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+
+
+def cmd_keys(args, settings: Settings) -> int:
+    """Ask for each key, test the mailbox, save to keys.env."""
+    from . import keys
+    return keys.interactive(settings)
 
 
 def cmd_simulate(args, settings: Settings) -> int:

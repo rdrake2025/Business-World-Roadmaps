@@ -3239,7 +3239,9 @@ class TestMoneyIsCountedOnce(unittest.TestCase):
         api = Api(self.store, self.settings)
         first = api.win(prospect.id, "growth")
         self.assertNotIn("error", first)
+        api.mark_paid(first["client_id"])
         mrr_after_one = self.store.mrr()
+        self.assertGreater(mrr_after_one, 0)
 
         second = api.win(prospect.id, "growth")
         self.assertIn("error", second)
@@ -4191,3 +4193,536 @@ class TestThirtySalesEndToEnd(unittest.TestCase):
         self.assertEqual((dt.datetime, dt.date), before)
         from answerrank.models import now_iso
         self.assertFalse(now_iso().startswith("2030"))
+
+
+# ---------------------------------------------------------------------------
+# Payments, delivery, inbox, fulfilment, pilots, server — built after the
+# review of what was missing, each against the failure it closes.
+# ---------------------------------------------------------------------------
+
+class _Biz(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.out = tempfile.mkdtemp()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+        self.settings.demo_mode = True
+        self.settings.database_path = self.tmp.name
+        self.settings.output_dir = self.out
+        self.settings.physical_address = "1 Test St, Austin, TX 78701"
+        self.settings.website = "https://answerrank.example"
+        self.settings.from_email = "hello@answerrank.example"
+        self.settings.outreach.min_seconds_between_sends = 0
+        self.settings.payment_links = {p: f"https://buy.stripe.com/test_{p}"
+                                       for p in ("starter", "growth", "managed")}
+        self.patches = [unittest.mock.patch(
+            "answerrank.crawlers.check_access",
+            side_effect=lambda site, timeout=10: __import__(
+                "answerrank.crawlers", fromlist=["x"]).Access(domain="x.com")),
+            unittest.mock.patch("answerrank.sitecheck.fetch",
+                                return_value=(200, {}, "<html><head></head></html>"))]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        os.unlink(self.tmp.name)
+
+    def _prospect(self, stage="replied", email="owner@ridgeelectric.com"):
+        biz = Business(name="Ridge Electric", city="Austin", state="TX",
+                       vertical="electrical", website="https://ridgeelectric.com",
+                       email=email, phone="512-555-0100")
+        p = Prospect(business=biz, stage=stage, score=18.0, competitor_gap=50.0, touches=1)
+        self.store.upsert_prospect(p)
+        return p
+
+    def _api(self):
+        from web.api import Api
+        return Api(self.store, self.settings)
+
+
+class TestGettingPaid(_Biz):
+    """Won used to make a client active on the spot: welcomed, audited and
+    counted as revenue whether or not any money had arrived."""
+
+    def test_a_yes_is_not_revenue_until_it_is_paid(self):
+        prospect = self._prospect()
+        won = self._api().win(prospect.id, "growth")
+        self.assertEqual(won["status"], "awaiting_payment")
+        self.assertEqual(self.store.mrr(), 0)
+        BookkeeperAgent(self.store, self.settings).execute()
+        self.assertEqual(self.store.pnl(30)["revenue"], 0)
+        from answerrank.agents.onboarder import OnboarderAgent
+        drafted, _ = OnboarderAgent(self.store, self.settings).execute()
+        self.assertEqual(drafted, 0, "nobody is welcomed before they pay")
+
+    def test_paying_makes_them_live_and_counts_once(self):
+        prospect = self._prospect()
+        api = self._api()
+        won = api.win(prospect.id, "growth")
+        api.mark_paid(won["client_id"])
+        self.assertEqual(self.store.mrr(), 997.0)
+        BookkeeperAgent(self.store, self.settings).execute()
+        BookkeeperAgent(self.store, self.settings).execute()
+        self.assertAlmostEqual(self.store.pnl(30)["revenue"], 997.0)
+        self.assertIn("error", api.mark_paid(won["client_id"]))
+
+    def test_the_link_says_who_is_paying(self):
+        from answerrank import payments
+        link = payments.link_for(self.settings, "growth", "pros_abc123", "a+b@x.com")
+        self.assertIn("client_reference_id=pros_abc123", link)
+        self.assertIn("prefilled_email=a%2Bb%40x.com", link)
+        bad = payments.link_for(self.settings, "growth", "has spaces!", "")
+        self.assertNotIn("client_reference_id", bad,
+                         "Stripe silently drops invalid ids, so never send one")
+
+    def test_signing_on_a_different_plan_sends_that_plans_link(self):
+        """The close email carried the quoted plan's link; signing them on
+        another plan used to skip the right one because "a link was sent"."""
+        prospect = self._prospect()
+        self.store.save_message(OutreachMessage(
+            prospect_id=prospect.id, subject="Re", kind="reply", status="sent",
+            body="Here: https://buy.stripe.com/test_growth?client_reference_id=x"))
+        self._api().win(prospect.id, "managed")
+        invoices = [m for m in self.store.messages_for(prospect.id) if m.kind == "invoice"]
+        self.assertEqual(len(invoices), 1)
+        self.assertIn("test_managed", invoices[0].body)
+
+    def test_the_close_email_carries_the_link(self):
+        from answerrank.agents.concierge import ConciergeAgent
+        prospect = self._prospect(stage="contacted")
+        result = ConciergeAgent(self.store, self.settings).handle_reply(
+            prospect, "Alright, sign us up.")
+        body = next(m for m in self.store.messages_for(prospect.id)
+                    if m.id == result["message_id"]).body
+        self.assertIn("https://buy.stripe.com/test_", body)
+        self.assertIn(f"client_reference_id={prospect.id}", body)
+
+    def test_one_reminder_then_a_flag_never_a_second_reminder(self):
+        from answerrank import payments
+        prospect = self._prospect()
+        won = self._api().win(prospect.id, "growth")
+        client = self.store.get_client(won["client_id"])
+        client.started_at = (datetime.now(timezone.utc) - timedelta(days=12)).isoformat(
+            timespec="seconds")
+        self.store.upsert_client(client)
+        payments.chase(self.store, self.settings)
+        payments.chase(self.store, self.settings)
+        reminders = [m for m in self.store.messages_for(prospect.id)
+                     if m.kind == "invoice" and m.subject.startswith("Getting")]
+        self.assertEqual(len(reminders), 1)
+        self.assertTrue(self.store.has_outcome(client.id, "payment_overdue"))
+
+    def test_stripe_is_checked_without_a_webhook(self):
+        """A webhook needs a public server; this may be on a laptop."""
+        from answerrank import payments
+        prospect = self._prospect()
+        won = self._api().win(prospect.id, "growth")
+
+        def fake_get(key, path, params=None):
+            if path == "checkout/sessions":
+                return {"data": [{"id": "cs_1", "payment_status": "paid",
+                                  "client_reference_id": prospect.id,
+                                  "subscription": "sub_1"}], "has_more": False}
+            return {"status": "past_due"}
+
+        with unittest.mock.patch.dict(os.environ, {"STRIPE_API_KEY": "rk_test"}):
+            lines = payments.reconcile(self.store, self.settings, get=fake_get)
+            self.assertTrue(any("paid" in l for l in lines))
+            self.assertEqual(self.store.get_client(won["client_id"]).status, "past_due",
+                             "then the subscription check sees the failing card")
+
+    def test_a_failing_card_goes_to_the_top_of_retention(self):
+        from answerrank.agents.retention import RetentionAgent
+        prospect = self._prospect()
+        won = self._api().win(prospect.id, "growth")
+        client = self.store.get_client(won["client_id"])
+        client.status = "past_due"
+        self.store.upsert_client(client)
+        top = RetentionAgent(self.store, self.settings).portfolio()[0]
+        self.assertEqual(top.band, "act_now")
+        self.assertIn("card", top.action)
+
+    def test_a_pilot_is_free_and_starts_now(self):
+        prospect = self._prospect()
+        won = self._api().win(prospect.id, "pilot")
+        self.assertEqual(won["status"], "active")
+        self.assertEqual(won["mrr"], 0)
+
+
+class TestKeysLiveSomewhereReal(unittest.TestCase):
+    """`export SMTP_PASSWORD=...` does nothing in a Windows command window."""
+
+    def test_keys_round_trip_and_the_environment_wins(self):
+        from answerrank import keys
+        d = pathlib.Path(tempfile.mkdtemp())
+        f = d / "keys.env"
+        keys.write({"SMTP_PASSWORD": "abcd", "OPENAI_API_KEY": "sk-file"}, f)
+        keys.write({"SERPER_API_KEY": "s1"}, f)
+        self.assertEqual(keys.read(f), {"SMTP_PASSWORD": "abcd",
+                                        "OPENAI_API_KEY": "sk-file", "SERPER_API_KEY": "s1"})
+        with unittest.mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-env"}, clear=False):
+            os.environ.pop("SMTP_PASSWORD", None)
+            keys.apply(f)
+            self.assertEqual(os.environ["OPENAI_API_KEY"], "sk-env")
+            self.assertEqual(os.environ["SMTP_PASSWORD"], "abcd")
+
+    def test_payment_links_are_written_without_losing_comments(self):
+        from answerrank import keys
+        from answerrank.config import load_settings
+        d = pathlib.Path(tempfile.mkdtemp())
+        cfg = d / "a.yml"
+        cfg.write_text('brand: X\n# keep me\npayment_links:\n  growth: ""\n\n'
+                       'outreach:\n  max_followups: 3\n', encoding="utf-8")
+        keys.set_payment_links({"growth": "https://buy.stripe.com/g"}, cfg)
+        self.assertIn("# keep me", cfg.read_text(encoding="utf-8"))
+        s = load_settings(cfg)
+        self.assertEqual(s.payment_links["growth"], "https://buy.stripe.com/g")
+        self.assertEqual(s.outreach.max_followups, 3)
+
+    def test_private_files_are_never_committed(self):
+        """A comment on the same line as a pattern becomes part of it, which
+        is how budget.yml — income, rent, savings — went unignored."""
+        import subprocess
+        root = pathlib.Path(__file__).resolve().parent.parent
+        for name in ("budget.yml", "keys.env", "answerrank.yml",
+                     "server-setup-x.com.sh", "data/answerrank.db"):
+            result = subprocess.run(["git", "check-ignore", "-q", name], cwd=root)
+            self.assertEqual(result.returncode, 0, f"{name} is not ignored by git")
+
+
+class TestTheLiveSiteCheck(unittest.TestCase):
+    def _check(self, html, **biz):
+        from answerrank import sitecheck
+        b = Business(name="Ridge Electric", city="Austin", state="TX",
+                     vertical="electrical", website="https://ridge.com",
+                     phone="512-555-0100", **biz)
+        return sitecheck.check(b, fetcher=lambda url: (200, {}, html))
+
+    def test_it_finds_the_markup_and_the_platform(self):
+        from answerrank.agents.fixer import localbusiness_schema
+        b = Business(name="Ridge Electric", city="Austin", state="TX",
+                     vertical="electrical", phone="512-555-0100")
+        schema = localbusiness_schema(b).replace("REPLACE_WITH_STREET_ADDRESS", "1 Main") \
+            .replace("REPLACE_WITH_ZIP", "78701")
+        html = ('<link href="https://static.wixstatic.com/x.css">'
+                f'<script type="application/ld+json">{schema}</script>')
+        c = self._check(html)
+        self.assertEqual(c.platform, "wix")
+        self.assertTrue(c.live("schema_jsonld"))
+        self.assertTrue(c.name_matches)
+        self.assertTrue(c.phone_matches)
+
+    def test_blanks_that_went_live_are_caught(self):
+        html = ('<script type="application/ld+json">{"@type":"Electrician",'
+                '"name":"Ridge Electric","address":{"postalCode":"REPLACE_WITH_ZIP"}}</script>')
+        c = self._check(html)
+        self.assertTrue(c.local_business)
+        self.assertFalse(c.live("schema_jsonld"))
+        self.assertIn("REPLACE_WITH_ZIP", c.placeholders)
+
+    def test_graph_and_broken_blocks(self):
+        html = ('<script type="application/ld+json">{"@graph":[{"@type":"FAQPage"},'
+                '{"@type":["LocalBusiness"],"name":"Ridge Electric"}]}</script>'
+                '<script type="application/ld+json">{nope</script>')
+        c = self._check(html)
+        self.assertTrue(c.faq and c.local_business)
+        self.assertEqual(c.invalid_blocks, 1)
+
+    def test_wix_files_fit_wix(self):
+        from answerrank import sitecheck
+        from answerrank.agents.fixer import faq_schema
+        pairs = [(f"Question {i}?", "An answer. " * 60) for i in range(12)]
+        fitted = sitecheck.fit_for_platform(faq_schema(pairs), "wix")
+        self.assertLess(len(fitted), sitecheck.WIX_MARKUP_LIMIT)
+        json.loads(fitted)
+
+    def test_the_schema_invents_nothing(self):
+        """A fake phone number, made-up opening hours, and a self-rating
+        Google has ignored since 2019 used to be in every file."""
+        from answerrank.agents.fixer import localbusiness_schema
+        doc = json.loads(localbusiness_schema(Business(
+            name="X", city="Austin", state="TX", vertical="electrical")))
+        self.assertNotIn("aggregateRating", doc)
+        self.assertNotIn("openingHoursSpecification", doc)
+        self.assertEqual(doc["telephone"], "REPLACE_WITH_PHONE")
+
+    def test_install_steps_match_the_platform(self):
+        """The old guide sent Wix owners to a Code Injection menu Wix lacks."""
+        from answerrank import sitecheck
+        self.assertIn("Structured Data Markup", sitecheck.install_steps("wix"))
+        self.assertNotIn("Code Injection", sitecheck.install_steps("wix"))
+        self.assertIn("Code Injection", sitecheck.install_steps("squarespace"))
+        self.assertIn("WPCode", sitecheck.install_steps("wordpress"))
+
+
+class TestClientsHearFromUs(_Biz):
+    """The monthly report was an HTML file on the laptop that nothing sent."""
+
+    def _live_client(self):
+        prospect = self._prospect()
+        api = self._api()
+        won = api.win(prospect.id, "growth")
+        api.mark_paid(won["client_id"])
+        return prospect, self.store.get_client(won["client_id"])
+
+    def test_each_report_is_drafted_to_the_client(self):
+        from answerrank.agents.reporter import ReporterAgent
+        prospect, client = self._live_client()
+        AuditorAgent(self.store, self.settings).execute()
+        FixerAgent(self.store, self.settings).execute()
+        ReporterAgent(self.store, self.settings).execute()
+        reports = [m for m in self.store.messages_for(prospect.id) if m.kind == "client_report"]
+        self.assertEqual(len(reports), 1)
+        self.assertIn("named in", reports[0].subject)
+
+    def test_the_files_in_the_email_are_still_valid_json(self):
+        """Wrapped at 74 columns, a line break landed inside a JSON string and
+        the owner pasted a file every engine ignores."""
+        import re as _re
+        from answerrank.agents.reporter import ReporterAgent
+        prospect, client = self._live_client()
+        AuditorAgent(self.store, self.settings).execute()
+        FixerAgent(self.store, self.settings).execute()
+        ReporterAgent(self.store, self.settings).execute()
+        body = next(m for m in self.store.messages_for(prospect.id)
+                    if m.kind == "client_report").body
+        blocks = _re.findall(r"--- (\S+) \(copy everything between the lines\) ---\n"
+                             r"(.*?)\n--- end of \1 ---", body, _re.S)
+        self.assertEqual(len(blocks), 2)
+        for _name, text in blocks:
+            json.loads(text)
+
+    def test_the_phone_can_open_reports_and_files(self):
+        from answerrank.agents.reporter import ReporterAgent
+        from web.app import Application
+        prospect, client = self._live_client()
+        AuditorAgent(self.store, self.settings).execute()
+        FixerAgent(self.store, self.settings).execute()
+        ReporterAgent(self.store, self.settings).execute()
+        app = Application(self.settings, self.store)
+        row = next(c for c in self._api().clients()["clients"] if c["id"] == client.id)
+        self.assertTrue(row["report_url"] and row["files"])
+
+        def get(path, token=app.token):
+            got = {}
+            env = {"PATH_INFO": path, "REQUEST_METHOD": "GET", "QUERY_STRING": "",
+                   "wsgi.input": io.BytesIO(b"")}
+            if token:
+                env["HTTP_X_AUTH_TOKEN"] = token
+            body = b"".join(app(env, lambda s, h, e=None: got.update(status=s)))
+            return got["status"], body
+        status, body = get(row["report_url"])
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"<html", body.lower())
+        status, _ = get(row["files"][0]["url"])
+        self.assertTrue(status.startswith("200"))
+        status, _ = get(row["report_url"], token="")
+        self.assertTrue(status.startswith("401"), "files are behind the console login")
+
+
+class TestReadingRealMail(unittest.TestCase):
+    QUOTED = ('Yes please, send it over.\n\nOn Tue, Oct 6, 2026 at 9:02 AM AnswerRank '
+              '<hello@answerrank.io> wrote:\n> Want it? Reply "yes".\n> ---\n'
+              '> Reply STOP, or use this link, and we will not contact you again:\n'
+              '> https://answerrank.io/unsubscribe\n')
+
+    def test_a_quoted_yes_is_a_yes_not_an_unsubscribe(self):
+        """Every client quotes the original, and ours ends in an unsubscribe
+        footer. Read whole, every reply was an opt-out."""
+        from answerrank.agents.concierge import classify, strip_quoted
+        self.assertEqual(classify(self.QUOTED), "unsubscribe", "the hazard, unstripped")
+        self.assertEqual(classify(strip_quoted(self.QUOTED)), "interested")
+
+    def test_machines_are_not_people(self):
+        import email as email_lib
+        from answerrank.agents.concierge import failed_recipients, mail_kind
+        ooo = email_lib.message_from_string(
+            "From: a@b.com\nSubject: Out of Office\nAuto-Submitted: auto-replied\n\nAway.")
+        self.assertEqual(mail_kind(ooo), "auto")
+        bounce = email_lib.message_from_string(
+            "From: mailer-daemon@googlemail.com\nX-Failed-Recipients: gone@x.com\n\nNo.")
+        self.assertEqual(mail_kind(bounce), "bounce")
+        self.assertEqual(failed_recipients(bounce), ["gone@x.com"])
+
+    def test_the_mailbox_is_read_without_changing_it(self):
+        """UNSEEN missed anything the operator had opened on their phone, and
+        RFC822 fetches marked everything read."""
+        from answerrank.agents.concierge import ConciergeAgent
+        calls = []
+
+        class FakeBox:
+            def __init__(self, *a, **k): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def login(self, *a): pass
+            def select(self, folder, readonly=False): calls.append(("select", readonly))
+            def search(self, charset, criteria):
+                calls.append(("search", criteria))
+                return "OK", [b"1"]
+            def fetch(self, num, what):
+                calls.append(("fetch", what))
+                raw = b"From: owner@ridge.com\r\nMessage-ID: <m1@x>\r\n\r\nYes please"
+                return "OK", [(b"1", raw)]
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            settings = Settings()
+            settings.database_path = tmp.name
+            agent = ConciergeAgent(Store(tmp.name), settings)
+            env = {"IMAP_HOST": "imap.x", "SMTP_USERNAME": "u", "SMTP_PASSWORD": "p"}
+            with unittest.mock.patch.dict(os.environ, env), \
+                    unittest.mock.patch("imaplib.IMAP4_SSL", FakeBox):
+                mail = agent._fetch_replies()
+        finally:
+            os.unlink(tmp.name)
+        self.assertEqual(mail[0]["body"], "Yes please")
+        self.assertIn(("select", True), calls)
+        self.assertIn(("fetch", "(BODY.PEEK[])"), calls)
+        self.assertTrue(any(c[0] == "search" and "SINCE" in c[1] for c in calls))
+
+
+class TestReadingRealMailEndToEnd(_Biz):
+    def test_bounces_auto_replies_and_strangers(self):
+        from answerrank.agents.concierge import ConciergeAgent
+        prospect = self._prospect(stage="contacted", email="info@ridgeelectric.com")
+        agent = ConciergeAgent(self.store, self.settings)
+        mail = [
+            {"id": "1", "sender": "mailer-daemon@googlemail.com", "kind": "bounce",
+             "subject": "", "body": "", "failed": "info@ridgeelectric.com"},
+            {"id": "2", "sender": "owner@ridgeelectric.com", "kind": "auto",
+             "subject": "Out of office", "body": "Away", "failed": ""},
+            {"id": "3", "sender": "someone@elsewhere.com", "kind": "normal",
+             "subject": "hi", "body": "hello", "failed": ""},
+        ]
+        with unittest.mock.patch.object(ConciergeAgent, "_fetch_replies", return_value=mail):
+            _n, summary = agent.execute()
+        self.assertTrue(self.store.is_suppressed("info@ridgeelectric.com"))
+        self.assertEqual(self.store.outcome_counts(1).get("bounced"), 1,
+                         "a bounce notice now counts toward the bounce brake")
+        self.assertEqual(len(self.store.unmatched_inbound()), 1)
+        self.assertIn("auto-repl", summary)
+
+    def test_the_owner_answering_from_their_own_address_is_matched(self):
+        from answerrank.agents.concierge import ConciergeAgent
+        prospect = self._prospect(stage="contacted", email="info@ridgeelectric.com")
+        agent = ConciergeAgent(self.store, self.settings)
+        found = agent._match("mike@ridgeelectric.com", self.store.get_prospects(limit=10))
+        self.assertEqual(found.id, prospect.id)
+        self.assertIsNone(agent._match("mike@gmail.com", self.store.get_prospects(limit=10)))
+
+
+class TestThePhoneCanReachEveryone(_Biz):
+    def test_search_finds_a_replier_by_address(self):
+        """The pipeline listed hot leads from the oldest forty records; a
+        reply from anyone else could not be found on the phone at all."""
+        for i in range(60):
+            self.store.upsert_prospect(Prospect(business=Business(
+                name=f"Old {i}", city="Austin", state="TX", website=f"https://o{i}.com",
+                email=f"o@o{i}.com")))
+        target = self._prospect(stage="contacted")
+        found = self._api().prospects(q="owner@ridgeelectric.com")["items"]
+        self.assertEqual([f["id"] for f in found], [target.id])
+        replied = self._api().prospects(stage="replied")["items"]
+        self.assertEqual(replied, [])
+
+    def test_the_send_button_answers_straight_away(self):
+        """Sends are 90 seconds apart; run inside the request, the phone gave
+        up long before the batch finished."""
+        prospect = self._prospect(stage="audited")
+        self.store.save_message(OutreachMessage(prospect_id=prospect.id, subject="s",
+                                                body="b", status="approved"))
+        started = []
+        with unittest.mock.patch("threading.Thread") as thread:
+            thread.return_value.start.side_effect = lambda: started.append(True)
+            result = self._api().send(25, background=True)
+        self.assertTrue(result["background"])
+        self.assertEqual(result["queued"], 1)
+        self.assertTrue(started)
+
+
+class TestOneFleetPerBusiness(_Biz):
+    def test_a_second_copy_will_not_start(self):
+        """Two fleets for one business send every email twice."""
+        from answerrank import cli
+        self.settings.demo_mode = False
+        remote = {"app": "answerrank", "instance": "inst_server", "fleet_active": True}
+        with unittest.mock.patch("requests.get") as get:
+            get.return_value.json.return_value = remote
+            self.assertEqual(cli._fleet_elsewhere(self.settings, self.store),
+                             "https://answerrank.example")
+            remote["instance"] = self.store.instance_id()
+            self.assertEqual(cli._fleet_elsewhere(self.settings, self.store), "")
+
+    def test_the_server_web_service_does_not_start_a_fleet(self):
+        root = pathlib.Path(__file__).resolve().parent.parent
+        unit = (root / "deploy" / "answerrank-web.service").read_text(encoding="utf-8")
+        self.assertIn("--no-fleet", unit)
+        self.assertIn("127.0.0.1", unit)
+
+
+class TestServerSetupFile(unittest.TestCase):
+    def test_it_is_complete_and_valid(self):
+        import base64
+        import subprocess
+        from answerrank import server
+        d = pathlib.Path(tempfile.mkdtemp())
+        (d / "a.yml").write_text('website: "https://old.example"\n', encoding="utf-8")
+        (d / "k.env").write_text("SMTP_PASSWORD=x\n", encoding="utf-8")
+        script, link = server.build("GetAnswerRank.com", config_path=d / "a.yml",
+                                    keys_path=d / "k.env", token="t" * 32)
+        self.assertEqual(re.findall(r"__[A-Z0-9_]+__", script), [])
+        self.assertEqual(link, "https://getanswerrank.com/app?t=" + "t" * 32)
+        cfg = base64.b64decode(re.search(
+            r'echo "([A-Za-z0-9+/=]+)" \| base64 -d > answerrank.yml', script).group(1))
+        self.assertIn(b'website: "https://getanswerrank.com"', cfg)
+        path = d / "s.sh"
+        path.write_text(script, encoding="utf-8")
+        self.assertEqual(subprocess.run(["bash", "-n", str(path)]).returncode, 0)
+        with self.assertRaises(ValueError):
+            server.build("https://not a domain/")
+
+
+class TestCaseStudiesAreHonest(_Biz):
+    def _client_with(self, before, after, days):
+        prospect = self._prospect()
+        won = self._api().win(prospect.id, "pilot")
+        client = self.store.get_client(won["client_id"])
+        for score, ago, hits in ((before, days, 2), (after, 0, 6)):
+            a = Audit(business_id=client.business.id, business_name="Ridge Electric",
+                      market="Austin, TX", vertical="electrical", score=score)
+            a.results = [ProbeResult(probe_id=f"p{i}", engine="mock", prompt=f"q{i}",
+                                     answer_text="", mentioned=i < hits, cited=False,
+                                     position=1 if i < hits else None) for i in range(10)]
+            a.created_at = (datetime.now(timezone.utc) - timedelta(days=ago)).isoformat(
+                timespec="seconds")
+            self.store.save_audit(a)
+        return client
+
+    def test_too_early_says_so(self):
+        from answerrank import casestudy
+        ev, text = casestudy.write_up(self.store, self._client_with(20, 40, 10))
+        self.assertEqual(ev.verdict, "too_early")
+        self.assertIn("Too early", text)
+
+    def test_a_real_move_is_written_up(self):
+        from answerrank import casestudy
+        ev, text = casestudy.write_up(self.store, self._client_with(20, 40, 60))
+        self.assertEqual(ev.verdict, "moved")
+        self.assertIn("q2", text)
+        self.assertIn("Worth publishing", text)
+
+    def test_no_move_says_do_not_publish(self):
+        from answerrank import casestudy
+        client = self._client_with(20, 21, 60)
+        # Same hits before and after: no newly answered questions.
+        for a in self.store.audit_history(client.business.id, limit=5):
+            for r in a.results:
+                r.mentioned = r.probe_id in {"p0", "p1"}
+            self.store.save_audit(a)
+        ev, text = casestudy.write_up(self.store, client)
+        self.assertEqual(ev.verdict, "flat")
+        self.assertIn("Do not publish", text)

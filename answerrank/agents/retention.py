@@ -148,6 +148,19 @@ class RetentionAgent(Agent):
                 signals.append(f"Visibility down {abs(delta):.0f} points. Get ahead of "
                                f"this before they notice it themselves.")
 
+        # --- Are the fixes actually on their site? ---------------------------
+        # Most of the work only counts once it is installed, and most of it
+        # needs the client to paste it in. A client three weeks in with
+        # nothing live is heading for a flat score and a cancellation, and
+        # the fix is a ten-minute call, not a better report.
+        checks = self.store.site_checks(biz.id, limit=1)
+        not_live = bool(checks) and tenure > 21 and not (
+            checks[0].get("local_business") and not checks[0].get("placeholders"))
+        if not_live:
+            points -= 8
+            signals.append(f"Day {tenure} and the fixes are still not live on their "
+                           f"site. Nothing can move until they are.")
+
         # --- 4. Tenure (10%) — the first 90 days decide it ------------------
         if tenure <= 30:
             points += 7
@@ -160,7 +173,7 @@ class RetentionAgent(Agent):
             points += 10
             signals.append(f"{tenure // 30} months in — past the highest-risk period.")
 
-        score = round(min(100.0, points), 1)
+        score = round(max(0.0, min(100.0, points)), 1)
         band = "healthy" if score >= 80 else "monitor" if score >= 60 else "act_now"
 
         # --- the single action ---------------------------------------------
@@ -168,6 +181,11 @@ class RetentionAgent(Agent):
             action = "Send this month's report today. Nothing else matters until they see one."
         elif since_report is None and tenure > REPORT_DUE_DAYS:
             action = "They have never received a report. Send one before anything else."
+        elif not_live:
+            platform = checks[0].get("platform", "unknown")
+            where = "" if platform == "unknown" else f" on {platform.title()}"
+            action = (f"Offer ten minutes on the phone to install the fixes{where} "
+                      f"together. They have the files; they are stuck on the step.")
         elif quiet is not None and quiet > SILENCE_CRITICAL:
             action = (f"Call them, do not email. {quiet} days of silence at "
                       f"${client.mrr:,.0f}/mo is a cancellation forming.")
@@ -187,8 +205,21 @@ class RetentionAgent(Agent):
                       tenure_days=tenure)
 
     def portfolio(self) -> list[Health]:
-        """Every active client, worst first — that is the order to work them in."""
+        """Every paying client, worst first — that is the order to work them in.
+
+        A client whose card is failing is on here too, at the top: Stripe
+        retries for a while and then cancels, and the window to save the
+        account is the one before that happens.
+        """
         rows = [self.score_client(c) for c in self.store.get_clients("active")]
+        for client in self.store.get_clients("past_due"):
+            rows.append(Health(
+                client_id=client.id, name=client.business.name, mrr=client.mrr,
+                score=0.0, band="act_now",
+                signals=["Their payment is failing. Stripe will retry, then cancel."],
+                action=("Call them today about the card on file — most failed "
+                        "payments are an expired card, not a decision to leave."),
+                tenure_days=_days_since(client.started_at) or 0))
         return sorted(rows, key=lambda h: (h.score, -h.mrr))
 
     def revenue_at_risk(self) -> float:
