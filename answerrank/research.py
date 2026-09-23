@@ -243,7 +243,8 @@ class FixerResearcher(Researcher):
     def investigate(self) -> list[Finding]:
         moved, flat, examined = 0, 0, 0
         for client in self.store.get_clients("active"):
-            history = self.store.audit_history(client.business.id, limit=8)
+            history = self.store.audit_history(client.business.id, limit=8,
+                                               comparable=True)
             scores = [a.score for a in reversed(history) if a.score is not None]
             if len(scores) < 2:
                 continue

@@ -253,6 +253,37 @@ def phase_for(month: int) -> Phase:
     return PHASES[4 + (index % 2)]
 
 
+def already_done(lever: Lever, audit=None) -> bool:
+    """Whether the audit has already verified this lever needs no work.
+
+    Only claims what was measured. Robots.txt is the one lever the audit
+    checks directly: when it was read and lets every answer engine in, telling
+    the owner to "allow the answer engines" asks them to fix something that
+    is not broken — which they can check in ten seconds, and which costs the
+    credibility of everything else on the page. The month-1 plan and the
+    prospect's report both said it regardless.
+    """
+    if lever.key != "unblock_crawlers" or audit is None:
+        return False
+    access = getattr(audit, "crawler_access", None) or {}
+    # ``ok`` is False both when something critical is blocked and when the
+    # file could not be read — and an unread file verifies nothing.
+    return bool(access) and bool(access.get("ok"))
+
+
+def first_fixes(vertical: str = "", audit=None, n: int = 3) -> list[Lever]:
+    """The fixes that move the score fastest, in the order the arc does them,
+    leaving out anything the audit shows is already right."""
+    out: list[Lever] = []
+    for phase in PHASES:
+        for lever in plan(phase.month, vertical, audit)["levers"]:
+            if lever.key not in {l.key for l in out}:
+                out.append(lever)
+            if len(out) >= n:
+                return out
+    return out
+
+
 def plan(month: int, vertical: str = "", audit=None) -> dict[str, object]:
     """This month's work, adjusted for what the audit actually found.
 
@@ -261,7 +292,7 @@ def plan(month: int, vertical: str = "", audit=None) -> dict[str, object]:
     every other lever is worthless while it holds.
     """
     current = phase_for(month)
-    levers = list(current.levers)
+    levers = [l for l in current.levers if not already_done(l, audit)]
     overrides: list[str] = []
 
     access = (getattr(audit, "crawler_access", None) or {}) if audit else {}

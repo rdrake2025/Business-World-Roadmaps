@@ -89,8 +89,7 @@ class OnboarderAgent(Agent):
         """Active clients who have never been welcomed."""
         out = []
         for client in self.store.get_clients("active"):
-            history = self.store.outcomes_for(client.id, limit=50)
-            if any(o["kind"] == ONBOARDED for o in history):
+            if self.store.has_outcome(client.id, ONBOARDED):
                 continue
             out.append(client)
         return out
@@ -120,7 +119,7 @@ class OnboarderAgent(Agent):
 
             self.store.save_message(OutreachMessage(
                 prospect_id=prospect.id if prospect else client.id,
-                subject=subject, body=body, sequence_step=0,
+                subject=subject, body=body, sequence_step=0, kind="welcome",
                 status="drafted", scheduled_for=now_iso()))
             self.store.record_outcome(
                 prospect_id=client.id, vertical=client.business.vertical,

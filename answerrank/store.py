@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS deliverables (
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY, prospect_id TEXT, subject TEXT, body TEXT,
     sequence_step INTEGER, status TEXT, scheduled_for TEXT, sent_at TEXT,
-    created_at TEXT
+    created_at TEXT, kind TEXT DEFAULT 'cold'
 );
 CREATE INDEX IF NOT EXISTS idx_message_status ON messages(status);
 
@@ -136,7 +136,8 @@ class Store:
         """
         if not Path(self.path).exists():
             return
-        wanted = {"ledger": [("dedupe_key", "TEXT")]}
+        wanted = {"ledger": [("dedupe_key", "TEXT")],
+                  "messages": [("kind", "TEXT DEFAULT 'cold'")]}
         with self.conn() as cx:
             for table, columns in wanted.items():
                 exists = cx.execute(
@@ -371,13 +372,32 @@ class Store:
             row = cx.execute("SELECT raw FROM audits WHERE id = ?", (audit_id,)).fetchone()
         return _audit_from_raw(row["raw"]) if row else None
 
-    def audit_history(self, business_id: str, limit: int = 12) -> list[Audit]:
+    def audit_history(self, business_id: str, limit: int = 12,
+                      comparable: bool = False) -> list[Audit]:
+        """Audits for one business, newest first.
+
+        ``comparable=True`` leaves out the free teaser. The teaser asks four
+        questions and the monthly audit asks ten, so their scores measure
+        different things — and every trend built on the mix compared them
+        anyway. A client's first paid report showed their score falling by
+        twenty-odd points in red since the day they were pitched, with
+        nothing having changed but the question count. Anything drawing a
+        line between two audits must ask for this.
+        """
         with self.conn() as cx:
             rows = cx.execute(
-                "SELECT raw FROM audits WHERE business_id = ? ORDER BY created_at DESC LIMIT ?",
-                (business_id, limit),
+                "SELECT raw FROM audits WHERE business_id = ? ORDER BY created_at DESC",
+                (business_id,),
             ).fetchall()
-        return [_audit_from_raw(r["raw"]) for r in rows]
+        out = []
+        for r in rows:
+            audit = _audit_from_raw(r["raw"])
+            if comparable and audit.is_free_teaser:
+                continue
+            out.append(audit)
+            if len(out) >= limit:
+                break
+        return out
 
     def save_deliverable(self, d: Deliverable) -> str:
         with self.conn() as cx:
@@ -402,12 +422,63 @@ class Store:
         with self.conn() as cx:
             cx.execute(
                 """INSERT OR REPLACE INTO messages
-                   (id,prospect_id,subject,body,sequence_step,status,scheduled_for,sent_at,created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                   (id,prospect_id,subject,body,sequence_step,status,scheduled_for,
+                    sent_at,created_at,kind)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (m.id, m.prospect_id, m.subject, m.body, m.sequence_step, m.status,
-                 m.scheduled_for, m.sent_at, m.created_at),
+                 m.scheduled_for, m.sent_at, m.created_at, m.kind or "cold"),
             )
         return m.id
+
+    def send_queue(self, limit: int = 100) -> list[OutreachMessage]:
+        """Approved messages in the order they should leave.
+
+        Anything answering a person goes before anything cold. By creation
+        date alone, a reply to "yes, send it" drafted this morning queued
+        behind every cold email approved earlier in the week — and while the
+        warm-up cap is binding, that is days. In the 30-sale simulation the
+        median wait for an answer was seven days. An interested buyer does
+        not wait seven days.
+        """
+        with self.conn() as cx:
+            rows = cx.execute(
+                """SELECT * FROM messages WHERE status = 'approved'
+                   ORDER BY CASE COALESCE(kind, 'cold') WHEN 'cold' THEN 1 ELSE 0 END,
+                            created_at ASC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [OutreachMessage(**{k: r[k] for k in r.keys()}) for r in rows]
+
+    def messages_for(self, prospect_id: str) -> list[OutreachMessage]:
+        with self.conn() as cx:
+            rows = cx.execute(
+                "SELECT * FROM messages WHERE prospect_id = ? ORDER BY created_at ASC",
+                (prospect_id,),
+            ).fetchall()
+        return [OutreachMessage(**{k: r[k] for k in r.keys()}) for r in rows]
+
+    def withdraw_cold(self, prospect_id: str) -> int:
+        """Pull any not-yet-sent cold message to someone who has left the
+        sequence — they replied, bought, or asked us to stop."""
+        with self.conn() as cx:
+            cur = cx.execute(
+                """UPDATE messages SET status = 'superseded'
+                   WHERE prospect_id = ? AND status IN ('drafted', 'approved')
+                   AND COALESCE(kind, 'cold') = 'cold'""",
+                (prospect_id,),
+            )
+            return cur.rowcount
+
+    def cold_sends_today(self) -> int:
+        today = datetime.now(timezone.utc).date().isoformat()
+        with self.conn() as cx:
+            row = cx.execute(
+                """SELECT COUNT(*) c FROM messages WHERE status='sent' AND sent_at LIKE ?
+                   AND COALESCE(kind, 'cold') = 'cold'""",
+                (f"{today}%",),
+            ).fetchone()
+        return int(row["c"])
 
     def get_messages(self, status: str | None = None, limit: int = 200) -> list[OutreachMessage]:
         q = "SELECT * FROM messages"
@@ -503,6 +574,21 @@ class Store:
                 (subject_id, limit),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def has_outcome(self, subject_id: str, kind: str) -> bool:
+        """Whether this has *ever* happened to this subject.
+
+        Asked directly rather than by scanning the latest N outcomes. The
+        Onboarder used to look for its "welcomed" record among a client's 50
+        most recent outcomes; Retention logged one at-risk record a day, and
+        on day 51 the welcome fell out of view — so the client was welcomed
+        again, three months in, with "You're in — here's what happens next".
+        """
+        with self.conn() as cx:
+            return cx.execute(
+                "SELECT 1 FROM outcomes WHERE prospect_id = ? AND kind = ? LIMIT 1",
+                (subject_id, kind),
+            ).fetchone() is not None
 
     def last_outcome_at(self, subject_id: str, kinds: tuple[str, ...] = ()) -> str | None:
         """When this prospect or client last did something. Silence is a signal."""

@@ -95,40 +95,94 @@ def send_batch(store, settings, limit: int = 25, dry_run: bool = False,
         _SEND_LOCK.release()
 
 
+#: Stages in which a prospect is still in the cold sequence. A cold message
+#: to anyone outside these is withdrawn at the moment of sending, whatever
+#: was approved when: they replied, bought, or asked us to stop.
+COLD_STAGES = {"discovered", "audited", "queued", "contacted", "following_up"}
+
+#: Evidence needed before a bounce rate means anything. At 50 sends, one
+#: unlucky bounce is already 2%: the first version of this brake tripped in
+#: the simulation on 2 bounces out of 52 and paused prospecting for two weeks
+#: over noise. A brake that fires on noise gets switched off, which is worse
+#: than no brake.
+BOUNCE_SAMPLE_MIN = 100
+BOUNCE_COUNT_MIN = 3
+
+
+def bounce_blocker(store, settings, days: int = 14) -> str:
+    """Why cold sending must stop, or "" if it may continue.
+
+    The mailer has always promised "a hard stop when bounce or complaint
+    rates drift toward the enforcement thresholds", and the ceiling has
+    always been in the config — but nothing read it. Bounces are the one
+    rate this system can measure for itself, so this enforces that one.
+    """
+    counts = store.outcome_counts(days)
+    sent, bounced = counts.get("sent", 0), counts.get("bounced", 0)
+    attempts = sent + bounced
+    if attempts < BOUNCE_SAMPLE_MIN or bounced < BOUNCE_COUNT_MIN:
+        return ""
+    rate = bounced / attempts
+    ceiling = settings.outreach.bounce_rate_ceiling
+    if rate >= ceiling:
+        return (f"Cold sending paused: {bounced} of {attempts} messages bounced in "
+                f"the last {days} days ({rate:.1%}), at or over the {ceiling:.0%} "
+                f"ceiling mailbox providers throttle at. Replies to people who "
+                f"wrote to you still go out. Check where these addresses came from "
+                f"before sending more.")
+    return ""
+
+
 def _send_batch_locked(store, settings, limit: int, dry_run: bool,
                        throttle_seconds: float | None,
                        say: Callable[[str], None]) -> dict[str, Any]:
     pol = settings.outreach
     days_sending = _days_warming(store, settings)
     cap = pol.warmup_cap(days_sending)
-    remaining = cap - store.sends_today()
-    if remaining <= 0:
-        note = pol.warmup_note(days_sending)
-        return {"sent": 0, "failed": 0, "blocked": True,
-                "reasons": [f"Today's cap of {cap} is used up. {note}"],
-                "errors": [], "dry_run": dry_run,
-                "warmup_day": days_sending + 1, "daily_cap": cap}
+    note = pol.warmup_note(days_sending)
 
-    approved = store.get_messages("approved", min(limit, remaining))
-    if not approved:
+    # The warm-up cap governs cold volume. A reply to someone who wrote to
+    # us, a report they asked for, or a welcome to a paying client is not
+    # what the ramp protects against — and holding a new client's welcome
+    # until tomorrow because cold outreach spent today's budget is exactly
+    # backwards.
+    cold_room = cap - store.cold_sends_today()
+    cold_block = bounce_blocker(store, settings)
+
+    queue = store.send_queue(limit)
+    if not queue:
         return {"sent": 0, "failed": 0, "blocked": False,
                 "reasons": ["No approved messages. Approve some first."],
                 "errors": [], "dry_run": dry_run}
+    if all(m.kind == "cold" for m in queue) and (cold_room <= 0 or cold_block):
+        reason = cold_block or f"Today's cap of {cap} is used up. {note}"
+        return {"sent": 0, "failed": 0, "blocked": True, "reasons": [reason],
+                "errors": [], "dry_run": dry_run,
+                "warmup_day": days_sending + 1, "daily_cap": cap}
 
     mailer = Mailer(settings)
     by_id = {p.id: p for p in store.get_prospects(limit=10_000)}
     gap = pol.min_seconds_between_sends if throttle_seconds is None else throttle_seconds
 
-    sent = failed = skipped = 0
+    sent = failed = skipped = withdrawn = cold_sent = 0
     errors: list[str] = []
+    reasons: list[str] = []
 
-    for m in approved:
-        # Re-read rather than trusting the count taken before the loop. A
-        # throttled batch can run for an hour, which is long enough to cross
-        # midnight — and the cap is a per-day figure.
-        if not dry_run and store.sends_today() >= cap:
-            say(f"  stopping: daily cap of {cap} reached mid-batch")
-            break
+    for m in queue:
+        cold = (m.kind or "cold") == "cold"
+        if cold:
+            if cold_block:
+                reasons.append(cold_block)
+                break
+            # Re-read rather than trusting the count taken before the loop. A
+            # throttled batch can run for an hour, which is long enough to
+            # cross midnight — and the cap is a per-day figure. A dry run
+            # records nothing, so it counts for itself.
+            used = (cap - cold_room + cold_sent) if dry_run else store.cold_sends_today()
+            if used >= cap:
+                say(f"  stopping: daily cap of {cap} reached mid-batch")
+                reasons.append(f"Today's cap of {cap} is used up. {note}")
+                break
 
         prospect = by_id.get(m.prospect_id)
         if not prospect or not prospect.business.email:
@@ -143,24 +197,39 @@ def _send_batch_locked(store, settings, limit: int, dry_run: bool,
             say(f"  skipped {email}: on the suppression list")
             continue
 
+        if cold and prospect.stage not in COLD_STAGES:
+            # Approved days ago, overtaken since. "Closing the loop — last
+            # note from me" to someone who said yes yesterday, or who is now
+            # paying, costs more than the sequence could ever earn.
+            m.status = "superseded"
+            store.save_message(m)
+            withdrawn += 1
+            say(f"  withdrew cold message to {email}: they are now '{prospect.stage}'")
+            continue
+
         if dry_run:
             say(f"  [dry-run] would send to {email}: {m.subject}")
             sent += 1
+            cold_sent += cold
             continue
 
         ok, detail = mailer.send(email, m.subject, m.body)
         if ok:
             m.status, m.sent_at = "sent", now_iso()
-            prospect.touches += 1
             prospect.last_touch_at = now_iso()
-            prospect.stage = "contacted" if m.sequence_step == 1 else "following_up"
+            if cold:
+                prospect.touches += 1
+                prospect.stage = "contacted" if m.sequence_step == 1 else "following_up"
+                # Without this the system can act but never learn. Only cold
+                # sends count: the funnel measures replies per cold email,
+                # and counting our own answers would dilute it.
+                store.record_outcome(
+                    prospect_id=prospect.id, message_id=m.id,
+                    vertical=prospect.business.vertical, step=m.sequence_step,
+                    kind="sent", note=m.subject[:120])
             store.upsert_prospect(prospect)
-            # Without this the system can act but never learn.
-            store.record_outcome(
-                prospect_id=prospect.id, message_id=m.id,
-                vertical=prospect.business.vertical, step=m.sequence_step,
-                kind="sent", note=m.subject[:120])
             sent += 1
+            cold_sent += cold
             _begin_warmup(store)
             say(f"  sent to {email}")
         else:
@@ -172,6 +241,10 @@ def _send_batch_locked(store, settings, limit: int, dry_run: bool,
                     prospect_id=prospect.id, message_id=m.id,
                     vertical=prospect.business.vertical, step=m.sequence_step,
                     kind="bounced", note=detail[:200])
+                if cold:
+                    prospect.stage = "suppressed"
+                    prospect.notes = (prospect.notes or "") + " | bounced"
+                    store.upsert_prospect(prospect)
             failed += 1
             errors.append(f"{email}: {detail}")
             say(f"  failed {email}: {detail}")
@@ -180,8 +253,9 @@ def _send_batch_locked(store, settings, limit: int, dry_run: bool,
         if gap and not dry_run:
             time.sleep(gap)
 
-    return {"sent": sent, "failed": failed, "skipped": skipped, "blocked": False,
-            "reasons": [], "errors": errors[:5], "dry_run": dry_run,
+    return {"sent": sent, "failed": failed, "skipped": skipped,
+            "withdrawn": withdrawn, "blocked": False,
+            "reasons": reasons[:1], "errors": errors[:5], "dry_run": dry_run,
             "sends_today": store.sends_today(), "daily_cap": cap,
             "warmup_day": days_sending + 1,
-            "warmup_note": pol.warmup_note(days_sending)}
+            "warmup_note": note}

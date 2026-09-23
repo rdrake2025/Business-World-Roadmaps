@@ -208,7 +208,13 @@ class OutreachMessage:
     subject: str
     body: str
     sequence_step: int = 1
-    status: str = "drafted"  # drafted | approved | sent | replied | bounced | suppressed
+    status: str = "drafted"  # drafted | approved | sent | replied | bounced | suppressed | superseded
+    #: cold | reply | report | welcome. Only ``cold`` belongs to the prospecting
+    #: sequence. The send path used to treat every message as a sequence step,
+    #: so answering an interested prospect — or welcoming a new client — put
+    #: them back into the cold sequence, and they were then sent "Closing the
+    #: loop — last note from me" by the next Outreach run.
+    kind: str = "cold"
     scheduled_for: str = ""
     sent_at: str = ""
     created_at: str = field(default_factory=now_iso)

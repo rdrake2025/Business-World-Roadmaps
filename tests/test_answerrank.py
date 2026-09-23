@@ -3824,3 +3824,370 @@ class TestWizardSurvivesRealTyping(unittest.TestCase):
         with unittest.mock.patch("builtins.input", side_effect=EOFError):
             with self.assertRaises(SystemExit):
                 wizard.ask_yes("Use the defaults?")
+
+
+# ---------------------------------------------------------------------------
+# Found by simulating 30 sales end to end (answerrank/simulate.py). Before
+# these fixes the simulation closed 0 of 30.
+# ---------------------------------------------------------------------------
+
+class _SalesFixture(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()
+        self.store = Store(self.tmp.name)
+        self.settings = Settings()
+        self.settings.demo_mode = True
+        self.settings.database_path = self.tmp.name
+        self.settings.physical_address = "1 Test St, Austin, TX 78701"
+        self.settings.website = "https://answerrank.example"
+        self.settings.from_email = "hello@answerrank.example"
+        self.settings.outreach.min_seconds_between_sends = 0
+        self.no_network = unittest.mock.patch(
+            "answerrank.crawlers.check_access",
+            side_effect=lambda site, timeout=10: __import__(
+                "answerrank.crawlers", fromlist=["x"]).Access(domain="x.com"))
+        self.no_network.start()
+
+    def tearDown(self):
+        self.no_network.stop()
+        os.unlink(self.tmp.name)
+
+    def _prospect(self, stage="contacted", email="owner@ridgeelectric.com"):
+        biz = Business(name="Ridge Electric", city="Austin", state="TX",
+                       vertical="electrical", website="https://ridgeelectric.com",
+                       email=email)
+        p = Prospect(business=biz, stage=stage, score=18.0, competitor_gap=50.0,
+                     touches=1, notes="Ridge Electric appears in 1 of 4 AI answers")
+        self.store.upsert_prospect(p)
+        return p
+
+    def _concierge(self):
+        from answerrank.agents.concierge import ConciergeAgent
+        return ConciergeAgent(self.store, self.settings)
+
+    def _sent(self):
+        sent = []
+
+        def fake_send(self_, to, subject, body):
+            sent.append((to, subject, body))
+            return True, "sent"
+        return sent, unittest.mock.patch("answerrank.mailer.Mailer.send", fake_send)
+
+
+class TestTheFreeReportIsDelivered(_SalesFixture):
+    """Every opener promises a free report. Every "yes" was answered with
+    "you'll have it within a day", and nothing ever produced it: all thirty
+    simulated buyers went cold waiting."""
+
+    def test_a_yes_drafts_the_report_itself(self):
+        prospect = self._prospect()
+        result = self._concierge().handle_reply(prospect, "Yes please, send it over.")
+        self.assertEqual(result["action"], "send_report")
+        msg = next(m for m in self.store.messages_for(prospect.id)
+                   if m.id == result["message_id"])
+        self.assertEqual(msg.kind, "report")
+        self.assertIn("visibility report", msg.subject.lower())
+        self.assertIn("Questions where you weren't named", msg.body)
+        self.assertIn("The three fixes", msg.body)
+        self.assertNotIn("within a day", msg.body)
+
+    def test_the_report_never_tells_them_to_fix_what_is_fine(self):
+        """Their robots.txt was read and lets every engine in. "Allow the
+        answer engines in robots.txt" was fix number one anyway."""
+        prospect = self._prospect()
+        result = self._concierge().handle_reply(prospect, "yes")
+        msg = next(m for m in self.store.messages_for(prospect.id)
+                   if m.id == result["message_id"])
+        self.assertNotIn("Allow the answer engines", msg.body)
+
+    def test_a_second_yes_after_the_report_moves_to_the_price(self):
+        prospect = self._prospect()
+        concierge = self._concierge()
+        concierge.handle_reply(prospect, "yes")
+        result = concierge.handle_reply(prospect, "Sounds good")
+        self.assertEqual(result["action"], "propose_start")
+
+
+class TestRepliesAreReadCorrectly(unittest.TestCase):
+    """Each of these was misread in the simulation, and each misreading lost
+    a sale or mailed someone who had asked us to stop."""
+
+    def _read(self, text, **kw):
+        from answerrank.agents.concierge import classify
+        return classify(text, **kw)
+
+    def test_chasing_the_report_is_not_hostility(self):
+        """`report you` inside "the report you mentioned" filed the buyer as
+        hostile and suppressed them for chasing what we promised."""
+        self.assertEqual(self._read("Still waiting on the report you mentioned."),
+                         "interested")
+        self.assertEqual(self._read("How did you get this address? Reporting you."),
+                         "hostile")
+
+    def test_asking_about_a_contract_is_not_hostility(self):
+        self.assertEqual(
+            self._read("Is there a contract? I'd want my lawyer to look at it first."),
+            "question")
+
+    def test_hold_off_is_a_no(self):
+        self.assertEqual(self._read("Let's hold off for now, thanks."), "not_interested")
+
+    def test_a_yes_with_a_question_is_still_a_yes(self):
+        self.assertEqual(self._read("Yes. Is this really free?"), "interested")
+        self.assertEqual(self._read("Interested. What did you find?"), "interested")
+
+    def test_a_buyer_saying_yes_is_a_sale_not_a_question(self):
+        for text in ("Alright, sign us up.", "Deal. Send me the invoice.",
+                     "Ok, let's do it. How do we get started?", "start",
+                     "We're in. What do you need from me?"):
+            self.assertEqual(self._read(text), "ready_to_buy", text)
+
+    def test_a_client_is_a_client(self):
+        self.assertEqual(self._read("Who do I send the website login to?",
+                                    is_client=True), "client_message")
+        self.assertEqual(self._read("Unsubscribe", is_client=True), "unsubscribe")
+
+    def test_phrasings_the_simulation_did_not_use(self):
+        """The simulation's replies and this classifier were written by the
+        same hand, so passing them is necessary and not sufficient."""
+        self.assertEqual(self._read("We're in Austin, not Dallas."), "question")
+        self.assertEqual(self._read("What's the deal with this?"), "question")
+        self.assertEqual(self._read("Once we're all set up, send it over"), "interested")
+        self.assertEqual(self._read("Stop."), "unsubscribe")
+
+
+class TestOnlyColdMessagesMoveTheSequence(_SalesFixture):
+    """The send path treated every message as a cold-sequence step, so
+    answering an interested prospect — or welcoming a new client — put them
+    back into the sequence, and the next Outreach run sent them "Closing the
+    loop — last note from me"."""
+
+    def test_answering_a_reply_does_not_demote_it(self):
+        from answerrank.sending import send_batch
+        prospect = self._prospect()
+        result = self._concierge().handle_reply(prospect, "How much does it cost?")
+        answer = next(m for m in self.store.messages_for(prospect.id)
+                      if m.id == result["message_id"])
+        answer.status = "approved"
+        self.store.save_message(answer)
+        sent, patch = self._sent()
+        with patch:
+            send_batch(self.store, self.settings)
+        self.assertTrue(sent)
+        stage = next(p for p in self.store.get_prospects(limit=10)
+                     if p.id == prospect.id).stage
+        self.assertEqual(stage, "replied")
+
+    def test_welcoming_a_client_does_not_put_them_back_in_the_sequence(self):
+        from answerrank.sending import send_batch
+        prospect = self._prospect(stage="won")
+        self.store.save_message(OutreachMessage(
+            prospect_id=prospect.id, subject="You're in", body="Welcome.",
+            sequence_step=0, kind="welcome", status="approved"))
+        sent, patch = self._sent()
+        with patch:
+            send_batch(self.store, self.settings)
+        self.assertEqual(len(sent), 1)
+        stage = next(p for p in self.store.get_prospects(limit=10)
+                     if p.id == prospect.id).stage
+        self.assertEqual(stage, "won")
+
+    def test_a_stale_cold_message_is_withdrawn_not_sent(self):
+        """Approved on Monday, overtaken by a "yes" on Tuesday."""
+        from answerrank.sending import send_batch
+        prospect = self._prospect(stage="replied")
+        self.store.save_message(OutreachMessage(
+            prospect_id=prospect.id, subject="Closing the loop", body="Last note.",
+            sequence_step=3, status="approved"))
+        sent, patch = self._sent()
+        with patch:
+            result = send_batch(self.store, self.settings)
+        self.assertEqual(sent, [])
+        self.assertEqual(result["withdrawn"], 1)
+
+    def test_a_reply_pulls_pending_follow_ups(self):
+        prospect = self._prospect()
+        self.store.save_message(OutreachMessage(
+            prospect_id=prospect.id, subject="Re: follow-up", body="b",
+            sequence_step=2, status="approved"))
+        self._concierge().handle_reply(prospect, "Not interested.")
+        kinds = {(m.kind, m.status) for m in self.store.messages_for(prospect.id)}
+        self.assertIn(("cold", "superseded"), kinds)
+
+    def test_a_plain_no_drafts_nothing_that_could_never_be_sent(self):
+        prospect = self._prospect()
+        result = self._concierge().handle_reply(prospect, "No thanks.")
+        self.assertEqual(result["message_id"], "")
+
+
+class TestAnswersGoBeforeColdMail(_SalesFixture):
+    def test_a_reply_goes_out_when_the_cold_cap_is_spent(self):
+        """Replies queued behind cold mail by creation date: in the
+        simulation the median wait for an answer was seven days."""
+        from answerrank.sending import send_batch
+        for i in range(12):
+            p = Prospect(business=Business(
+                name=f"Co {i}", city="Austin", state="TX", vertical="electrical",
+                website=f"https://c{i}.com", email=f"o@c{i}.com"), stage="audited")
+            self.store.upsert_prospect(p)
+            self.store.save_message(OutreachMessage(
+                prospect_id=p.id, subject="s", body="b", status="approved"))
+        warm = self._prospect(stage="replied")
+        self.store.save_message(OutreachMessage(
+            prospect_id=warm.id, subject="Re: Ridge Electric", body="Answer.",
+            kind="reply", status="approved"))
+        sent, patch = self._sent()
+        with patch:
+            send_batch(self.store, self.settings, limit=100)
+        self.assertEqual(sent[0][0], "owner@ridgeelectric.com")
+        self.assertEqual(sum(1 for s in sent if s[0] != "owner@ridgeelectric.com"), 10,
+                         "day one's cap of 10 applies to cold mail only")
+
+
+class TestBounceBrake(_SalesFixture):
+    def _history(self, sent, bounced):
+        for i in range(sent):
+            self.store.record_outcome(prospect_id=f"p{i}", kind="sent")
+        for i in range(bounced):
+            self.store.record_outcome(prospect_id=f"b{i}", kind="bounced")
+
+    def test_the_ceiling_is_enforced(self):
+        """Configured and promised in the mailer's docstring; read by nothing."""
+        from answerrank.sending import bounce_blocker
+        self._history(sent=120, bounced=4)
+        self.assertIn("paused", bounce_blocker(self.store, self.settings))
+
+    def test_noise_does_not_trip_it(self):
+        """2 bounces in 52 tripped the first version for two weeks."""
+        from answerrank.sending import bounce_blocker
+        self._history(sent=50, bounced=2)
+        self.assertEqual(bounce_blocker(self.store, self.settings), "")
+
+
+class TestClientsAreTreatedAsClients(_SalesFixture):
+    def _client(self):
+        prospect = self._prospect(stage="won")
+        self.store.start_client(Client(business=prospect.business, plan="growth",
+                                       mrr=997.0))
+        return prospect, self.store.get_clients("active")[0]
+
+    def test_a_client_message_is_not_answered_with_a_pitch(self):
+        prospect, client = self._client()
+        result = self._concierge().handle_reply(
+            prospect, "Who do I send the website login to?")
+        self.assertEqual(result["intent"], "client_message")
+        body = next(m for m in self.store.messages_for(prospect.id)
+                    if m.id == result["message_id"]).body
+        self.assertNotIn("free", body.lower())
+        stage = next(p for p in self.store.get_prospects(limit=10)
+                     if p.id == prospect.id).stage
+        self.assertEqual(stage, "won")
+
+    def test_retention_hears_the_client_talking(self):
+        """Recorded against the prospect id, a client talking every week
+        looked to Retention like a client gone silent."""
+        prospect, client = self._client()
+        self._concierge().handle_reply(prospect, "Thanks, looks great.")
+        self.assertIsNotNone(self.store.last_outcome_at(client.id, ("client_message",)))
+
+    def test_a_client_is_welcomed_once_however_long_they_stay(self):
+        """Retention logged an at-risk record daily; after 50 the welcome fell
+        out of the Onboarder's window and was sent again, months in."""
+        from answerrank.agents.onboarder import ONBOARDED, OnboarderAgent
+        prospect, client = self._client()
+        OnboarderAgent(self.store, self.settings).execute()
+        for _ in range(60):
+            self.store.record_outcome(prospect_id=client.id, kind="at_risk")
+        drafted, _ = OnboarderAgent(self.store, self.settings).execute()
+        self.assertEqual(drafted, 0)
+        welcomes = [m for m in self.store.messages_for(prospect.id) if m.kind == "welcome"]
+        self.assertEqual(len(welcomes), 1)
+        self.assertTrue(self.store.has_outcome(client.id, ONBOARDED))
+
+    def test_retention_records_becoming_at_risk_not_every_day_of_it(self):
+        from answerrank.agents.retention import RetentionAgent
+        prospect, client = self._client()
+        agent = RetentionAgent(self.store, self.settings)
+        with unittest.mock.patch.object(
+                RetentionAgent, "score_client",
+                lambda self_, c: __import__("answerrank.agents.retention", fromlist=["x"])
+                .Health(client_id=c.id, name=c.business.name, mrr=c.mrr, score=20.0,
+                        band="act_now", signals=[], action="Call them.",
+                        tenure_days=40)):
+            for _ in range(5):
+                agent.execute()
+        records = [o for o in self.store.outcomes_for(client.id) if o["kind"] == "at_risk"]
+        self.assertEqual(len(records), 1)
+
+
+class TestTrendsAreLikeForLike(_SalesFixture):
+    def _audit(self, score, teaser, days_ago):
+        a = Audit(business_id="biz_x", business_name="X", market="Austin, TX",
+                  vertical="electrical", score=score, is_free_teaser=teaser)
+        a.created_at = (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat(
+            timespec="seconds")
+        self.store.save_audit(a)
+        return a
+
+    def test_the_teaser_is_not_a_baseline(self):
+        """The 4-question teaser scored 38 and the 10-question monthly audit
+        scored 15. A client's first paid report showed the drop in red."""
+        self._audit(37.9, True, 60)
+        self._audit(15.2, False, 30)
+        self._audit(15.2, False, 1)
+        history = self.store.audit_history("biz_x", comparable=True)
+        self.assertEqual([a.score for a in history], [15.2, 15.2])
+        self.assertEqual(len(self.store.audit_history("biz_x")), 3)
+
+    def test_a_new_client_is_not_re_audited_every_hour(self):
+        """Keyed on the last report, a new client was audited hourly until the
+        twelve-hourly Reporter caught up — and every month again after."""
+        prospect = self._prospect(stage="won")
+        self.store.start_client(Client(business=prospect.business, plan="growth",
+                                       mrr=997.0))
+        auditor = AuditorAgent(self.store, self.settings)
+        auditor.execute()
+        auditor.execute()
+        auditor.execute()
+        full = [a for a in self.store.audit_history(prospect.business.id)
+                if not a.is_free_teaser]
+        self.assertEqual(len(full), 1)
+
+
+class TestWrappedEmailsStayReadable(unittest.TestCase):
+    def test_lists_hang_and_names_do_not_split(self):
+        from answerrank.playbook import email_body
+        body = email_body(
+            "1. Allow the answer engines in robots.txt — a site that disallows "
+            "OAI-SearchBot or PerplexityBot cannot appear in their answers at all.")
+        self.assertNotIn("OAI-\n", body)
+        second = body.split("\n")[1]
+        self.assertTrue(second.startswith("   "), repr(second))
+
+
+class TestThirtySalesEndToEnd(unittest.TestCase):
+    """The simulation itself, small enough for the suite: made-up buyers
+    through the real agents, the real send path and the console API, with a
+    fake clock and a fake mailbox. It closed 0 sales before these fixes."""
+
+    def test_every_sale_is_handled_end_to_end(self):
+        from answerrank import simulate
+        logging.getLogger("answerrank").setLevel(logging.WARNING)
+        try:
+            card = simulate.run(sales=5, days=45, tick_hours=4)
+        finally:
+            logging.getLogger("answerrank").setLevel(logging.NOTSET)
+        self.assertTrue(simulate.passed(card), simulate.render(card))
+
+    def test_the_clock_is_put_back(self):
+        import datetime as dt
+        from answerrank import simulate
+        before = (dt.datetime, dt.date)
+        clock = simulate.SimClock(dt.datetime(2030, 1, 1, tzinfo=dt.timezone.utc))
+        with simulate._frozen_time(clock):
+            from answerrank.models import now_iso
+            self.assertTrue(now_iso().startswith("2030-01-01"))
+        self.assertEqual((dt.datetime, dt.date), before)
+        from answerrank.models import now_iso
+        self.assertFalse(now_iso().startswith("2030"))

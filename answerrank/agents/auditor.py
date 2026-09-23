@@ -58,11 +58,20 @@ class AuditorAgent(Agent):
             spend += estimate_cost("teaser", engine_count)
             processed += 1
 
-        # --- 2. Full audits for clients due a report ---
+        # --- 2. Full audits for clients due one ---
+        # Keyed on the last *full audit*, not the last report. Keyed on the
+        # report, a new client — who has no report until the Reporter's next
+        # twelve-hourly run — was re-audited every hour until then, and every
+        # client was re-audited hourly each month in the same window. That is
+        # wasted spend, and worse, it filled the audit history Retention reads
+        # its trend from with same-day duplicates, so "is it working?" was
+        # answered by comparing this morning with this afternoon.
         clients_audited = 0
         cutoff = (datetime.now(timezone.utc) - timedelta(days=28)).isoformat(timespec="seconds")
         for client in self.store.get_clients("active"):
-            if client.last_report_at and client.last_report_at > cutoff:
+            recent = [a for a in self.store.audit_history(client.business.id, limit=5)
+                      if not a.is_free_teaser and a.created_at > cutoff]
+            if recent:
                 continue
             audit = run_audit(client.business, self.settings, depth="full",
                               check_crawlers=True)

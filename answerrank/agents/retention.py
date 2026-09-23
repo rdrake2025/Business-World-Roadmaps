@@ -125,7 +125,7 @@ class RetentionAgent(Agent):
                            f"to be noticed.")
 
         # --- 3. Is it working? (25%) ----------------------------------------
-        history = self.store.audit_history(biz.id, limit=6)
+        history = self.store.audit_history(biz.id, limit=6, comparable=True)
         scores = [a.score for a in reversed(history) if a.score is not None]
         if len(scores) < 2:
             points += 15
@@ -202,14 +202,23 @@ class RetentionAgent(Agent):
             return 0, "no active clients yet — nothing to retain"
 
         import json
+        try:
+            before = {row["client_id"]: row["band"] for row in
+                      json.loads(self.store.kv_get("retention.portfolio") or "[]")}
+        except (ValueError, TypeError, KeyError):
+            before = {}
         self.store.kv_set("retention.portfolio", json.dumps([
             {"client_id": h.client_id, "name": h.name, "mrr": h.mrr,
              "score": h.score, "band": h.band, "action": h.action,
              "signals": h.signals, "tenure_days": h.tenure_days}
             for h in rows]))
 
+        # An event is the moment a client *becomes* at risk. Re-recording it
+        # every day buried every other record about that client — 56 copies
+        # in the simulation — and pushed their welcome out of the window the
+        # Onboarder read, so they were welcomed twice.
         for h in rows:
-            if h.band == "act_now":
+            if h.band == "act_now" and before.get(h.client_id) != "act_now":
                 self.store.record_outcome(
                     prospect_id=h.client_id, kind="at_risk", sentiment=h.band,
                     note=h.action[:300])
