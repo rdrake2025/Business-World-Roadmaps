@@ -13,7 +13,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from ..models import Audit, Deliverable, now_iso
+from ..models import Audit, Deliverable, OutreachMessage, now_iso
 from ..prompts import vertical_meta
 from .. import method
 from .fixer import FixerAgent
@@ -163,6 +163,100 @@ def render_report(audit: Audit, settings, history: list[Audit] | None = None,
     )
 
 
+def monthly_email(client, audit: Audit, previous: Audit | None, deliverables,
+                  check: dict | None, month: int, settings) -> tuple[str, str]:
+    """The monthly note a client actually receives.
+
+    The report used to be an HTML file written to the operator's disk, and
+    nothing sent it anywhere: a client paying every month heard nothing after
+    the welcome email. This is what reaches them.
+
+    Built on the pattern that keeps agency clients (what happened, what it
+    means, what is next), in plain words, and straight about a month that
+    went down — clients forgive a dip they were told about far more readily
+    than one they discover.
+    """
+    from .. import knowledge, playbook, sitecheck
+
+    biz = client.business
+    results = [r for r in audit.results if not r.error]
+    n = len(results) or 1
+    shown = sum(1 for r in results if r.mentioned)
+    when = datetime.now(timezone.utc).strftime("%B")
+
+    if previous is None:
+        movement = ("This is your starting line. Every month from here is measured "
+                    "against it, the same way, so you can see exactly what changes.")
+    else:
+        before = sum(1 for r in previous.results if r.mentioned and not r.error)
+        delta = audit.score - previous.score
+        if delta >= 3:
+            movement = (f"That's up from {before} last month, and your score rose "
+                        f"{delta:.0f} points to {audit.score:.0f}/100.")
+        elif delta <= -3:
+            movement = (f"That's down from {before} last month, and your score fell "
+                        f"{abs(delta):.0f} points to {audit.score:.0f}/100. AI answers "
+                        f"shift week to week, so one month is not a trend, but I "
+                        f"won't dress it up: below is what I'm changing because of it.")
+        else:
+            movement = (f"About the same as last month ({before}); your score is "
+                        f"{audit.score:.0f}/100. Early months are often flat while the "
+                        f"engines re-read the site. It is the next two that tell.")
+
+    top = audit.top_competitor
+    rival = (f"{top[0]} is still named most often ({top[1]} of {n})."
+             if top and top[1] > shown else "")
+
+    live_lines = sitecheck.SiteCheck.from_dict(check).lines() if check else []
+    live_ok = bool(check) and check.get("local_business") and not check.get("placeholders")
+
+    this_month = method.plan(month, biz.vertical, audit)
+    next_month = method.plan(month + 1, biz.vertical, audit)
+    ours = [l.name for l in this_month["levers"] if l.owner != "client"]
+    upcoming = [l.name for l in next_month["levers"]][:3]
+
+    paragraphs = [
+        "Hi,",
+        f"Your {when} report for {biz.name}.",
+        f"This month you were named in {shown} of {n} answers when customers asked "
+        f"AI assistants for {knowledge.a_label(biz.vertical)} in {biz.market}. "
+        + movement,
+    ]
+    if rival:
+        paragraphs.append(rival)
+    if live_lines:
+        paragraphs.append("On your website right now:\n" + "\n".join(live_lines))
+    if ours:
+        paragraphs.append("Done this month:\n" + "\n".join(f"- {name}" for name in ours))
+    paragraphs.append("Next month:\n" + "\n".join(f"- {name}" for name in upcoming)
+                      + (f"\nYour part: about {next_month['client_minutes']} minutes."
+                         if next_month["client_minutes"] else ""))
+
+    # Until the fixes are live, the thing blocking progress is the install,
+    # so the files come with the report rather than in a separate email
+    # that gets filed and forgotten.
+    files = [d for d in (deliverables or []) if d.kind in {"schema_jsonld", "faq_schema"}]
+    attach = files and not live_ok
+    if attach:
+        platform = (check or {}).get("platform", "unknown")
+        paragraphs.append("The one thing that would move this fastest: the two "
+                          "short files at the bottom of this email, added to your "
+                          "homepage. " + sitecheck.install_steps(platform))
+
+    paragraphs += ["Questions about any of it? Just reply.",
+                   f"{settings.brand}\n{settings.website}"]
+    subject = f"{when} report — {biz.name[:30]}: named in {shown} of {n}"
+    body = playbook.email_body(*paragraphs)
+    # The files go after the wrapped text, untouched. Wrapped with the rest
+    # at 74 columns, a line break lands inside a JSON string, the file stops
+    # being valid, and the owner pastes something every engine ignores.
+    if attach:
+        body += "\n\n" + "\n\n".join(
+            f"--- {d.filename} (copy everything between the lines) ---\n"
+            f"{d.body}\n--- end of {d.filename} ---" for d in files)
+    return subject, body
+
+
 class ReporterAgent(Agent):
     name = "reporter"
     description = "Renders and files monthly client visibility reports."
@@ -171,7 +265,7 @@ class ReporterAgent(Agent):
     def execute(self) -> tuple[int, str]:
         out_dir = Path(self.settings.output_dir) / "reports"
         out_dir.mkdir(parents=True, exist_ok=True)
-        made = 0
+        made = emailed = 0
 
         for client in self.store.get_clients("active"):
             history = self.store.audit_history(client.business.id, limit=6,
@@ -197,8 +291,23 @@ class ReporterAgent(Agent):
                 title=f"AI Visibility Report — {client.business.name}",
                 body=str(path), filename=path.name,
             ))
+
+            # And the part that actually reaches them.
+            prospect = self.store.prospect_for_business(client.business)
+            if prospect is not None and prospect.business.email:
+                checks = self.store.site_checks(client.business.id, limit=1)
+                previous = history[1] if len(history) > 1 else None
+                subject, body = monthly_email(
+                    client, audit, previous, deliverables,
+                    checks[0] if checks else None, month, self.settings)
+                self.store.save_message(OutreachMessage(
+                    prospect_id=prospect.id, subject=subject, body=body,
+                    kind="client_report", sequence_step=0, status="drafted",
+                    scheduled_for=now_iso()))
+                emailed += 1
             client.last_report_at = now_iso()
             self.store.upsert_client(client)
             made += 1
 
-        return made, f"rendered {made} client reports"
+        return made, (f"rendered {made} client reports, {emailed} drafted to send"
+                      + (" — approve them in the inbox" if emailed else ""))

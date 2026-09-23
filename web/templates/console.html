@@ -261,6 +261,17 @@
       <div class="stat"><div class="v mono" id="pHot">–</div><div class="k">Hot leads</div></div>
     </div>
     <div class="card">
+      <h2>Got a reply? Find them</h2>
+      <input id="findBox" type="search" placeholder="Business name or email address"
+             style="width:100%;padding:11px;border-radius:10px;border:1px solid var(--line);
+                    background:var(--card);color:var(--ink);font-size:15px">
+      <div id="findList"></div>
+    </div>
+    <div class="card">
+      <h2>Replied — waiting on you</h2>
+      <div id="repliedList"><div class="barnote">Loading…</div></div>
+    </div>
+    <div class="card">
       <h2>By stage</h2>
       <div id="stageList"></div>
     </div>
@@ -275,6 +286,10 @@
     <div class="grid2" style="margin-bottom:11px">
       <div class="stat"><div class="v mono" id="cCount">–</div><div class="k">Clients</div></div>
       <div class="stat"><div class="v mono" id="cRisk">–</div><div class="k">At risk / mo</div></div>
+    </div>
+    <div class="card" id="payCard" hidden>
+      <h2>Said yes — waiting for payment</h2>
+      <div id="payList"></div>
     </div>
     <div class="card">
       <h2>Health — worst first</h2>
@@ -438,8 +453,21 @@
         '</span><span class="mono">' + p.stages[k] + '</span></div>';
     }).join("") : '<div class="barnote">Empty. Run a cycle to find prospects.</div>';
 
-    api("/api/prospects?limit=40").then(function(d){
-      var hot = d.items.filter(function(x){ return x.hot; }).slice(0, 12);
+    function rows(items){
+      return items.map(function(x){
+        return '<div class="row tap" data-pid="' + esc(x.id) + '"><span class="l">' +
+          esc(x.name) +
+          '<br><span style="font-size:12px;color:var(--muted)">' + esc(x.market) +
+          '</span></span><span class="r mono" style="color:var(--mark)">' +
+          (x.score === null ? "–" : Math.round(x.score)) + '</span></div>';
+      }).join("");
+    }
+    api("/api/prospects?stage=replied&limit=30").then(function(d){
+      $("repliedList").innerHTML = d.items.length ? rows(d.items)
+        : '<div class="barnote">Nobody waiting on an answer.</div>';
+    }).catch(function(){});
+    api("/api/prospects?hot=1&limit=12").then(function(d){
+      var hot = d.items;
       $("hotList").innerHTML = hot.length ? hot.map(function(x){
         return '<div class="row tap" data-pid="' + esc(x.id) + '"><span class="l">' +
           esc(x.name) +
@@ -478,6 +506,20 @@
   // ---------------------------------------------------------------- clients
   function loadClients(){
     return api("/api/clients").then(function(d){
+      var waiting = d.awaiting_payment || [];
+      $("payCard").hidden = !waiting.length;
+      $("payList").innerHTML = waiting.map(function(w){
+        return '<div class="msg" data-cid="' + esc(w.id) + '">' +
+          '<div class="biz">' + esc(w.name) +
+            (w.overdue ? '<span class="badge">overdue</span>' : '') + '</div>' +
+          '<div class="mkt">' + esc(w.plan) + ' · ' + money(w.mrr) + '/mo · ' +
+            w.days + ' day' + (w.days === 1 ? '' : 's') + ' waiting</div>' +
+          '<div class="pair">' +
+            (w.link ? '<button class="no" data-pay="copy" data-link="' +
+              esc(w.link) + '">Copy pay link</button>' : '') +
+            '<button class="yes" data-pay="paid">They paid</button>' +
+          '</div></div>';
+      }).join("");
       $("cCount").textContent = d.count;
       $("cRisk").textContent = d.at_risk_mrr ? money(d.at_risk_mrr) : "$0";
       var pip = $("pipRisk");
@@ -567,7 +609,20 @@
         esc(c.action) + '</div>' +
       c.signals.map(function(s){
         return '<div class="finding">' + esc(s) + '</div>';
-      }).join(""));
+      }).join("") +
+      ((c.site || []).length ? '<h2 style="font-size:11px;letter-spacing:.09em;' +
+        'text-transform:uppercase;color:var(--muted);margin:18px 0 8px">Their website</h2>' +
+        c.site.map(function(s){ return '<div class="finding">' + esc(s) + '</div>'; })
+          .join("") : '') +
+      ((c.report_url || (c.files || []).length) ? '<h2 style="font-size:11px;' +
+        'letter-spacing:.09em;text-transform:uppercase;color:var(--muted);' +
+        'margin:18px 0 8px">Open</h2>' +
+        (c.report_url ? '<a class="act" style="display:block;margin-bottom:8px" ' +
+          'target="_blank" href="' + esc(c.report_url) + '">Latest report</a>' : '') +
+        (c.files || []).map(function(f){
+          return '<a class="row tap" target="_blank" href="' + esc(f.url) + '">' +
+            '<span class="l">' + esc(f.title) + '</span></a>';
+        }).join("") : ''));
   }
 
   function prospectSheet(b){
@@ -599,7 +654,18 @@
       '<div class="acts" style="margin-top:10px">' +
         '<button class="act primary" id="btnLogReply" data-pid="' +
           esc(b.prospect_id) + '">Log the reply</button></div>' +
-      '<div id="replyOut"></div>');
+      '<div id="replyOut"></div>' +
+      '<h2 style="font-size:11px;letter-spacing:.09em;text-transform:uppercase;' +
+        'color:var(--muted);margin:18px 0 8px">They said yes — sign them up</h2>' +
+      '<select id="winPlan" style="width:100%;padding:10px;border-radius:10px">' +
+        '<option value="growth">Growth — $997/mo</option>' +
+        '<option value="starter">Starter — $499/mo</option>' +
+        '<option value="managed">Managed — $1,997/mo</option>' +
+        '<option value="pilot">Free pilot — prove it works</option>' +
+      '</select>' +
+      '<div class="acts" style="margin-top:10px">' +
+        '<button class="act primary" id="btnWin" data-pid="' +
+          esc(b.prospect_id) + '">Sign them up</button></div>');
   }
 
   function esc(s){
@@ -718,7 +784,7 @@
   // Tapping a hot lead opens the full qualification read. This is the one
   // screen that turns a name into a decision, so it is one tap from the
   // pipeline rather than a laptop command.
-  $("hotList").addEventListener("click", function(e){
+  function openProspect(e){
     var row = e.target.closest("[data-pid]");
     if(!row || busy) return;
     row.style.opacity = ".5";
@@ -726,7 +792,24 @@
       .then(prospectSheet)
       .catch(function(){ toast("Could not load that one"); })
       .then(function(){ row.style.opacity = "1"; });
+  }
+  $("hotList").addEventListener("click", openProspect);
+  $("findList").addEventListener("click", openProspect);
+  $("findBox").addEventListener("input", function(){
+    var q = this.value.trim();
+    clearTimeout(this._t);
+    if(q.length < 2){ $("findList").innerHTML = ""; return; }
+    this._t = setTimeout(function(){
+      api("/api/prospects?limit=8&q=" + encodeURIComponent(q)).then(function(d){
+        $("findList").innerHTML = d.items.length ? d.items.map(function(x){
+          return '<div class="row tap" data-pid="' + esc(x.id) + '"><span class="l">' +
+            esc(x.name) + '<br><span style="font-size:12px;color:var(--muted)">' +
+            esc(x.market) + ' · ' + esc(x.stage.replace(/_/g, " ")) + '</span></span></div>';
+        }).join("") : '<div class="barnote">No match.</div>';
+      }).catch(function(){});
+    }, 250);
   });
+  $("repliedList").addEventListener("click", openProspect);
 
   $("clientList").addEventListener("click", function(e){
     var row = e.target.closest("[data-cid]");
@@ -737,6 +820,43 @@
 
   // The reply box lives inside the sheet, which is rebuilt each time, so the
   // handler is delegated rather than bound to the button.
+  $("sheetBody").addEventListener("click", function(e){
+    var win = e.target.closest("#btnWin");
+    if(!win || busy) return;
+    var plan = $("winPlan").value;
+    if(!confirm(plan === "pilot" ? "Start a free pilot for this business?" :
+                "Sign them up on " + plan + "? They go live when they pay.")) return;
+    busy = true; win.disabled = true; win.textContent = "Signing…";
+    api("/api/win", { id: win.dataset.pid, plan: plan }).then(function(r){
+      if(r.error){ toast(r.error, 4500); return; }
+      toast(r.name + " signed. " + r.next, 7000);
+      closeSheet();
+      return load(true);
+    }).catch(function(){ toast("That didn't go through"); })
+      .then(function(){ busy = false; win.disabled = false; win.textContent = "Sign them up"; });
+  });
+
+  $("payList").addEventListener("click", function(e){
+    var btn = e.target.closest("button[data-pay]");
+    if(!btn || busy) return;
+    if(btn.dataset.pay === "copy"){
+      var link = btn.dataset.link;
+      (navigator.clipboard ? navigator.clipboard.writeText(link) : Promise.reject())
+        .then(function(){ toast("Payment link copied"); },
+              function(){ prompt("Copy this link:", link); });
+      return;
+    }
+    var card = btn.closest(".msg");
+    if(!confirm("Has their payment actually arrived?")) return;
+    busy = true; card.style.opacity = ".45";
+    api("/api/paid", { id: card.dataset.cid }).then(function(r){
+      if(r.error){ toast(r.error); card.style.opacity = "1"; return; }
+      toast(r.name + " is live. " + r.next, 5000);
+      return loadClients().then(function(){ return load(true); });
+    }).catch(function(){ card.style.opacity = "1"; toast("That didn't go through"); })
+      .then(function(){ busy = false; });
+  });
+
   $("sheetBody").addEventListener("click", function(e){
     var btn = e.target.closest("#btnLogReply");
     if(!btn || busy) return;

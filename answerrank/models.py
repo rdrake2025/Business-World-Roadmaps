@@ -38,7 +38,12 @@ PROSPECT_STAGES = [
     "suppressed",    # Unsubscribed / bounced / do-not-contact
 ]
 
-CLIENT_STATUSES = ["trialing", "active", "past_due", "churned"]
+#: ``awaiting_payment`` sits between saying yes and paying. Until this build,
+#: tapping Won made a client active on the spot: they were welcomed, audited,
+#: delivered to and counted as revenue whether or not a dollar had arrived.
+CLIENT_STATUSES = ["awaiting_payment", "trialing", "active", "past_due", "churned"]
+#: Statuses in which a business is on the books at all.
+LIVE_CLIENT_STATUSES = ("awaiting_payment", "trialing", "active", "past_due")
 
 
 @dataclass
@@ -105,6 +110,10 @@ class Client:
     started_at: str = field(default_factory=now_iso)
     churned_at: str = ""
     last_report_at: str = ""
+    #: When the first payment arrived, and Stripe's id for it (a subscription
+    #: ``sub_...`` when paid through a recurring payment link).
+    paid_at: str = ""
+    payment_ref: str = ""
     id: str = field(default_factory=lambda: new_id("cli"))
 
 

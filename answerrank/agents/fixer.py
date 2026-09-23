@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 
-from .. import knowledge, method
+from .. import knowledge, sitecheck, method
 from ..engines.live import _post
 from ..models import Audit, Business, Deliverable
 from ..prompts import build_prompts, vertical_meta
@@ -35,12 +35,21 @@ def localbusiness_schema(biz: Business, audit: Audit | None = None) -> str:
     # retrieval engine what the business actually is.
     schema_type = knowledge.get(biz.vertical).schema_type
 
+    # Only facts we hold, plus clearly marked blanks for the two we cannot
+    # know. This used to invent a phone number (+1-000-000-0000) when none was
+    # on file, publish weekday 8-to-6 hours as fact, and ask the owner to fill
+    # in their own star rating. Invented hours are what an assistant then
+    # tells a customer standing outside a locked door; and Google has not
+    # shown ratings a business marks up about itself since 2019 (its
+    # "self-serving reviews" rule), so that block could only ever go live as
+    # a placeholder or as a claim nothing would display. The live site check
+    # (sitecheck.py) flags any REPLACE_ blank that reaches a real page.
     doc = {
         "@context": "https://schema.org",
         "@type": schema_type,
         "name": biz.name,
         "url": biz.website or f"https://{biz.domain}",
-        "telephone": biz.phone or "+1-000-000-0000",
+        "telephone": biz.phone or "REPLACE_WITH_PHONE",
         "email": biz.email or f"info@{biz.domain}",
         "address": {
             "@type": "PostalAddress",
@@ -51,12 +60,6 @@ def localbusiness_schema(biz: Business, audit: Audit | None = None) -> str:
             "addressCountry": "US",
         },
         "areaServed": [{"@type": "City", "name": biz.city}],
-        "priceRange": "$$",
-        "openingHoursSpecification": [{
-            "@type": "OpeningHoursSpecification",
-            "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
-            "opens": "08:00", "closes": "18:00",
-        }],
         "hasOfferCatalog": {
             "@type": "OfferCatalog",
             "name": f"{meta['label'].title()} Services",
@@ -64,11 +67,6 @@ def localbusiness_schema(biz: Business, audit: Audit | None = None) -> str:
                 {"@type": "Offer", "itemOffered": {"@type": "Service", "name": str(job).title()}}
                 for job in meta["jobs"]  # type: ignore[union-attr]
             ],
-        },
-        "aggregateRating": {
-            "@type": "AggregateRating",
-            "ratingValue": "REPLACE_WITH_REAL_RATING",
-            "reviewCount": "REPLACE_WITH_REAL_COUNT",
         },
     }
     return json.dumps(doc, indent=2)
@@ -211,7 +209,8 @@ listings quarterly — directories silently drop or alter records.
 """
 
 
-def implementation_guide(biz: Business, audit: Audit | None) -> str:
+def implementation_guide(biz: Business, audit: Audit | None,
+                         platform: str = "unknown") -> str:
     """A non-technical install guide, personalised to this client.
 
     The single biggest predictor of a client renewing is whether they actually
@@ -246,27 +245,20 @@ These tell AI engines what your business is, where it is, and what it does, in
 a format they can read directly. Without them an engine has to guess, and it
 usually guesses someone else.
 
-**Forward this to your web person:**
+**How to add them on {sitecheck.PLATFORM_LABEL.get(platform, "your website")}:**
 
-> Please add both attached JSON files to the site as JSON-LD, inside
-> `<script type="application/ld+json">` tags in the `<head>` of the homepage.
-> Add them exactly as they are — do not reformat them.
+{sitecheck.install_steps(platform)}
 
-**If you use WordPress:** install the free "Header Footer Code Manager"
-plugin, create a snippet targeting the homepage `<head>`, and paste each file
-wrapped in those script tags.
+**Before you do:** open `{slug}_localbusiness.json` and replace the two
+blanks marked REPLACE_WITH — your street address and ZIP — with exactly what
+your Google listing shows.{" And your phone number, which we don't have on file." if not biz.phone else ""}
+Don't add anything we left out (hours, star ratings). Wrong hours get repeated
+to customers by the assistants, and Google ignores ratings a business marks up
+about itself.
 
-**If you use Squarespace or Wix:** Settings → Advanced → Code Injection →
-Header. Paste both, each wrapped in the script tags.
-
-**Before you do:** open `{slug}_localbusiness.json` and replace anything in
-CAPITALS — the street address, ZIP, and your real review count and rating.
-Do not invent those two numbers. A false rating is a legal problem, and
-engines cross-check it against your Google listing anyway.
-
-**How to check it worked:** paste your homepage URL into Google's Rich Results
-Test (search "Google Rich Results Test"). It should list your business type
-and your FAQs.
+**How we check it worked:** we look at your homepage every day and tell you in
+your monthly report what is live. If you'd like to see it yourself, paste your
+homepage address into Google's Rich Results Test.
 
 ---
 
@@ -391,18 +383,43 @@ class FixerAgent(Agent):
         days = max(0, (datetime.now(timezone.utc) - started).days)
         return days // 30 + 1
 
+    def site_check(self, biz: Business, force: bool = False) -> dict:
+        """The client's homepage as last read, reading it again if that was
+        more than a day ago. Recorded, so reports and Retention can use it."""
+        from datetime import datetime, timedelta, timezone
+
+        history = self.store.site_checks(biz.id, limit=1)
+        if history and not force:
+            try:
+                last = datetime.fromisoformat(history[0]["checked_at"])
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) - last < timedelta(hours=20):
+                    return history[0]
+            except (KeyError, ValueError):
+                pass
+        result = sitecheck.check(biz).as_dict()
+        self.store.save_site_check(biz.id, result)
+        return result
+
     def build_for(self, biz: Business, audit: Audit,
                   month: int = 1) -> list[Deliverable]:
         pairs = self._llm_upgrade(biz, faq_pairs(biz, audit))
         slug = biz.domain.replace(".", "_") or biz.id
+        # The install steps, and the file format, depend on what the site is
+        # built with: Wix refuses a markup over 7,000 characters, and telling
+        # a Wix owner to open a menu Wix does not have is where installs stop.
+        platform = self.site_check(biz).get("platform", "unknown")
         return [
             Deliverable(audit_id=audit.id, business_id=biz.id, kind="schema_jsonld",
                         title=f"LocalBusiness schema — {biz.name}",
-                        body=localbusiness_schema(biz, audit),
+                        body=sitecheck.fit_for_platform(localbusiness_schema(biz, audit),
+                                                        platform),
                         filename=f"{slug}_localbusiness.json"),
             Deliverable(audit_id=audit.id, business_id=biz.id, kind="faq_schema",
                         title=f"FAQPage schema — {biz.name}",
-                        body=faq_schema(pairs), filename=f"{slug}_faq.json"),
+                        body=sitecheck.fit_for_platform(faq_schema(pairs), platform),
+                        filename=f"{slug}_faq.json"),
             Deliverable(audit_id=audit.id, business_id=biz.id, kind="faq_content",
                         title=f"Answer-shaped FAQ copy — {biz.name}",
                         body="\n\n".join(f"## {q}\n\n{a}" for q, a in pairs),
@@ -415,7 +432,7 @@ class FixerAgent(Agent):
                         body=citation_gaps(biz), filename=f"{slug}_citations.md"),
             Deliverable(audit_id=audit.id, business_id=biz.id, kind="implementation_guide",
                         title=f"How to install this month's files — {biz.name}",
-                        body=implementation_guide(biz, audit),
+                        body=implementation_guide(biz, audit, platform),
                         filename=f"{slug}_START_HERE.md"),
             # The same six files every month is how a retainer starts looking
             # like nothing is happening, which is the churn signal the
@@ -429,18 +446,26 @@ class FixerAgent(Agent):
     def execute(self) -> tuple[int, str]:
         made = 0
         months: list[int] = []
+        live = pending = 0
         for client in self.store.get_clients("active"):
             history = self.store.audit_history(client.business.id, limit=1)
             if not history:
                 continue
             audit = history[0]
-            if self.store.get_deliverables(audit.id):
-                continue  # already built for this cycle
-            month = self.engagement_month(client)
-            months.append(month)
-            for d in self.build_for(client.business, audit, month):
-                self.store.save_deliverable(d)
-                made += 1
-        return made, (f"generated {made} deliverables"
-                      + (f" across months {min(months)}-{max(months)}"
-                         if months else ""))
+            if not self.store.get_deliverables(audit.id):
+                month = self.engagement_month(client)
+                months.append(month)
+                for d in self.build_for(client.business, audit, month):
+                    self.store.save_deliverable(d)
+                    made += 1
+            # Whether last month's work actually reached the site. Once a day.
+            check = self.site_check(client.business)
+            if check.get("local_business") and not check.get("placeholders"):
+                live += 1
+            else:
+                pending += 1
+        summary = (f"generated {made} deliverables"
+                   + (f" across months {min(months)}-{max(months)}" if months else ""))
+        if live or pending:
+            summary += f" | fixes live on {live} client site(s), not yet on {pending}"
+        return made, summary

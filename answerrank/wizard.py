@@ -163,6 +163,15 @@ pricing:
   growth_monthly: {growth:g}
   managed_monthly: {managed:g}
 
+# Stripe payment links, one per plan. In Stripe: Payment Links > New, with a
+# RECURRING monthly price, so Stripe charges every month by itself. Paste the
+# https://buy.stripe.com/... address for each plan you sell. Leave blank and
+# you send invoices by hand and tap Paid when the money arrives.
+payment_links:
+  starter: ""
+  growth: ""
+  managed: ""
+
 outreach:
   max_emails_total_per_day: 120
   max_emails_per_domain_per_day: 30
@@ -185,9 +194,9 @@ outreach:
        DMARC  TXT  _dmarc   v=DMARC1; p=quarantine; rua=mailto:{from_email}
        DKIM   (enable in your mail provider, paste the record it gives you)
 
-  2. Export API keys when you have them (optional — simulation works without):
-       export OPENAI_API_KEY=...      export ANTHROPIC_API_KEY=...
-       export PERPLEXITY_API_KEY=...  export SERPER_API_KEY=...
+  2. Save your mailbox password and API keys (double-click KEYS.bat, or):
+       python run.py keys
+     It asks for each one in plain words and tests the mailbox.
 
   3. Check what is still blocking you:
        python3 run.py doctor

@@ -32,6 +32,7 @@ PROVIDER_ENV = {
     "anthropic": "ANTHROPIC_API_KEY",
     "perplexity": "PERPLEXITY_API_KEY",
     "serper": "SERPER_API_KEY",  # powers Google AI Overview capture
+    "stripe": "STRIPE_API_KEY",  # read-only: who has paid
 }
 
 
@@ -53,6 +54,17 @@ class Pricing:
             "growth": self.growth_monthly,
             "managed": self.managed_monthly,
         }.get(plan.lower(), 0.0)
+
+    #: Plans a client can be signed onto. ``pilot`` is free on purpose: the
+    #: first few clients are how the service proves it works at all.
+    PLANS = ("starter", "growth", "managed", "pilot")
+
+    def plan_for(self, price: float) -> str:
+        """The monthly plan charging this price, or "" if none does."""
+        for plan in ("starter", "growth", "managed"):
+            if abs(self.plan_price(plan) - float(price or 0)) < 0.5:
+                return plan
+        return ""
 
     def ladder(self) -> list[float]:
         """The recurring tiers, low to high. The one-off audit is not a tier."""
@@ -144,6 +156,15 @@ class Settings:
     demo_mode: bool = False
 
     pricing: Pricing = field(default_factory=Pricing)
+
+    #: Stripe payment links, one per plan: {"growth": "https://buy.stripe.com/..."}.
+    #: Make each one in Stripe > Payment Links as a *recurring monthly* price,
+    #: so Stripe charges every month and nobody has to send an invoice.
+    payment_links: dict[str, str] = field(default_factory=dict)
+    #: A signed client who has not paid gets one friendly reminder after this
+    #: many days, and is flagged to you after the second number.
+    payment_reminder_days: int = 3
+    payment_overdue_days: int = 10
     outreach: OutreachPolicy = field(default_factory=OutreachPolicy)
 
     # Business target that the Bookkeeper agent measures everything against.
@@ -206,6 +227,14 @@ CONFIG_PROBLEMS: list[str] = []
 def load_settings(path: str | Path | None = None) -> Settings:
     settings = Settings()
     CONFIG_PROBLEMS.clear()
+
+    # Keys first, so everything below — and every agent — sees them. A real
+    # environment variable still wins over the file.
+    try:
+        from . import keys
+        keys.apply(Path(os.environ.get("ANSWERRANK_KEYS") or keys.KEYS_FILE))
+    except Exception as exc:  # noqa: BLE001 - a bad keys file must not stop startup
+        CONFIG_PROBLEMS.append(f"keys.env could not be read: {exc}")
 
     config_path = Path(path or os.environ.get("ANSWERRANK_CONFIG") or DEFAULT_CONFIG_PATH)
     if config_path.exists() and yaml is not None:

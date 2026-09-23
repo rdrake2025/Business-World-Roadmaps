@@ -38,6 +38,15 @@ def get_or_create_token(store) -> str:
     return token
 
 
+def set_token(store, token: str) -> str:
+    """Use a token generated elsewhere — the server setup does this, so the
+    console link can be printed on the laptop before the server exists."""
+    if len(token) < 24 or not all(c.isalnum() or c in "-_" for c in token):
+        raise ValueError("token must be 24+ letters, digits, - or _")
+    store.kv_set(TOKEN_KEY, token)
+    return token
+
+
 def rotate_token(store) -> str:
     token = secrets.token_urlsafe(24)
     store.kv_set(TOKEN_KEY, token)

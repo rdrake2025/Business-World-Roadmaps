@@ -7,8 +7,8 @@ Wants=network-online.target
 Type=simple
 User=answerrank
 WorkingDirectory=/opt/answerrank
-EnvironmentFile=/opt/answerrank/.env
-ExecStart=/usr/bin/python3 run.py run
+EnvironmentFile=-/opt/answerrank/.env
+ExecStart=/opt/answerrank/.venv/bin/python run.py run
 Restart=always
 RestartSec=30
 

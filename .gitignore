@@ -6,9 +6,15 @@ data/
 
 # Local configuration and secrets
 answerrank.yml
-budget.yml          # personal financial data
+# Personal financial data. (A comment on the same line as a pattern
+# becomes part of the pattern, which is how this file went unignored.)
+budget.yml
 .env
 .env.local
+# Mailbox password and API keys.
+keys.env
+# Server setup files carry a copy of keys.env.
+server-setup-*.sh
 backups/
 *.pem
 
