@@ -148,6 +148,28 @@ def set_payment_links(links: dict[str, str], config_path: Path | str) -> Path:
     return path
 
 
+def set_setting(name: str, value: str, config_path: Path | str) -> Path:
+    """Set one top-level ``name: "value"`` line in answerrank.yml, keeping
+    every other line exactly as it was (same reasoning as above)."""
+    path = Path(config_path)
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    quoted = value.replace("\\", "\\\\").replace('"', '\\"')
+    line = f'{name}: "{quoted}"'
+    at = next((i for i, existing in enumerate(lines)
+               if re.match(rf"{re.escape(name)}\s*:", existing)), None)
+    if at is None:
+        lines += ["", line]
+    else:
+        lines[at] = line
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def address_is_real(address: str) -> bool:
+    """The doctor's test, in one place: not the template, and long enough."""
+    return bool(address) and "SET_YOUR" not in address and len(address) > 12
+
+
 def masked(value: str) -> str:
     if not value:
         return "not set"
@@ -228,9 +250,26 @@ def interactive(settings, path: Path | str = KEYS_FILE,
             f"  {key.label} [{masked(current)}] (Enter to skip): ").strip()
         values[key.name] = entered or current
 
-    # Payment links are not secret — they are sent to every client — so they
-    # live in answerrank.yml, but they are asked for here so that setting up
-    # payments never means editing YAML by hand.
+    # Payment links and the postal address are not secret — every client sees
+    # them — so they live in answerrank.yml, but they are asked for here so
+    # that getting ready to send never means editing YAML by hand.
+    from .config import DEFAULT_CONFIG_PATH
+    config_path = Path(os.environ.get("ANSWERRANK_CONFIG") or DEFAULT_CONFIG_PATH)
+
+    current_address = getattr(settings, "physical_address", "") or ""
+    shown = current_address if address_is_real(current_address) else "not set"
+    say("\n  Postal address: printed at the foot of every email — the law requires "
+        "one. It does not have to be your home: a USPS PO Box or a virtual "
+        "mailbox address works.")
+    address = ask(f"  Postal address [{shown}]: ").strip()
+    if address and not address_is_real(address):
+        say("    That looks too short for a full address — street, city, state, "
+            "ZIP. Skipped.")
+    elif address and address != current_address:
+        set_setting("physical_address", address, config_path)
+        settings.physical_address = address
+        say(f"  Address saved to {config_path.name}.")
+
     current_links = dict(getattr(settings, "payment_links", None) or {})
     say("\n  Stripe payment links (Stripe > Payment Links > New, with a recurring "
         "monthly price). Paste each one, or press Enter to skip.")
@@ -244,8 +283,6 @@ def interactive(settings, path: Path | str = KEYS_FILE,
             entered = ""
         links[plan] = entered or now
     if any(links.values()) and links != current_links:
-        from .config import DEFAULT_CONFIG_PATH
-        config_path = Path(os.environ.get("ANSWERRANK_CONFIG") or DEFAULT_CONFIG_PATH)
         set_payment_links(links, config_path)
         say(f"  Payment links saved to {config_path.name}.")
 

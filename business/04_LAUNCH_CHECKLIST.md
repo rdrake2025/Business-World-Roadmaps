@@ -1,141 +1,217 @@
-# 30-Day Launch Checklist
+# Launch Checklist
 
-The order matters. Weeks 1–2 are setup with zero revenue; week 3 is when the
-business actually starts. Do not reorder to feel productive — the single most
-common failure is spending three weeks on a logo and never sending an email.
+The software is built and tested. Launching is a set of accounts, keys and
+records that only you can create, because they are in your name. **All of it
+fits in one evening, about three hours.** A few things then have to wait on
+Google and DNS, and this says which ones and why.
 
-Estimated total time: **25–35 hours over 30 days.**
-
----
-
-## Week 1 — Foundation (8–10 hours)
-
-**Day 1–2: Entity and money**
-- [ ] Form the LLC in your home state
-- [ ] Apply for an EIN (free, IRS.gov — do not pay a service)
-- [ ] Open a business bank account
-- [ ] Sign up for Stripe; verify the account
-- [ ] Set up accounting; create a separate tax-reserve account
-
-**Day 3–4: Domains and email**
-- [ ] Buy the primary domain
-- [ ] Buy a **separate sending domain** (`-mail`, `-hq`, or `get-` variant)
-- [ ] Set up Google Workspace on the sending domain
-- [ ] Configure **SPF, DKIM, DMARC at `p=quarantine`** on the sending domain
-- [ ] **Begin email warmup today.** It takes 2–3 weeks and gates everything else.
-      Start at 10/day.
-
-> Warmup is the long pole. Start it on day 3 even though you won't send real
-> outreach until day 18.
-
-**Day 5–7: The platform**
-- [ ] Clone this repo to a $6 VPS
-- [ ] `python3 run.py init` and fill in every field
-- [ ] Add API keys: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `PERPLEXITY_API_KEY`, `SERPER_API_KEY` ($50 total float is plenty)
-- [ ] `python3 -m unittest discover -s tests` — confirm 43 tests pass
-- [ ] `python3 run.py tick --force` — confirm the fleet runs
-- [ ] **Audit 3 businesses you know personally.** Read the reports critically.
-      Would you pay $997 for this? If not, fix it now, before strangers see it.
-
-## Week 2 — Proof and positioning (7–9 hours)
-
-**Day 8–10: Pick your vertical and market**
-- [ ] Choose **one** vertical (HVAC, plumbing, dental, legal, roofing) and **2–3
-      metros**. Do not start broad — specificity is what makes the email land
-      and the case study credible.
-- [ ] Run 20 audits in that vertical. Find the patterns: what do the *visible*
-      businesses have that the invisible ones don't?
-- [ ] Write those patterns down. That is your expertise, and it is what you'll
-      say on calls.
-
-**Day 11–12: Sales assets**
-- [ ] One-page website: what it is, who it's for, the three tiers, a booking link
-- [ ] Publish a privacy policy and terms
-- [ ] Draft the client service agreement (see `03_LEGAL_COMPLIANCE.md`); send for
-      lawyer review
-- [ ] Set up a calendar booking link
-- [ ] Create Stripe payment links for all four tiers
-
-**Day 13–14: The free-audit offer**
-- [ ] Build a landing page: "Free AI Visibility Audit for [Vertical] in [City]"
-- [ ] Wire the form to your inbox
-- [ ] **Build the unsubscribe endpoint** at `/unsubscribe` and connect it to the
-      suppression list. *(Legally required. Do not send before this works.)*
-
-## Week 3 — First contact (6–8 hours)
-
-**Day 15–17: Build the list**
-- [ ] Run `scout` against your chosen vertical and metros, or import a CSV via
-      `ANSWERRANK_SEED_FILE`
-- [ ] Target **200–300 qualified prospects**
-- [ ] Verify email deliverability on the list (bounces above 2% get you filtered)
-- [ ] Let `auditor` run teaser audits overnight
-
-**Day 18–21: Start sending**
-- [ ] Confirm warmup is complete and DNS passes: `python3 run.py send --dry-run`
-- [ ] `python3 run.py inbox --full` — **read every draft before approving.**
-      Read them all for the first week; they go out under your name.
-- [ ] `python3 run.py approve` then `python3 run.py send --limit 20`
-- [ ] Ramp: 20/day → 40 → 60 → 100 over the week
-- [ ] Watch bounce and complaint rates daily. Stop immediately if bounces
-      exceed 2% or complaints exceed 0.1%.
-
-> **The first 50 emails are a test, not a campaign.** If nobody replies, the
-> problem is the subject line or the targeting — not the volume. Fix it before
-> sending 500 more.
-
-## Week 4 — First revenue (5–8 hours)
-
-**Day 22–26: Convert**
-- [ ] Reply to every response within 2 hours during business hours
-- [ ] Send the full report to anyone who asks; offer a 20-minute call
-- [ ] Run calls per `02_SALES_PLAYBOOK.md`. **Ask for the card on the call.**
-- [ ] `python3 run.py win "<business>" --plan growth` on every close
-
-**Day 27–30: Deliver and review**
-- [ ] Let `fixer` and `reporter` produce the first client deliverables
-- [ ] **Review the first report by hand before it goes out.** Every time, for the
-      first three clients.
-- [ ] Send it with a personal note and a 15-minute walkthrough offer
-- [ ] `python3 run.py dashboard` — where do you actually stand?
-- [ ] Write down what worked and what didn't. Adjust the sequence.
+Nothing on this list needs you to edit a file or type a command on a server.
 
 ---
 
-## Day 30 targets
+## Tonight — about 3 hours
 
-| Metric | Target | Acceptable |
+Do them in this order. The server goes last because it copies your keys and
+settings when it is created.
+
+### 1. Mailbox on a sending domain — 20 min
+
+- [ ] workspace.google.com → **Business Starter**, 1 user. $8.40/month month to
+      month ($7 on a yearly plan), first 14 days free.
+- [ ] Use a **separate sending domain**, never your main one — if it is ever
+      burned, your real domain survives. Buy one during Google's signup or at
+      any registrar (~$12/year). Pattern: `get<brand>.com`, `<brand>hq.com`.
+- [ ] Make `hello@yourdomain` and verify the domain when Google asks.
+
+### 2. DNS records — 15 min
+
+- [ ] Double-click **SETUP-DOMAIN.bat**, type the domain, pick Google.
+- [ ] At your registrar, paste the **MX**, **SPF** and **DMARC** rows it prints.
+- [ ] **DKIM will not be ready tonight.** Google only lets a new account
+      generate the key 24–72 hours after Gmail is switched on. It is on the
+      "what waits" list below.
+
+### 3. App password — 5 min
+
+- [ ] myaccount.google.com → Security → **2-Step Verification** on.
+- [ ] myaccount.google.com/apppasswords → make one called `Mail`. Copy the 16
+      letters. (That page does not exist until 2-Step Verification is on.)
+
+### 4. Stripe — 40 min
+
+- [ ] stripe.com → sign up → **Activate payments**. Sole proprietor is fine.
+      You will need your SSN, a bank account for payouts, and a website — use
+      your sending domain; it goes live in step 9.
+- [ ] Product catalogue → three products, each with a **recurring monthly
+      price**: Starter $499, Growth $997, Managed $1,997.
+- [ ] Payment Links → New → one link per price. Copy all three.
+- [ ] Developers → API keys → **Create restricted key**: Checkout Sessions =
+      Read, Subscriptions = Read, everything else None. It starts `rk_`.
+      Never paste the `sk_` secret key anywhere — it can move money.
+
+Stripe keeps 2.9% + 30¢ per charge plus 0.7% for subscriptions — about $36 of
+a $997 month. The bookkeeper already counts it.
+
+### 5. AI credits — 10 min
+
+- [ ] platform.openai.com → Billing → add **$15** → API keys → new key.
+      A full audit costs about six cents, so this covers hundreds.
+- [ ] Recommended: serper.dev → free account → API key. It is how the system
+      finds local businesses and reads Google's AI Overviews.
+
+### 6. Postal address — 10 min
+
+Every commercial email must carry a postal address. It does **not** have to
+be your home:
+
+- [ ] Reserve a **USPS PO Box** online (collect the keys at the post office),
+      or sign up for a **virtual mailbox** (needs USPS Form 1583, notarised —
+      most services do that online).
+- [ ] Or use your home address for now and change it later. Nothing cold goes
+      out for a few days anyway (see DKIM), so there is time for the box.
+
+### 7. Update and first-run setup — 10 min
+
+- [ ] Double-click **start.bat**. It updates, runs the self-check, and on the
+      first run asks six questions (name, domain, address, trade, prices).
+
+### 8. Keys — 10 min
+
+- [ ] Double-click **KEYS.bat**. It asks, in plain words, for the mailbox, the
+      app password, whether to read replies automatically (say yes), the AI
+      keys, the Stripe key, the three payment links and the postal address.
+      It tests the mailbox before saving. Press Enter to keep anything already
+      saved — it is safe to run again.
+
+### 9. Server and phone console — 30 min, some of it waiting
+
+The unsubscribe link in every email has to work from the public internet, all
+the time. A laptop cannot do that, so this $6/month server is needed before
+the first email, not after the first client. Every screen is in
+[`deploy/SERVER.md`](../deploy/SERVER.md).
+
+- [ ] In the project folder: `python run.py server-script --domain yourdomain.com`
+      — **save the console link it prints. It is your login.**
+- [ ] DigitalOcean → Create → Droplets → Ubuntu 24.04, Basic, **$6/month** →
+      Advanced Options → Add Initialization scripts → paste the whole
+      `server-setup-….sh` file → Create. Note the IP address.
+- [ ] At your registrar: an **A record**, name `@`, value = that IP address.
+- [ ] After ~15 minutes, open the console link on your phone → **Add to Home
+      Screen**. Then delete the server-setup file from the laptop.
+
+### 10. Check — 10 min
+
+- [ ] `python run.py doctor` on the laptop. Tonight, expect **DKIM** (and
+      possibly the unsubscribe link, while HTTPS finishes) to be the only red.
+- [ ] Optional: double-click **SIMULATE.bat** to watch a month of the business
+      run with made-up clients. Nothing real is sent.
+
+### 11. Pilots — 10 min
+
+- [ ] Write down 2–3 local trades businesses you, or someone you know, can
+      reach directly. Tomorrow, offer them three free months in return for
+      being measured and written up. That before-and-after is what sells the
+      service to strangers. You add them on the phone with **Add a business you
+      know** (Pipeline tab).
+
+---
+
+## What has to wait, and why
+
+| What | How long | Why |
 | --- | --- | --- |
-| Prospects audited | 250 | 150 |
-| Emails sent | 400 | 250 |
-| Replies | 8–15 | 4 |
-| Calls booked | 4–8 | 2 |
-| **Clients closed** | **2–3** | **1** |
-| MRR | $1,500–$2,500 | $499 |
+| DKIM key | 24–72 hours after Gmail is on, then up to 48 hours to start signing | Google's rule for new accounts. Nothing cold goes out until it passes — the doctor blocks it. |
+| HTTPS on the server | Minutes to an hour after the A record | The certificate can only be issued once DNS points at the server. |
+| First cold email | Usually day 3–5 | The day the doctor is all green. Until then, send a few real, personal emails a day from the new address. |
+| Full sending volume | About a month | The system starts at 10 a day and climbs by itself: 20 from day 4, 40 from day 8, 70 from day 15, 100 from day 22. Do not raise it. |
+| First Stripe payout | 7–14 days after the first live payment | Stripe's standard for new accounts. After that, a few days per charge. |
+| A case study | 45+ days after a pilot starts | AI engines pick up changes when they next crawl. `run.py case-study` says "too early" until it is not. |
 
-**One client by day 30 puts you on the pessimistic curve, which still clears
-$5k inside a year.** Two puts you on the base case and at target by month 4.
+---
 
-**Zero clients by day 30 is a signal, not a failure** — but you must diagnose
-which step broke:
+## The first 30 days
 
-| Symptom | Diagnosis | Fix |
+| When | What |
+| --- | --- |
+| Day 1 | Call or message your 2–3 pilots. In the console: Pipeline → **Add a business you know** → Sign them up → **Free pilot**. Free, starts at once, and never sent cold email. |
+| Day 1–3 | DKIM: admin.google.com → Apps → Google Workspace → Gmail → Authenticate email → Generate new record (2048-bit) → paste at registrar → Start authentication. Re-run SETUP-DOMAIN.bat until it says ready. |
+| Day 3–5 | **First send.** Console → Review drafts → read every one → approve → Send approved. |
+| Every weekday | The 10 minutes below. |
+| Week 2+ | Replies arrive. The Concierge drafts each answer; you read and send within two hours. Book the call. |
+| On a yes | Console → find them → **Sign them up** → pick the plan. The payment link goes out. Approve the welcome email the day they pay. |
+| Day 30 | Console → money view. Fix only the earliest broken step: not delivered → DNS; no replies → subject and targeting; no calls → report; no closes → the call. |
+
+### Every weekday — about 10 minutes, on your phone
+
+1. **Needs you now → Review drafts.** Read every one; they go out under your
+   name. Approve or skip, then **Send approved**.
+2. **Replied — waiting on you.** Replies are read from the inbox automatically
+   and an answer is drafted. Read it, send it.
+3. **Said yes — waiting for payment.** Updates itself when Stripe sees the
+   payment. Tap **They paid** if it does not.
+4. **Fleet.** Any agent red twice in a row is today's first job.
+
+---
+
+## The gates
+
+Each gate opens when something happens, not on a date, and is paid for by the
+thing that opened it.
+
+| Gate | Opens when | Adds | Running cost |
+| --- | --- | --- | --- |
+| **0 — Prove the channel** | Tonight | Domain, mailbox, AI credits, server | $27 once, **$19.40/month** |
+| **1 — First client** | Someone pays | LLC (~$150), contract review (~$350), registered agent, accounting | $500 once, **$49.40/month** |
+| **2 — Three clients** | ~$2,000 a month | Insurance (E&O + liability), a second sending domain | **$147.40/month** |
+| **3 — Bringing someone on** | 4+ paying clients, or fixes piling up uninstalled | A fulfilment helper, paid per client | Scales with revenue |
+
+Six clients is the $5,000 target.
+
+---
+
+## Bringing someone on
+
+**Who first:** a *fulfilment* helper, not a salesperson. The time that grows
+with every client is installing the fixes on client websites, updating
+Google Business Profiles, listings and review requests. The system drafts all
+of it and gives a step-by-step guide per website platform; a careful helper
+can do the installing. Keep the sales conversations yourself until you have
+closed five or so and know what works — that is where you learn the business.
+
+**When:** four or more paying clients, or when the console keeps flagging
+clients whose fixes still are not live because you have not had the evenings.
+
+**How to pay:** a flat amount **per client per month** (for example $100), plus
+a one-off amount per new client set-up. Their pay then rises and falls with
+revenue, and at $997 a client you keep about 90%.
+
+**On paper:**
+
+- A written **contractor agreement**, signed by your LLC (gate 1 comes first):
+  scope, per-client rate, confidentiality, that the work belongs to you, and
+  that they will not take your clients.
+- Get a **W-9** from them before the first payment. If you pay them **$2,000 or
+  more in a year** (the threshold for payments from 2026 on), you file a
+  **1099-NEC** by 31 January.
+- Keep them a contractor for real: paid per result, their own hours, their own
+  computer. If you set their hours and how they work, the IRS can treat them
+  as an employee.
+
+**Access — only what the job needs:**
+
+| Thing | How they get in | Never |
 | --- | --- | --- |
-| Emails not delivered | DNS or reputation | Stop. Fix SPF/DKIM/DMARC. Re-warm. |
-| Delivered, no replies | Subject line or targeting | Rewrite the subject. Verify the audits show a real gap. |
-| Replies, no calls | The report isn't landing | Add competitor detail; lead with the gap. |
-| Calls, no closes | The pitch | Talk less. Show the test log. Ask for the card. |
+| Email | Their own Google Workspace seat (`name@yourdomain`, $8.40/month) | Your password or app password |
+| Client websites | The client invites them as their own user, with enough access to add code (on WordPress that means Administrator, because it takes a plugin), and removes it after the install | A client's password |
+| Google Business Profiles | The client adds them as a **Manager** | Owner access |
+| Stripe | Not needed. If ever, a team member with a limited role | The secret key |
+| The console | Not yet — see below | Your console link |
+| The server, `keys.env` | Not needed | Ever |
 
-Work the earliest broken step first. Fixing the pitch while emails are landing
-in spam wastes a month.
-
-## Ongoing weekly rhythm (post-launch)
-
-| Day | Task | Time |
-| --- | --- | --- |
-| Mon | Approve the week's outreach batch | 30 min |
-| Tue–Thu | Calls, replies, daily approvals | 45 min/day |
-| Fri | `dashboard`, review reports going out, adjust | 45 min |
-| — | Everything else | *The fleet* |
-
-**~5 hours/week once running.**
+**What the software does not do yet:** the console has one login, and whoever
+holds the link can do everything — approve cold email, mark clients paid,
+see the money. There are no per-person accounts and no record of who did
+what. Before a second person uses it, it needs a **helper login** that sees
+only the fulfilment work (which clients need what installed, their files and
+guides, whether it is live yet), and an **activity log**. Until that exists,
+send them the files and install guides by email instead.

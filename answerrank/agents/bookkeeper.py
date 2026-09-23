@@ -19,8 +19,10 @@ FIXED_COSTS = {
     "software": 49.0,    # accounting, e-sign, payment processing base fees
 }
 
-# Payment processor take. Stripe-style: 2.9% + $0.30 per charge.
-PROCESSOR_PCT = 0.029
+# Payment processor take: Stripe's 2.9% + $0.30 per card charge, plus the
+# 0.7% Stripe Billing adds to every subscription — and a recurring payment
+# link is a subscription.
+PROCESSOR_PCT = 0.036
 PROCESSOR_FLAT = 0.30
 
 

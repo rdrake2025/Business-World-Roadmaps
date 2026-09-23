@@ -180,6 +180,9 @@
   .sheet textarea{width:100%;box-sizing:border-box;min-height:88px;padding:11px;
     border-radius:11px;border:1px solid var(--rule2);background:var(--card);
     color:var(--ink);font-family:inherit;font-size:14px;line-height:1.5;resize:vertical}
+  .sheet input,.sheet select{width:100%;box-sizing:border-box;padding:11px;margin-bottom:8px;
+    border-radius:11px;border:1px solid var(--rule2);background:var(--card);
+    color:var(--ink);font-family:inherit;font-size:16px}
   .meter{display:flex;gap:6px;margin:10px 0 2px}
   .meter div{flex:1;text-align:center;background:var(--sunk);border-radius:9px;padding:8px 4px}
   .meter .mv{font-size:15px;font-weight:700}
@@ -266,6 +269,24 @@
              style="width:100%;padding:11px;border-radius:10px;border:1px solid var(--line);
                     background:var(--card);color:var(--ink);font-size:15px">
       <div id="findList"></div>
+      <div class="acts" style="margin-top:10px">
+        <button class="act" id="btnAddOpen">Add a business you know</button></div>
+      <template id="addForm">
+        <h3>Add a business you know</h3>
+        <div class="who">A pilot, a referral, a friend's firm. They are never sent
+          cold email — you have the conversation.</div>
+        <input id="addName" placeholder="Business name" autocomplete="off">
+        <input id="addCity" placeholder="Town or city" autocomplete="off">
+        <input id="addState" placeholder="State (e.g. TX)" maxlength="2" autocomplete="off">
+        <select id="addTrade">
+          {% for key, label in trades %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+        </select>
+        <input id="addSite" placeholder="Website (if they have one)" inputmode="url" autocomplete="off">
+        <input id="addEmail" placeholder="Their email — the welcome goes here" type="email" autocomplete="off">
+        <input id="addPhone" placeholder="Phone" type="tel" autocomplete="off">
+        <div class="acts" style="margin-top:10px">
+          <button class="act primary" id="btnAdd">Add them</button></div>
+      </template>
     </div>
     <div class="card">
       <h2>Replied — waiting on you</h2>
@@ -810,6 +831,30 @@
     }, 250);
   });
   $("repliedList").addEventListener("click", openProspect);
+
+  // A business the operator already knows — a pilot, a referral — has no
+  // prospect record for Sign them up to work on. This makes one, then opens
+  // it so signing them up is the next tap.
+  $("btnAddOpen").addEventListener("click", function(){
+    openSheet($("addForm").innerHTML);
+  });
+  $("sheetBody").addEventListener("click", function(e){
+    var btn = e.target.closest("#btnAdd");
+    if(!btn || busy) return;
+    var v = function(id){ return ($(id) && $(id).value || "").trim(); };
+    if(!v("addName") || !v("addCity")){ toast("A name and a town, at least"); return; }
+    busy = true; btn.disabled = true; btn.textContent = "Adding…";
+    api("/api/add", { name: v("addName"), city: v("addCity"), state: v("addState"),
+                      vertical: v("addTrade"), website: v("addSite"),
+                      email: v("addEmail"), phone: v("addPhone") })
+      .then(function(r){
+        if(r.error){ toast(r.error, 4500); return; }
+        toast(r.existing ? r.name + " was already here" : r.name + " added");
+        return api("/api/brief?id=" + encodeURIComponent(r.id)).then(prospectSheet);
+      })
+      .catch(function(){ toast("That didn't go through"); })
+      .then(function(){ busy = false; btn.disabled = false; btn.textContent = "Add them"; });
+  });
 
   $("clientList").addEventListener("click", function(e){
     var row = e.target.closest("[data-cid]");

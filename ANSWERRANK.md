@@ -570,7 +570,7 @@ the business rather than costing a day:
 | [Financial model](business/01_FINANCIAL_MODEL.md) | Unit economics, scenarios, path to $5k, tax reality |
 | [Sales playbook](business/02_SALES_PLAYBOOK.md) | Email sequence, the call, objections, pricing rules |
 | [Legal & compliance](business/03_LEGAL_COMPLIANCE.md) | Entity, CAN-SPAM, 2026 sender rules, contracts, claims |
-| [30-day launch checklist](business/04_LAUNCH_CHECKLIST.md) | Day-by-day to first revenue |
+| [Launch checklist](business/04_LAUNCH_CHECKLIST.md) | One evening of setup, what has to wait, the first month, bringing someone on |
 | [Operations manual](business/05_OPERATIONS.md) | Daily rhythm, systemd, backups, troubleshooting |
 | [Budget & schedule](business/06_BUDGET_AND_SCHEDULE.md) | Phased spending, runway, profit splits, quit threshold |
 | [Deployment](business/07_DEPLOYMENT.md) | Laptop, VPS, Docker, backups, monitoring |

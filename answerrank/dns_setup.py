@@ -72,7 +72,8 @@ class Provider:
 
 PROVIDERS: dict[str, Provider] = {
     "google": Provider(
-        key="google", label="Google Workspace", monthly_cost="about $7/user/month",
+        key="google", label="Google Workspace",
+        monthly_cost="$8.40/user/month month to month, $7 on a yearly plan",
         spf_include="include:_spf.google.com",
         dkim_selectors=("google",),
         mx=((1, "smtp.google.com"),),
@@ -82,7 +83,11 @@ PROVIDERS: dict[str, Provider] = {
                    "Authenticate email → Generate new record (choose 2048-bit)",
         app_password_where="myaccount.google.com/apppasswords "
                            "(2-step verification must be on first)",
-        notes=("The most forgiving option for a new sender: Gmail-to-Gmail "
+        notes=("DKIM can only be generated 24-72 hours after Gmail is switched "
+               "on for a new account. If Generate new record fails or is "
+               "missing, that is why — add the other records now and come "
+               "back for DKIM.",
+               "The most forgiving option for a new sender: Gmail-to-Gmail "
                "delivery starts from a position of trust.",
                "You also get the inbox itself, which the Concierge can poll "
                "for replies."),
