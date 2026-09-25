@@ -32,18 +32,21 @@ except ImportError:  # pragma: no cover
 PHASES: dict[str, dict[str, Any]] = {
     "0_test": {
         "label": "Phase 0 — Prove the channel",
-        "trigger": "Start here. Before any entity, insurance, or server.",
+        "trigger": "Start here. Before any entity or insurance.",
         "one_time": {
             "sending domain (1 yr)": 12.0,
             "API credits float": 15.0,
         },
         "monthly": {
-            "Google Workspace (1 seat)": 7.20,
+            "Google Workspace (1 seat, month to month)": 8.40,
             "domain amortised": 1.00,
             "API usage": 4.00,
+            "server for the unsubscribe link + 24/7 fleet": 6.00,
         },
         "notes": [
-            "Run the fleet on your laptop. A VPS is not needed yet.",
+            "The $6 server is needed before the first email, not after the first "
+            "client: every email's unsubscribe link has to work from the public "
+            "internet, and a laptop cannot serve it. See deploy/SERVER.md.",
             "No LLC yet. Sole proprietor is legal to test with; form the entity "
             "when money is actually coming in.",
             "A full 10-prompt audit costs about $0.06, so $15 of credit covers "
@@ -59,7 +62,6 @@ PHASES: dict[str, dict[str, Any]] = {
         },
         "monthly": {
             "registered agent": 15.0,
-            "VPS for 24/7 fleet": 6.00,
             "accounting software": 15.00,
         },
         "notes": [

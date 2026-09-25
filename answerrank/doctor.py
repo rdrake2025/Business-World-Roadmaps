@@ -72,13 +72,14 @@ def check_config(settings: Settings) -> Check:
 
 
 def check_address(settings: Settings) -> Check:
+    from .keys import address_is_real
     addr = settings.physical_address or ""
-    if addr and "SET_YOUR" not in addr and len(addr) > 12:
+    if address_is_real(addr):
         return Check("CAN-SPAM postal address", PASS, addr[:46], blocking=True)
     return Check(
         "CAN-SPAM postal address", FAIL, "not configured",
-        "Set `physical_address` in answerrank.yml. Legally required in every "
-        "commercial email. A registered agent address works.",
+        "Double-click KEYS.bat — it asks for it. Legally required in every "
+        "commercial email. A USPS PO Box or virtual mailbox address works.",
         blocking=True)
 
 

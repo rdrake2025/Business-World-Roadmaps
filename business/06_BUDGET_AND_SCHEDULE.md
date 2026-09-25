@@ -17,26 +17,28 @@ So the spending is staged, and **each stage is paid for by the one before it.**
 
 | Phase | Trigger | One-time | Monthly |
 | --- | --- | --- | --- |
-| **0 — Prove the channel** | Start here | **$27** | **$12.20** |
-| 1 — First client signed | A client has paid | $500 | $36 |
+| **0 — Prove the channel** | Start here | **$27** | **$19.40** |
+| 1 — First client signed | A client has paid | $500 | $30 |
 | 2 — Three or more clients | ~$2,000 MRR | $0 | $98 |
 
-### Phase 0 in full — $27 once, $12.20/month
+### Phase 0 in full — $27 once, $19.40/month
 
 | Item | Cost |
 | --- | --- |
 | Sending domain (1 year) | $12 one-time |
 | API credits float | $15 one-time |
-| Google Workspace, 1 seat | $7.20/mo |
+| Google Workspace, 1 seat (month to month) | $8.40/mo |
 | Domain amortised | $1.00/mo |
 | API usage | ~$4.00/mo |
+| Server (unsubscribe link + 24/7 fleet) | $6.00/mo |
 
 **What you deliberately do NOT buy yet:**
 
 - **No LLC.** You can legally test as a sole proprietor. Form the entity when
   money is actually coming in — the first client pays for it.
-- **No VPS.** Run the fleet on your laptop. You are approving outreach by hand
-  anyway, so you are sitting at it.
+- The **$6 server is not optional**, even at zero clients: every email's
+  unsubscribe link must work from the public internet, and a laptop cannot
+  serve it. `deploy/SERVER.md` sets it up without typing commands on it.
 - **No insurance, no logo, no CRM, no paid ads, no email tool.**
 
 A full 10-prompt, 4-engine audit costs about **$0.06**, so $15 of API credit
@@ -58,7 +60,7 @@ On $2,500 take-home with $250 rent, a realistic monthly picture:
 | **Total living costs** | **$1,170** |
 | **Disposable** | **$1,330/month** |
 
-Against a $12.20/month burn, your disposable income covers the business **109
+Against a $19.40/month burn, your disposable income covers the business **68
 times over**. This never touches savings, and there is no realistic scenario
 where Phase 0 puts you under financial pressure.
 
@@ -78,7 +80,7 @@ anything. For anything you pay for outside the system:
 
 ```bash
 python3 run.py expense domain 12 --note "sending domain, 1yr"
-python3 run.py expense software 7.20 --note "google workspace"
+python3 run.py expense software 8.40 --note "google workspace"
 python3 run.py expense api 15 --note "initial credit float"
 
 python3 run.py dashboard    # see the 30-day cost breakdown

@@ -109,32 +109,30 @@ class Event:
 # The recurring operating rhythm
 # ---------------------------------------------------------------------------
 
-MORNING_OPS = """Your 20 minutes that keep the business moving.
+MORNING_OPS = """Your 10 minutes that keep the business moving. All on the phone.
 
-1. python3 run.py agents
-   -> any ERR twice in a row? investigate before anything else.
+Open the console (the link the server setup gave you, on your home screen).
 
-2. python3 run.py inbox --full
-   -> READ every draft. They go out under your name.
+1. Needs you now -> Review drafts. READ every one: they go out under
+   your name. Approve or Skip, then tap Send approved.
 
-3. python3 run.py approve
-   python3 run.py send --limit 40
+2. Replied - waiting on you. Anything here beats everything else today.
 
-4. Check the reply inbox. Anything in there beats everything else today.
+3. Said yes - waiting for payment. Tap They paid when the money lands
+   (it happens by itself if the Stripe key is saved).
+
+4. Fleet. Any agent red twice in a row? That is today's first job.
 
 If you only ever do this one block, the business still runs."""
 
 LUNCH_CHECK = """10 minutes. Replies only.
 
-Answer anyone who responded. Speed matters more than polish -
-a reply inside an hour converts far better than a perfect one tomorrow.
+Console -> Replied - waiting on you. The Concierge has already drafted
+an answer to each one, and the report email for anyone who asked for it.
+Read it, change anything that doesn't sound like you, approve, send.
 
-If they asked for the report:
-  python3 run.py audit "<Business>" <City> --state <ST> \\
-      --vertical <vertical> --website <url> --report
-
-Send it with one line: "Here it is - happy to walk you through it,
-20 minutes this week?" """
+Speed matters more than polish - a reply inside an hour converts far
+better than a perfect one tomorrow."""
 
 SALES_WINDOW = """Owners of home service businesses are reachable now -
 off the tools, not yet at dinner. This is the best calling window you have.
@@ -144,21 +142,23 @@ Per business/02_SALES_PLAYBOOK.md:
   2-8 min   Share the report. Walk the test log. Stop at the competitor row.
             THEN SAY NOTHING. Let the silence work.
   8-12 min  The three causes: schema, answer-shaped content, GBP + citations.
-  12-15 min The offer. $997/mo. Ask for the card ON THE CALL.
+  12-15 min The offer. $997/mo. Send the payment link while you're talking.
 
 Do not offer to "send a proposal". That is where these deals die.
 
-Closed one?  python3 run.py win "<Business>" --plan growth"""
+Closed one? Console -> Got a reply? Find them -> Sign them up -> plan.
+The payment link goes out; the work starts the day they pay."""
 
 DEEP_WORK = """Two hours. The only long block in your week - protect it.
 
-1. python3 run.py dashboard
-   Where are you against $5k? Which funnel step is weakest?
+1. Console -> Open the money view. Where are you against $5k?
+   Which funnel step is weakest?
 
-2. python3 run.py prospects --stage audited --limit 30
-   Top up the list if it is thinning.
+2. By stage: is the pile of audited prospects thinning? The Explorer
+   tops it up by itself - check that it has.
 
-3. Review any client report that went out. Would YOU pay $997 for it?
+3. Open one client report that went out this week. Would YOU pay $997
+   for it? Health - worst first: anything red gets a phone call.
 
 4. Fix the weakest funnel number - and only that one:
      not delivered  -> DNS/reputation. Stop sending. Fix SPF/DKIM/DMARC.
@@ -166,20 +166,21 @@ DEEP_WORK = """Two hours. The only long block in your week - protect it.
      no calls       -> report is not landing. Lead with the competitor gap.
      no closes      -> talk less, show the test log, ask for the card.
 
-5. Ten minutes: write down what you learned about your vertical this week.
+5. Ten minutes: write down what you learned about your trade this week.
    That accumulates into the expertise you sell."""
 
 MONTHLY_CLOSE = """Monthly close - 45 minutes. Do not skip this one.
 
-1. python3 run.py dashboard
-   python3 run.py budget
+1. Console -> money view. On the laptop:  python run.py budget
 
-2. Reconcile the ledger against your bank and Stripe.
+2. Check the ledger against your bank and Stripe. Stripe pays out to
+   your bank a few days after each charge; the first payout takes
+   7-14 days.
 
 3. MOVE 30% OF PROFIT TO THE TAX ACCOUNT. Today, not later.
    Money that sits in the main account gets spent.
 
-4. python3 run.py budget --profit <this month's profit>
+4. python run.py budget --profit <this month's profit>
    Follow the split it gives you.
 
 5. Any client whose score is flat two months running: call them.
@@ -187,14 +188,16 @@ MONTHLY_CLOSE = """Monthly close - 45 minutes. Do not skip this one.
 
 6. Re-read one report you sent as if you were the client."""
 
-WARMUP = """10 minutes. Keep the sending domain warming.
+WARMUP = """10 minutes. Warm the new mailbox by hand.
 
-Send 5-10 real, personal emails from the sending address today - to
-yourself, to friends, to anyone who will reply. Replies are the signal
-that builds reputation.
+Send 5-10 real, personal emails from the new address today - to
+yourself, to friends, to anyone who will write back. Replies are what
+build a new domain's reputation.
 
-Do NOT start cold outreach until day 18. Sending cold from a cold domain
-burns it permanently, and a burned domain is abandoned, not repaired."""
+No cold email goes out until DKIM is on and the doctor is clean - the
+system will not let it. From the first send it starts at 10 a day and
+climbs to 100 over about a month by itself. Do not raise that: a burned
+domain is abandoned, not repaired."""
 
 REST = """Deliberately empty.
 
@@ -267,161 +270,133 @@ def recurring_events(start: date, ops_from: date | None = None,
 #: evening. A sequential allocator assigns real dates so tasks never collide,
 #: never reorder, and never land on the Sunday rest day.
 LAUNCH: list[tuple[int, str, int, str]] = [
-    (0, "LAUNCH 1: Install and prove it works", 120, """Nothing costs money today.
+    (0, "LAUNCH 1: Mailbox and DNS", 60, """Setup, part one. The full list is business/04_LAUNCH_CHECKLIST.md.
 
-1. git clone the repo onto your laptop
-2. pip install -r requirements.txt
-3. python3 -m unittest discover -s tests     (expect 43 passing)
-4. python3 run.py tick --force               (watch the fleet run)
-5. python3 run.py budget-init                (then edit budget.yml with
-   YOUR real numbers - guesses give you a runway you cannot trust)
+1. workspace.google.com -> Business Starter, 1 user, on your SENDING
+   domain (buy one there if you have none - never your main domain).
+   Make hello@yourdomain and verify the domain when it asks.
+2. Double-click SETUP-DOMAIN.bat. Type the domain, pick Google. Paste
+   the MX, SPF and DMARC rows it prints at your registrar.
+3. DKIM will NOT be ready tonight. Google only lets you make the key
+   24-72 hours after Gmail is switched on. That is LAUNCH 4.
+4. myaccount.google.com -> Security -> 2-Step Verification ON. Then
+   myaccount.google.com/apppasswords -> make one called Mail.
+   Copy the 16 letters.
 
-6. Audit three businesses you personally know:
-   python3 run.py audit "<Name>" <City> --state <ST> --vertical hvac \\
-       --website <url> --report
+Spend so far: domain ~$12/yr, Workspace $8.40/mo (14 days free)."""),
 
-READ THOSE REPORTS CRITICALLY. Would you pay $997/mo for that?
-If not, that is today's real work - fix it before a stranger sees one."""),
+    (0, "LAUNCH 2: Stripe, AI credits, keys", 60, """Setup, part two.
 
-    (0, "LAUNCH 2: Pick your vertical and market", 90, """Decide, then commit. Specificity is what makes the email land.
+1. stripe.com -> sign up -> Activate payments (business details, bank
+   account for payouts). Sole proprietor is fine.
+2. Product catalogue -> three products, each a RECURRING monthly price:
+   Starter $499, Growth $997, Managed $1,997.
+   Payment Links -> New -> one link per price. Copy each.
+3. Developers -> API keys -> Create restricted key:
+   Checkout Sessions = Read, Subscriptions = Read, everything else None.
+   It starts rk_. Never paste the sk_ secret key anywhere.
+4. platform.openai.com -> Billing -> add $15. API keys -> new key.
+5. Double-click KEYS.bat. It asks for all of it in plain words: the
+   mailbox, the app password, the AI key, the Stripe key, the three
+   payment links and your postal address - then tests the mailbox.
 
-Pick ONE vertical: hvac, plumbing, roofing, dental, or legal.
-Pick 2-3 metros. Mid-size beats huge - less competition, same budgets.
+The postal address goes at the foot of every email. A USPS PO Box or a
+virtual mailbox keeps your home address off them."""),
 
-Suggested: HVAC. Highest urgency, highest ticket ($6-12k jobs),
-and the worst AI visibility of any vertical tested.
+    (0, "LAUNCH 3: Server and phone console", 45, """Setup, part three. deploy/SERVER.md has every screen.
 
-Then run 20 audits in it and look for the pattern:
-what do the VISIBLE businesses have that the invisible ones don't?
+1. In the project folder (where start.bat is):
+     python run.py server-script --domain yourdomain.com
+   SAVE the console link it prints. It is your login.
+2. digitalocean.com -> Create -> Droplets -> Ubuntu 24.04, Basic,
+   $6/month. Advanced Options -> Add Initialization scripts -> paste
+   the whole server-setup file. Create. Note the IP address.
+3. At your registrar: A record, name @, value = that IP address.
+4. After ~15 minutes open the console link on your phone and Add to
+   Home Screen. Delete the server-setup file from the laptop.
+5. python run.py doctor. Expect DKIM to be the only thing still red."""),
 
-Write that down. That is your expertise, and it is what you say on calls."""),
+    (2, "LAUNCH 4: DNS - turn on DKIM", 20, """24-72 hours after Gmail was switched on.
 
-    (3, "LAUNCH 3: Buy the sending domain ($12)", 45, """First money spent. Twelve dollars.
+1. admin.google.com -> Apps -> Google Workspace -> Gmail ->
+   Authenticate email -> Generate new record -> 2048-bit.
+2. Paste it at your registrar as a TXT record (SETUP-DOMAIN.bat shows
+   the exact name and value).
+3. Wait an hour, then back in Google Admin -> Start authentication.
+   It can take up to 48 hours to show as authenticating.
+4. Double-click SETUP-DOMAIN.bat again until it says ready.
+   python run.py doctor - everything green means you can send.
 
-1. Buy a SEPARATE sending domain - never your main one.
-   If it burns, your real domain and client email survive.
-   Pattern: <brand>-mail.com, get<brand>.com, <brand>hq.com
+Until then: send a few real emails a day from the new address."""),
 
-2. Set up Google Workspace Business Starter ($7.20/mo, 1 seat).
-   You need real authenticated sending, not a free inbox.
+    (3, "LAUNCH 5: Line up 2-3 pilots", 45, """Nothing sells this service like a real before-and-after.
 
-Running total: $12 one-time, $7.20/mo. That is the whole spend so far."""),
+Think of 2-3 local trades businesses you or someone you know can reach
+directly - a friend's plumber, a cousin's roofing crew. Offer:
+"Free for three months, in return for letting me measure it and
+write it up."
 
-    (4, "LAUNCH 4: DNS - SPF, DKIM, DMARC", 60, """The most important hour of the whole launch.
+Console -> Pipeline -> Add a business you know. Then Sign them up ->
+Free pilot. It starts at once, costs them nothing, and they are never
+sent cold email. After 45 days, open Before & after on their client
+card. It tells you honestly whether there is anything worth publishing.
 
-In your domain's DNS:
-  SPF    TXT  @         v=spf1 include:_spf.google.com ~all
-  DKIM   TXT  (Google Admin generates this - enable it and paste)
-  DMARC  TXT  _dmarc    v=DMARC1; p=quarantine; rua=mailto:you@domain
+These don't need the cold-email channel, so they can start today."""),
 
-p=none is NOT enough in 2026. It must be quarantine or reject.
+    (4, "LAUNCH 6: Pick your trade and market", 90, """Decide, then commit. Specificity is what makes the email land.
 
-Verify:
-  dig +short TXT yourdomain.com
-  dig +short TXT _dmarc.yourdomain.com
+Pick ONE trade and 2-3 mid-size metros - less competition than the big
+cities, same budgets. HVAC has the highest urgency and the worst AI
+visibility; the system knows 22 trades if you'd rather another.
 
-Compliant senders see ~89% inbox placement. Non-compliant see 22-34%
-filtered or rejected outright. This hour is the difference.
+Double-click SIMULATE.bat once (nothing real is sent) to watch a month
+of the business run end to end.
 
-WARMUP STARTS TOMORROW and runs two weeks. It gates everything else."""),
+Then open three audits on the console and read them critically.
+Would you pay $997/mo for that? If not, say what's wrong - that is
+the most useful thing you can do this week."""),
 
-    (5, "LAUNCH 5: API keys + first real audits", 45, """Put $15 of credit on the APIs. It goes further than you expect -
-a full 10-prompt, 4-engine audit costs about $0.06.
+    (5, "LAUNCH 7: FIRST SEND", 30, """The day the doctor is all green. Not before.
 
-  export OPENAI_API_KEY=...
-  export ANTHROPIC_API_KEY=...
-  export SERPER_API_KEY=...        (free tier is plenty to start)
+  Console -> Needs you now -> Review drafts. READ ALL OF THEM.
+  Approve the ones you'd put your name to. Send approved.
 
-Then re-run an audit and compare it to the simulated one from day 1.
-This is the first time you see REAL data about a real business.
-
-Running total: $27 one-time, $12.20/mo."""),
-
-    (6, "LAUNCH 6: Build the prospect list", 120, """Target 200-300 qualified prospects in your vertical and metros.
-
-  python3 run.py tick --force
-  python3 run.py prospects
-
-Qualification bar - all four must be true:
-  1. Visibility score under 55       (there is a real problem)
-  2. A competitor is beating them    (there is a real threat)
-  3. They have a website             (there is something to fix)
-  4. They already spend on marketing (truck wraps, ads, real GBP)
-
-Number 4 you check by hand. A business with no website and no marketing
-spend is not a cheap client - it is a client who never pays.
-
-Let the auditor run overnight."""),
-
-    (7, "LAUNCH 7: One-page site + unsubscribe", 120, """Keep it to one page. A logo is not what closes a $997 deal.
-
-  - What it is, who it is for, the three tiers, a booking link
-  - Privacy policy and terms (templates are fine)
-  - THE UNSUBSCRIBE ENDPOINT AT /unsubscribe
-
-That last one is legally required and blocks sending until it works.
-Wire it to the suppression list.
-
-Free hosting is fine: GitHub Pages, Netlify, Cloudflare Pages."""),
-
-    (9, "LAUNCH 8: Stripe + booking link", 45, """  - Stripe account, verified
-  - Payment links for all four tiers: $297, $499, $997, $1997
-  - A calendar booking link (Cal.com free tier works)
-
-Put the booking link in your email signature today."""),
-
-    (13, "LAUNCH 9: Mid-warmup check", 30, """Halfway through warmup.
-
-  python3 run.py send --dry-run
-
-Confirm: DNS passes, no preflight errors, physical address set in
-answerrank.yml. If anything is red, fix it now - you send in four days.
-
-Still warming. Do not start cold outreach yet."""),
-
-    (17, "LAUNCH 10: FIRST SEND - 20 emails", 60, """The business starts today.
-
-  python3 run.py send --dry-run     (confirm clean)
-  python3 run.py inbox --full       (READ ALL 20. Every word.)
-  python3 run.py approve
-  python3 run.py send --limit 20
-
-Twenty. Not two hundred.
+The system sends 10 today and climbs by itself: 20 from day 4, 40 from
+day 8, 70 from day 15, 100 from day 22. Do not raise it.
 
 The first 50 emails are a test, not a campaign. If nobody replies, the
-problem is the subject line or the targeting - not the volume. Find that
-out for 50 emails, not 500."""),
+problem is the subject line or the targeting - not the volume."""),
 
-    (18, "LAUNCH 11: Ramp to 40/day", 30, """  python3 run.py send --limit 40
-
-Watch two numbers daily from here:
+    (8, "LAUNCH 8: First-week check", 30, """Two numbers, every day from now on:
   bounces    must stay under 2%
   complaints must stay under 0.1%
 
-Either one drifts up -> STOP SENDING. Verify the list. Re-warm.
-Deliverability is the one resource you cannot buy back."""),
+The system pauses cold sending by itself if bounces reach 2%. Complaints
+it cannot measure, so watch for them: an angry reply or a spam report
+means slow down and look at who you are emailing. Deliverability is the
+one thing you cannot buy back.
 
-    (21, "LAUNCH 12: Ramp to 60-100/day", 30, """  python3 run.py send --limit 60
+Replies should be starting. Every one gets an answer within two hours
+during the day. The Concierge drafts it; you read it and send."""),
 
-Replies should be appearing by now. Every reply gets an answer within
-two hours during the day.
+    (14, "LAUNCH 9: Deliver to anyone who said yes", 60, """Someone signed? Here is the whole of it:
 
-Expected at this point: 1-3% reply rate. On 200 sent, that is 2-6 replies."""),
+1. They pay through the link. The console moves them to active (or tap
+   They paid).
+2. Approve the welcome email THE SAME DAY. The gap between paying and
+   hearing from you is where second thoughts live.
+3. The Fixer drafts their files and a step-by-step install guide for
+   their website platform. Send it, or install it for them.
+4. The site check tells you when the fixes are really live on their
+   site. The monthly report goes out by itself.
 
-    (24, "LAUNCH 13: Deliver to anyone who said yes", 90, """Send the full report to everyone who asked, and offer the 20-minute call.
+Review the first three clients' reports by hand before they go."""),
 
-  python3 run.py audit "<Business>" <City> --state <ST> \\
-      --vertical <v> --website <url> --report
+    (28, "LAUNCH 10: Diagnose, do not guess", 120, """Thirty days. Be honest about the numbers.
 
-Review the report by hand before it goes. Every time, for your first
-three prospects. After that, trust the fleet."""),
+Console -> money view.
 
-    (28, "LAUNCH 14: Diagnose, do not guess", 120, """Thirty days. Be honest about the numbers.
-
-  python3 run.py dashboard
-  python3 run.py budget
-
-Targets:   250 audited / 400 sent / 8-15 replies / 4-8 calls / 2-3 clients
+Targets:    250 audited / 400 sent / 8-15 replies / 4-8 calls / 2-3 clients
 Acceptable: 150 audited / 250 sent / 4 replies   / 2 calls   / 1 client
 
 ONE client by day 30 puts you on the pessimistic curve - which still

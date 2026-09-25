@@ -179,7 +179,9 @@ class Application:
     # ------------------------------------------------------------ console
 
     def console(self, environ, start):
-        body = render("console.html")
+        from answerrank import knowledge
+        body = render("console.html", trades=[(key, knowledge.get(key).label)
+                                              for key in knowledge.VERTICALS])
         headers = [
             ("Content-Type", "text/html; charset=utf-8"),
             ("Content-Length", str(len(body))),
@@ -330,6 +332,12 @@ class Application:
         d = self._body_json(environ)
         return self._json(start, self.api.mark_paid(str(d.get("id", ""))))
 
+    def api_add(self, environ, start):
+        d = self._body_json(environ)
+        return self._json(start, self.api.add_business(
+            **{k: str(d.get(k, "")) for k in ("name", "city", "state", "vertical",
+                                               "website", "email", "phone")}))
+
     def api_expense(self, environ, start):
         d = self._body_json(environ)
         return self._json(start, self.api.log_expense(
@@ -439,6 +447,7 @@ class Application:
             "/api/forecast": self.api_forecast,
             "/api/win": self.api_win,
             "/api/paid": self.api_paid,
+            "/api/add": self.api_add,
             "/api/expense": self.api_expense,
             "/api/markets": self.api_markets,
             "/api/research": self.api_research,

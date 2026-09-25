@@ -625,6 +625,64 @@ class Api:
                 "total_mrr": round(self.store.mrr(), 2),
                 "next": "Welcome email is drafted on the next cycle."}
 
+    #: Where a prospect already is in the cold sequence. Adding someone you
+    #: know by hand takes them out of it.
+    _COLD_STAGES = {"discovered", "audited", "queued", "contacted", "following_up"}
+
+    def add_business(self, name: str, city: str, state: str = "", vertical: str = "",
+                     website: str = "", email: str = "", phone: str = "") -> dict[str, Any]:
+        """A business the operator knows — a pilot, a referral, a friend's firm.
+
+        Every prospect used to come from the Scout, so the first clients the
+        launch plan calls for, the two or three pilots found through people
+        the operator knows, could not be signed up: Sign them up works on a
+        prospect, and there was no way to make one. They go straight to
+        ``replied``, the stage where a person has the conversation, so the
+        outreach agents never send them a cold email.
+        """
+        from answerrank import knowledge
+        from answerrank.models import Business, Prospect
+
+        name, city = (name or "").strip(), (city or "").strip()
+        if not name or not city:
+            return {"error": "a name and a town are needed"}
+        vertical = (vertical or "").strip().lower() or "hvac"
+        if vertical not in knowledge.VERTICALS:
+            return {"error": f"unknown trade {vertical!r}"}
+        website = (website or "").strip()
+        if website and not website.startswith(("http://", "https://")):
+            website = "https://" + website
+        email = (email or "").strip()
+        if email and "@" not in email:
+            return {"error": f"{email!r} is not an email address"}
+
+        biz = Business(name=name, city=city, state=(state or "").strip().upper()[:2],
+                       vertical=vertical, website=website, email=email,
+                       phone=(phone or "").strip())
+        existing = next((p for p in self.store.get_prospects(limit=10_000)
+                         if (biz.domain and p.business.domain == biz.domain)
+                         or (p.business.name.lower() == name.lower()
+                             and p.business.city.lower() == city.lower())), None)
+        if existing is not None:
+            if existing.stage == "won":
+                return {"error": f"{existing.business.name} is already a client"}
+            if existing.stage == "suppressed":
+                return {"error": f"{existing.business.name} asked not to be emailed, "
+                                 f"or their address bounced. Talk to them first."}
+            if existing.stage in self._COLD_STAGES:
+                self.store.withdraw_cold(existing.id)
+                existing.stage = "replied"
+                existing.notes = (existing.notes or "") + " | added by hand: someone you know"
+                self.store.upsert_prospect(existing)
+            return {"ok": True, "id": existing.id, "name": existing.business.name,
+                    "stage": existing.stage, "existing": True}
+
+        prospect = Prospect(business=biz, stage="replied",
+                            notes="added by hand: someone you know")
+        self.store.upsert_prospect(prospect)
+        return {"ok": True, "id": prospect.id, "name": biz.name,
+                "stage": prospect.stage, "existing": False}
+
     def log_expense(self, category: str, amount: float, description: str = "",
                     revenue: bool = False) -> dict[str, Any]:
         """Record money in or out without opening a terminal."""

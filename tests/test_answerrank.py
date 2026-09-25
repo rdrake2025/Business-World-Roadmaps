@@ -820,6 +820,21 @@ class TestConsoleAuth(unittest.TestCase):
         status, _h, _b = self.call("/api/state", cookie=self.cookie())
         self.assertTrue(status.startswith("200"))
 
+    def test_the_console_can_add_a_business_you_know(self):
+        status, _h, page = self.call("/app", cookie=self.cookie())
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"Add a business you know", page)
+        self.assertIn(b'<option value="plumbing">', page, "every trade is offered")
+        _s, _h, raw = self.call("/api/add", method="POST", cookie=self.cookie(),
+                                body={"name": "Hill Plumbing", "city": "Waco",
+                                      "state": "tx", "vertical": "plumbing",
+                                      "website": "hillplumbing.com"})
+        added = json.loads(raw)
+        self.assertTrue(added["ok"])
+        _s, _h, raw = self.call("/api/brief", qs="id=" + added["id"], cookie=self.cookie())
+        self.assertEqual(json.loads(raw)["prospect_id"], added["id"],
+                         "the sheet that opens next has Sign them up on it")
+
     def test_forged_cookie_rejected(self):
         status, _h, _b = self.call("/api/state", cookie="ar_session=forged")
         self.assertTrue(status.startswith("401"))
@@ -4345,6 +4360,46 @@ class TestGettingPaid(_Biz):
         self.assertEqual(top.band, "act_now")
         self.assertIn("card", top.action)
 
+    def test_a_pilot_you_know_can_be_added_and_signed(self):
+        """Every prospect came from the Scout, so the pilots the launch plan
+        starts with — people the operator knows — could not be signed up."""
+        from answerrank.agents.outreach import OutreachAgent
+        api = self._api()
+        added = api.add_business("Hill Plumbing", "Waco", "tx", "plumbing",
+                                 "hillplumbing.com", "joe@hillplumbing.com", "")
+        self.assertEqual(added["stage"], "replied")
+        prospect = self.store.prospect_for_business(
+            Business(name="Hill Plumbing", city="Waco", website="https://hillplumbing.com"))
+        self.assertIsNotNone(prospect)
+        self.assertEqual(prospect.business.state, "TX")
+        OutreachAgent(self.store, self.settings).execute()
+        self.assertFalse(any(m.kind == "cold" for m in self.store.messages_for(added["id"])),
+                         "someone you know is never sent a cold email")
+        won = api.win(added["id"], "pilot")
+        self.assertEqual(won["status"], "active")
+
+    def test_adding_someone_already_in_the_cold_sequence_takes_them_out(self):
+        prospect = self._prospect(stage="contacted")
+        self.store.save_message(OutreachMessage(
+            prospect_id=prospect.id, subject="Quick question", body="x", kind="cold",
+            sequence_step=2, status="drafted"))
+        api = self._api()
+        added = api.add_business("Ridge Electric", "Austin", "TX", "electrical",
+                                 "https://www.ridgeelectric.com/")
+        self.assertTrue(added["existing"])
+        self.assertEqual(added["id"], prospect.id)
+        self.assertEqual(added["stage"], "replied")
+        self.assertFalse(any(m.kind == "cold" and m.status == "drafted"
+                             for m in self.store.messages_for(prospect.id)))
+        api.win(prospect.id, "pilot")
+        self.assertIn("error", api.add_business("Ridge Electric", "Austin"))
+
+    def test_adding_needs_a_name_town_and_real_trade(self):
+        api = self._api()
+        self.assertIn("error", api.add_business("", "Waco"))
+        self.assertIn("error", api.add_business("Hill Plumbing", "Waco", vertical="wizardry"))
+        self.assertIn("error", api.add_business("Hill Plumbing", "Waco", email="not-an-email"))
+
     def test_a_pilot_is_free_and_starts_now(self):
         prospect = self._prospect()
         won = self._api().win(prospect.id, "pilot")
@@ -4381,6 +4436,38 @@ class TestKeysLiveSomewhereReal(unittest.TestCase):
         s = load_settings(cfg)
         self.assertEqual(s.payment_links["growth"], "https://buy.stripe.com/g")
         self.assertEqual(s.outreach.max_followups, 3)
+
+    def test_the_keys_setup_asks_for_the_postal_address(self):
+        """Sending is blocked without it, and the only other way to set it
+        was editing YAML by hand."""
+        from answerrank import keys
+        from answerrank.config import load_settings
+        d = pathlib.Path(tempfile.mkdtemp())
+        cfg = d / "a.yml"
+        cfg.write_text('brand: X\n# keep me\nphysical_address: "SET_YOUR_REGISTERED_'
+                       'BUSINESS_ADDRESS"\n', encoding="utf-8")
+        settings = load_settings(cfg)
+        settings.email_provider = "google"
+        answers = iter(["hello@x.com", "", "PO Box 12, Austin, TX 78701",
+                        "", "", "", ""])
+        with unittest.mock.patch.dict(os.environ, {"ANSWERRANK_CONFIG": str(cfg)}):
+            keys.interactive(settings, d / "keys.env",
+                             ask=lambda prompt: next(answers, ""),
+                             ask_secret=lambda prompt: "", say=lambda *a: None)
+        text = cfg.read_text(encoding="utf-8")
+        self.assertIn("# keep me", text)
+        self.assertEqual(load_settings(cfg).physical_address, "PO Box 12, Austin, TX 78701")
+        self.assertEqual(text.count("physical_address:"), 1)
+
+    def test_a_too_short_address_is_not_saved(self):
+        from answerrank import keys
+        self.assertFalse(keys.address_is_real("Austin"))
+        self.assertFalse(keys.address_is_real("SET_YOUR_REGISTERED_BUSINESS_ADDRESS"))
+        d = pathlib.Path(tempfile.mkdtemp())
+        cfg = d / "a.yml"
+        keys.set_setting("physical_address", 'Suite "B", 1 Main St, Austin TX', cfg)
+        from answerrank.config import load_settings
+        self.assertEqual(load_settings(cfg).physical_address, 'Suite "B", 1 Main St, Austin TX')
 
     def test_private_files_are_never_committed(self):
         """A comment on the same line as a pattern becomes part of it, which
