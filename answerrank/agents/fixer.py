@@ -158,26 +158,32 @@ def gbp_checklist(biz: Business, audit: Audit | None) -> str:
 
     return f"""# Google Business Profile action list — {biz.name}
 {weakest}
-Google's local pack is the single largest input to AI Overviews for local
-service intent. Every item below is a direct input to that pack.
+Profile signals are the biggest single group of local ranking factors, and
+the primary category is the strongest one of all (Whitespark, 2026 Local
+Search Ranking Factors). Every item below feeds Google's map results, which
+Google's AI answers draw on.
 
 ## This week
 - [ ] Set the primary category to the most specific option available ({meta['label']}).
+      This is the single strongest local factor.
 - [ ] Add every secondary category that matches a real service: {jobs}.
 - [ ] Fill the "Services" section with one entry per job above, each with a
       2-3 sentence description that names {biz.city} explicitly.
 - [ ] Confirm hours, including a specific emergency/after-hours entry if offered.
+      "Open at the time of search" is a top-five factor.
 - [ ] Upload 10+ geotagged photos of real jobs (not stock imagery).
 
 ## This month
 - [ ] Publish one GBP post per week answering a real customer question.
-- [ ] Request reviews from the last 20 completed jobs. Target 10+ new reviews.
+- [ ] Request reviews from the last 20 completed jobs, a few at a time.
 - [ ] Reply to 100% of reviews, positive and negative, within 48 hours.
       Replies are indexed text and frequently quoted by assistants.
 - [ ] Add a Q&A section seeded with the questions in the FAQ deliverable.
 
 ## Ongoing — the compounding work
-- [ ] Maintain a review velocity of 5+ per month. Velocity outranks total count.
+- [ ] A new review at least every two weeks. 74% of customers look only at the
+      last three months and 32% want one from the last two weeks; 68% won't
+      consider a business under 4 stars (BrightLocal, 2026). Recency beats count.
 - [ ] Keep NAP (name, address, phone) byte-identical across every directory.
       Inconsistent NAP is the most common cause of a business being skipped.
 - [ ] Post seasonal service updates ahead of demand spikes.
@@ -185,6 +191,8 @@ service intent. Every item below is a direct input to that pack.
 
 
 def citation_gaps(biz: Business) -> str:
+    curated = ["Expertise.com (nominate)", "Three Best Rated (nominate)",
+               "Local 'best of' articles for the city (ask to be considered)"]
     general = ["Google Business Profile", "Bing Places", "Apple Business Connect",
                "Yelp", "Facebook Business Page", "Better Business Bureau",
                "Nextdoor Business", "Angi", "Thumbtack"]
@@ -194,10 +202,23 @@ def citation_gaps(biz: Business) -> str:
     # the corroboration that makes an engine confident enough to name someone.
     targets = general + list(knowledge.get(biz.vertical).directories)
     lines = "\n".join(f"- [ ] {t}" for t in targets)
+    lists = "\n".join(f"- [ ] {t}" for t in curated)
     return f"""# Citation & directory coverage — {biz.name}
 
 AI engines corroborate a business across independent sources before naming it.
-A single listing is not enough; consistency across many is the signal.
+86% of what they cite is the business's own site and its listings (Yext), and
+ChatGPT Search runs on Bing, so Bing Places matters as much as Google.
+
+## First: the curated 'best of' lists
+
+The strongest single AI-visibility factor (Whitespark, 2026), and the
+directories ChatGPT cites most for local searches (BrightLocal). They choose
+who is listed: send the licence number, insurance, years trading, and review
+count and rating.
+
+{lists}
+
+## Then: the listings
 
 **Rule:** the name, address and phone must be byte-identical everywhere.
 Use exactly: `{biz.name}` / `{biz.phone or 'SET_PHONE'}`
@@ -434,6 +455,7 @@ class FixerAgent(Agent):
                         title=f"How to install this month's files — {biz.name}",
                         body=implementation_guide(biz, audit, platform),
                         filename=f"{slug}_START_HERE.md"),
+            *self._where_engines_look(biz, audit, slug),
             # The same six files every month is how a retainer starts looking
             # like nothing is happening, which is the churn signal the
             # Retention agent watches for. This is the month's own work.
@@ -442,6 +464,17 @@ class FixerAgent(Agent):
                         body=method.summarise(month, biz.vertical, audit),
                         filename=f"{slug}_month_{month:02d}_plan.md"),
         ]
+
+    def _where_engines_look(self, biz: Business, audit: Audit, slug: str) -> list[Deliverable]:
+        """The Citation agent's check, as this month's list, when there is one."""
+        from .. import citations
+        checks = self.store.citation_checks(biz.id, limit=1)
+        if not checks:
+            return []
+        return [Deliverable(audit_id=audit.id, business_id=biz.id, kind="where_engines_look",
+                            title=f"Where the AI engines look — {biz.name}",
+                            body=citations.report(biz, checks[0]),
+                            filename=f"{slug}_where_engines_look.md")]
 
     def execute(self) -> tuple[int, str]:
         made = 0

@@ -51,6 +51,8 @@ class Lever:
     effect_days: tuple[int, int]
     #: How to confirm it actually landed, rather than assuming.
     verify: str
+    #: Keys into ``evidence.LIBRARY``: the research this lever rests on.
+    evidence: tuple[str, ...] = ()
 
     def timing(self) -> str:
         earliest, typical = self.effect_days
@@ -78,10 +80,11 @@ class Phase:
 PHASES: list[Phase] = [
     Phase(
         month=1,
-        title="Make the site readable",
-        thesis=("Nothing else matters while an engine cannot read the page or "
-                "cannot tell what the business is. This month is the cheapest "
-                "and fastest work in the whole engagement."),
+        title="Make the business readable and specific",
+        thesis=("Nothing else matters while an engine cannot read the site or "
+                "cannot tell exactly what the business does. This month is the "
+                "fastest work in the engagement: a page per job, the Google "
+                "profile set up properly, and nothing blocking the engines."),
         levers=[
             Lever("unblock_crawlers", "Allow the answer engines in robots.txt",
                   "A site that disallows OAI-SearchBot or PerplexityBot cannot "
@@ -89,30 +92,56 @@ PHASES: list[Phase] = [
                   "This is a gate, not a ranking factor.",
                   BOTH, 15, (2, 14),
                   "Re-read /robots.txt and confirm the names are allowed."),
-            Lever("localbusiness_schema", "Publish LocalBusiness JSON-LD",
-                  "Retrieval-based engines quote what they can parse. Structured "
-                  "data states the trade, the service area, the hours and the "
-                  "phone as machine-readable facts rather than as prose an "
-                  "engine has to infer from.",
-                  BOTH, 20, (7, 21),
-                  "Google's Rich Results Test returns the type with no errors."),
-            Lever("gbp_core", "Complete the Google Business Profile",
-                  "The local pack is a direct input to AI Overviews for local "
-                  "service intent. Categories and services are the fields that "
-                  "decide which queries the profile is eligible for.",
+            Lever("service_pages", "One page per high-value job, naming the city",
+                  "A dedicated page for each service is the second-strongest "
+                  "AI-visibility factor in Whitespark's 2026 survey, and for home "
+                  "services most engines cite the contractor's own site more than "
+                  "anything else. A single services page competes for everything "
+                  "and wins nothing.",
+                  US, 10, (14, 56),
+                  "Each page is reachable in two clicks from the homepage and "
+                  "names the job and the city in its title.",
+                  ("ai_visibility_factors", "home_services_sources")),
+            Lever("gbp_core", "Set up the Google Business Profile properly",
+                  "The primary category is the single strongest local-pack factor "
+                  "(Whitespark 2026), and 'open at the time of search' is in the "
+                  "top five, so the category and the hours come first. Services "
+                  "decide which questions the profile is eligible for.",
                   CLIENT, 45, (7, 21),
-                  "Every field populated; primary category is the most specific "
-                  "one offered."),
+                  "Primary category is the most specific one offered; hours and "
+                  "services are complete.",
+                  ("local_pack_factors",)),
+            Lever("localbusiness_schema", "Publish LocalBusiness JSON-LD",
+                  "Structured data states the trade, area, hours and phone as "
+                  "machine-readable facts. It is quick and helps Google's own "
+                  "features, but practitioners rank it only 44th for AI "
+                  "visibility (Whitespark 2026), so it is done in twenty minutes "
+                  "and not sold as the thing that moves the answers.",
+                  BOTH, 15, (7, 21),
+                  "Google's Rich Results Test returns the type with no errors.",
+                  ("ai_visibility_factors",)),
         ],
     ),
     Phase(
         month=2,
-        title="Answer the questions being lost",
-        thesis=("The audit named the exact questions where a competitor is "
-                "chosen instead. This month publishes an answer to each one, "
-                "in the form an engine can lift."),
+        title="Get onto the lists the engines quote",
+        thesis=("The strongest AI-visibility factor is being on the expert "
+                "'best of' lists for the trade and town, and those are the "
+                "directories ChatGPT cites most for local questions. This month "
+                "puts the business in front of them, and answers the questions "
+                "the audit showed being lost."),
         levers=[
-            Lever("faq_content", "Publish answer-shaped copy for the lost prompts",
+            Lever("curated_lists", "Get onto the expert 'best of' lists",
+                  "Presence on expert-curated best-of lists is the #1 AI-visibility "
+                  "factor in Whitespark's 2026 survey, and curated sites such as "
+                  "Three Best Rated and Expertise are the directories ChatGPT "
+                  "cites most for local searches (BrightLocal). These sites choose "
+                  "who they list, which is exactly why a listing counts.",
+                  BOTH, 20, (28, 90),
+                  "The business appears on each list's page for its trade and "
+                  "city, or a nomination is on record with a date to re-apply.",
+                  ("ai_visibility_factors", "chatgpt_search_sources")),
+            Lever("faq_content", "Publish answer-shaped copy for the lost questions",
                   "An engine assembling an answer prefers a passage that already "
                   "answers the question in the first forty words. Copy written to "
                   "be skimmed by a person buries the answer under a preamble, so "
@@ -124,12 +153,6 @@ PHASES: list[Phase] = [
                   "as a wall of text, so a model can take one without the rest.",
                   BOTH, 15, (7, 21),
                   "Rich Results Test lists every pair."),
-            Lever("service_pages", "One page per high-value job, naming the city",
-                  "A single services page competes for everything and wins "
-                  "nothing. The job with the largest ticket deserves a page that "
-                  "is about that job in that market and nothing else.",
-                  US, 20, (21, 56),
-                  "Each page is reachable in two clicks from the homepage."),
         ],
     ),
     Phase(
@@ -137,7 +160,8 @@ PHASES: list[Phase] = [
         title="Make the business resolvable as one entity",
         thesis=("An engine will not name a business it cannot confidently "
                 "resolve. Disagreeing records across directories look like "
-                "several businesses, or like none."),
+                "several businesses, or like none. Most of what the engines "
+                "quote is the business's own site and its listings."),
         levers=[
             Lever("nap_consistency", "Make name, address and phone byte-identical",
                   "Entity resolution is a matching problem. “St” against "
@@ -146,34 +170,51 @@ PHASES: list[Phase] = [
                   US, 10, (21, 56),
                   "Search the phone number in quotes; every result shows the "
                   "same name and address."),
-            Lever("core_citations", "Claim the nine listings every engine checks",
-                  "Corroboration from sources that are not the business's own "
-                  "site is what moves a claim from asserted to verified.",
-                  # Only the verification steps need the owner: Google and
+            Lever("core_citations", "Claim the listings the engines check, Bing first",
+                  "86% of AI citations come from a business's own site and its "
+                  "listings (Yext). ChatGPT Search runs on Bing (BrightLocal), so "
+                  "Bing Places matters as much as Google; Apple Business Connect "
+                  "feeds Siri and Apple Maps.",
+                  # Only the verification steps need the owner: Google, Bing and
                   # Apple want a code sent to them. The form-filling is ours.
                   BOTH, 25, (21, 56),
-                  "Each listing is claimed, not merely present."),
+                  "Each listing is claimed, not merely present.",
+                  ("brand_managed_citations", "chatgpt_search_sources")),
             Lever("trade_authority", "Get listed in the trade's own directories",
-                  "A trade association or licensing directory carries far more "
-                  "weight per listing than a general one, because membership is "
-                  "gated on something.",
+                  "Prominence on industry-relevant sites is the #3 AI-visibility "
+                  "factor (Whitespark 2026). A trade association or licensing "
+                  "directory carries far more weight per listing than a general "
+                  "one, because membership is gated on something.",
                   BOTH, 15, (28, 84),
-                  "The business is findable by name in each directory's search."),
+                  "The business is findable by name in each directory's search.",
+                  ("ai_visibility_factors",)),
         ],
     ),
     Phase(
         month=4,
         title="Give the engines proof to quote",
-        thesis=("Reviews are the corroboration engines quote most often, and "
-                "recency counts as much as volume. This is the month the "
-                "compounding starts."),
+        thesis=("Reviews are the corroboration engines quote most, and recency "
+                "counts: three in four customers look at the last three months "
+                "only. This is the month the compounding starts."),
         levers=[
-            Lever("review_velocity", "A repeatable review ask after every job",
-                  "Recency is weighted: forty reviews from three years ago read "
-                  "as a business that used to be good. A steady trickle reads as "
-                  "one that still is.",
+            Lever("review_velocity", "A new review at least every two weeks",
+                  "74% of consumers prioritise reviews from the last three months "
+                  "and 32% want one from the last two weeks; 68% will not consider "
+                  "a business under 4 stars (BrightLocal 2026). Forty reviews from "
+                  "three years ago read as a business that used to be good.",
                   CLIENT, 20, (28, 90),
-                  "New reviews appear every week, not in bursts."),
+                  "A new review appears at least every two weeks, not in bursts, "
+                  "and the average stays at 4.0 or above.",
+                  ("consumer_reviews_2026", "local_pack_factors")),
+            Lever("third_party_reviews", "Reviews on the trade's respected sites too",
+                  "The authority of the sites holding a business's reviews is the "
+                  "#5 AI-visibility factor (Whitespark 2026), and for home "
+                  "services nearly half of ChatGPT's citations are directories and "
+                  "review platforms. Reviews only on Google are invisible to an "
+                  "engine reading the BBB or Angi.",
+                  BOTH, 15, (28, 90),
+                  "New reviews land on at least one site besides Google each month.",
+                  ("ai_visibility_factors", "home_services_sources")),
             Lever("review_responses", "Reply to every review, naming the job and city",
                   "A reply is indexable text that pairs the business with a "
                   "service and a place, written by the business, attached to a "
@@ -211,15 +252,20 @@ PHASES: list[Phase] = [
                 "which is the hardest to get and the slowest to decay."),
         levers=[
             Lever("supplier_locators", "Get into manufacturer and supplier locators",
-                  "A dealer locator is a strong third-party signal and is usually "
+                  "A dealer locator is a prominent listing on an industry site, "
+                  "the #3 AI-visibility factor (Whitespark 2026), and is usually "
                   "free to a business already buying the product.",
                   BOTH, 30, (28, 90),
-                  "The business appears in each locator's own search."),
+                  "The business appears in each locator's own search.",
+                  ("ai_visibility_factors",)),
             Lever("local_presence", "Local press, sponsorship, community listings",
-                  "An independent mention on a local domain ties the business to "
-                  "a place in a way no amount of its own copy can.",
+                  "Unstructured citations — mentions on other sites — are the #4 "
+                  "AI-visibility factor (Whitespark 2026): 'mentions are the new "
+                  "link'. An independent local mention ties the business to a "
+                  "place in a way no amount of its own copy can.",
                   CLIENT, 45, (56, 180),
-                  "At least one new independent mention per quarter."),
+                  "At least one new independent mention per quarter.",
+                  ("ai_visibility_factors",)),
         ],
     ),
 ]
@@ -227,10 +273,12 @@ PHASES: list[Phase] = [
 #: What happens every month regardless of phase.
 STANDING = [
     Lever("re_audit", "Re-run the full audit",
-          "The score is the deliverable. Measuring monthly is what makes the "
-          "work visible and catches a regression before the client finds it.",
+          "The score is the deliverable. AI answers change almost every run "
+          "(SparkToro 2026), so each question is asked three times and the "
+          "result is a share with a margin, measured the same way each month.",
           US, 0, (0, 0),
-          "The report shows this month against the start."),
+          "The report shows this month against the start, with its margin.",
+          ("ai_answers_vary",)),
     Lever("regressions", "Fix anything that has slipped",
           "Directories silently drop records, site rebuilds remove schema, and "
           "a plugin update can restore a robots.txt block. Nothing stays fixed "
@@ -309,7 +357,7 @@ def plan(month: int, vertical: str = "", audit=None) -> dict[str, object]:
     if trade and current.month == 3:
         notes.append("Trade directories for this business: "
                      + ", ".join(trade.directories) + ".")
-    if trade and current.month == 2:
+    if trade and current.month == 1:
         notes.append(f"Highest-value job to give its own page: {trade.jobs[0]}.")
 
     return {

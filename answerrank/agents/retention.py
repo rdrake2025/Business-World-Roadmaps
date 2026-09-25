@@ -127,15 +127,26 @@ class RetentionAgent(Agent):
         # --- 3. Is it working? (25%) ----------------------------------------
         history = self.store.audit_history(biz.id, limit=6, comparable=True)
         scores = [a.score for a in reversed(history) if a.score is not None]
+        # AI answers differ run to run (SparkToro, 2026), so a few points
+        # either way is the weather, not a result. The bar is the combined
+        # margin of the first and latest audits.
+        noise = 0.0
+        if len(history) >= 2:
+            noise = round(((history[0].margin or 0) ** 2
+                           + (history[-1].margin or 0) ** 2) ** 0.5, 1)
         if len(scores) < 2:
             points += 15
             signals.append("Not enough audits yet to show a trend.")
         else:
             delta = scores[-1] - scores[0]
-            if delta >= 10:
+            if delta >= max(10, noise):
                 points += 25
                 signals.append(f"Visibility up {delta:.0f} points since they started. "
                                f"Say this in the next report — it is the renewal argument.")
+            elif delta >= 3 and noise and delta < noise:
+                points += 12
+                signals.append(f"Visibility up {delta:.0f} points, inside the ±{noise:.0f} "
+                               f"that AI answers vary by on their own. Don't claim it yet.")
             elif delta >= 3:
                 points += 19
                 signals.append(f"Visibility up {delta:.0f} points. Real but modest.")
@@ -160,6 +171,23 @@ class RetentionAgent(Agent):
             points -= 8
             signals.append(f"Day {tenure} and the fixes are still not live on their "
                            f"site. Nothing can move until they are.")
+
+        # --- Reviews: are new ones still arriving? -------------------------
+        # 74% of consumers look only at the last three months of reviews and
+        # 68% won't consider a business under 4 stars (BrightLocal, 2026). A
+        # client whose review count has stood still for a month is losing
+        # ground they will not see in the score for weeks.
+        cites = [c for c in self.store.citation_checks(biz.id, limit=2) if c.get("reviews")]
+        if len(cites) == 2:
+            new, old = cites[0]["reviews"], cites[1]["reviews"]
+            days = _days_between(cites[1].get("checked_at", ""), cites[0].get("checked_at", ""))
+            if days >= 25 and new.get("count") is not None and new.get("count") == old.get("count"):
+                points -= 4
+                signals.append(f"No new Google reviews in {days} days. Most customers only "
+                               f"read the last three months: send the review request this week.")
+        if cites and (cites[0]["reviews"].get("rating") or 5) < 4.0:
+            signals.append(f"Google rating {cites[0]['reviews']['rating']}: 68% of customers "
+                           f"won't consider a business under 4 stars. Reviews first.")
 
         # --- 4. Tenure (10%) — the first 90 days decide it ------------------
         if tenure <= 30:
@@ -262,3 +290,14 @@ class RetentionAgent(Agent):
         if at_risk:
             summary += (f" | ${risk_mrr:,.0f}/mo at risk — worst: {at_risk[0].line()}")
         return len(rows), summary
+
+
+def _days_between(a: str, b: str) -> int:
+    from datetime import datetime, timezone
+    try:
+        first, last = datetime.fromisoformat(a), datetime.fromisoformat(b)
+    except ValueError:
+        return 0
+    first = first if first.tzinfo else first.replace(tzinfo=timezone.utc)
+    last = last if last.tzinfo else last.replace(tzinfo=timezone.utc)
+    return abs((last - first).days)

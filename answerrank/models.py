@@ -141,6 +141,8 @@ class ProbeResult:
     sentiment: str = "neutral"        # positive | neutral | negative | absent
     latency_ms: int = 0
     error: str = ""
+    #: From a live web search (as customers see it), not a model's memory.
+    grounded: bool = False
     created_at: str = field(default_factory=now_iso)
     id: str = field(default_factory=lambda: new_id("res"))
 
@@ -168,6 +170,12 @@ class Audit:
     #: leave cannot be named however good its content is.
     crawler_access: dict[str, Any] = field(default_factory=dict)
     is_free_teaser: bool = False
+    #: ± points on the share of answers naming the business, at 95%. AI
+    #: answers differ run to run (SparkToro, 2026), so a number without its
+    #: margin overstates what one sweep can show.
+    margin: float = 0.0
+    #: What this audit's searches and tokens cost, estimated per probe.
+    cost: float = 0.0
     created_at: str = field(default_factory=now_iso)
     id: str = field(default_factory=lambda: new_id("aud"))
 

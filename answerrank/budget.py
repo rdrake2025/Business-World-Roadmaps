@@ -35,12 +35,12 @@ PHASES: dict[str, dict[str, Any]] = {
         "trigger": "Start here. Before any entity or insurance.",
         "one_time": {
             "sending domain (1 yr)": 12.0,
-            "API credits float": 15.0,
+            "API credits float": 35.0,
         },
         "monthly": {
             "Google Workspace (1 seat, month to month)": 8.40,
             "domain amortised": 1.00,
-            "API usage": 4.00,
+            "API usage (20 prospect checks a day)": 33.00,
             "server for the unsubscribe link + 24/7 fleet": 6.00,
         },
         "notes": [
@@ -49,8 +49,10 @@ PHASES: dict[str, dict[str, Any]] = {
             "internet, and a laptop cannot serve it. See deploy/SERVER.md.",
             "No LLC yet. Sole proprietor is legal to test with; form the entity "
             "when money is actually coming in.",
-            "A full 10-prompt audit costs about $0.06, so $15 of credit covers "
-            "hundreds of prospects.",
+            "Every check searches the web live, the way ChatGPT and Google answer "
+            "a customer: about 5.5 cents per prospect, about $1.50 per client's "
+            "monthly audit. The daily cap (teaser_audits_per_day, default 20) is "
+            "the one dial on this line.",
         ],
     },
     "1_first_client": {

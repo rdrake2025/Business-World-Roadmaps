@@ -34,14 +34,15 @@ site is enough), paid ads, a CRM subscription, an office, employees.
 
 | Plan | Price | Delivery | Processing | **Margin** | **% margin** | To reach $5k |
 | --- | --- | --- | --- | --- | --- | --- |
-| Audit (one-time) | $297 | $0.06 | $8.91 | $288 | 97% | — |
+| Audit (one-time) | $297 | $1.50 | $8.91 | $287 | 97% | — |
 | Starter | $499 | $18 | $14.77 | **$466** | 93% | 12 clients |
 | Growth | $997 | $18 | $29.21 | **$950** | 95% | **6 clients** |
 | Managed | $1,997 | $18 | $58.21 | **$1,921** | 96% | 3 clients |
 
-Delivery cost is dominated by API calls. A measured full audit — 10 prompts
-across 4 engines — costs **$0.06**. The $18 figure budgets generously for
-re-runs, content generation, and headroom.
+Delivery cost is dominated by API calls. A client's monthly audit — 10
+questions across 4 engines, each asked three times with live web search —
+costs about **$1.50**. The $18 figure budgets generously for re-runs, content
+generation, citation checks and headroom.
 
 The margin structure is why this business works with one person: there is no
 labour in the cost of goods. Published benchmarks put a solopreneur AI stack at
@@ -85,7 +86,7 @@ each has a stated failure signal:
 | 1 | 2 new clients/month is achievable | 120 emails/day × 3-step sequence at a 1–3% reply rate yields 30–100 replies/month | Under 10 replies/month after 3 weeks of sending |
 | 2 | Local businesses will pay $499–$997/mo | They already pay $2,000–$6,000/mo retainers in these verticals | 20+ qualified calls with zero closes |
 | 3 | Monthly churn stays near 5% | SMB SaaS averages 3.5%; done-for-you service with a visible trend line should beat bare software | Two churns in the first five clients |
-| 4 | Delivery stays ~$18/client | Measured at $0.06 per full audit | API pricing rises 10×, or clients demand daily re-runs |
+| 4 | Delivery stays ~$18/client | About $1.50 per monthly audit with live search | API pricing rises 10×, or clients demand daily re-runs |
 
 **Assumption 1 is the one that decides the business.** Everything else is
 arithmetic. Test it first and test it hard — see `04_LAUNCH_CHECKLIST.md`.

@@ -17,19 +17,19 @@ So the spending is staged, and **each stage is paid for by the one before it.**
 
 | Phase | Trigger | One-time | Monthly |
 | --- | --- | --- | --- |
-| **0 — Prove the channel** | Start here | **$27** | **$19.40** |
+| **0 — Prove the channel** | Start here | **$47** | **$48.40** |
 | 1 — First client signed | A client has paid | $500 | $30 |
 | 2 — Three or more clients | ~$2,000 MRR | $0 | $98 |
 
-### Phase 0 in full — $27 once, $19.40/month
+### Phase 0 in full — $47 once, $48.40/month
 
 | Item | Cost |
 | --- | --- |
 | Sending domain (1 year) | $12 one-time |
-| API credits float | $15 one-time |
+| API credits float | $35 one-time |
 | Google Workspace, 1 seat (month to month) | $8.40/mo |
 | Domain amortised | $1.00/mo |
-| API usage | ~$4.00/mo |
+| API usage (20 prospect checks a day) | ~$33/mo |
 | Server (unsubscribe link + 24/7 fleet) | $6.00/mo |
 
 **What you deliberately do NOT buy yet:**
@@ -41,8 +41,12 @@ So the spending is staged, and **each stage is paid for by the one before it.**
   serve it. `deploy/SERVER.md` sets it up without typing commands on it.
 - **No insurance, no logo, no CRM, no paid ads, no email tool.**
 
-A full 10-prompt, 4-engine audit costs about **$0.06**, so $15 of API credit
-covers several hundred prospects. Phase 0 genuinely costs less than a phone bill.
+Every check searches the web live, the way ChatGPT and Google answer a real
+customer, so the numbers are what a customer sees. That costs about **5.5 cents
+per prospect** and about **$1.50 per client's monthly audit** (each question
+asked three times, because AI answers change run to run). The daily cap,
+`teaser_audits_per_day` (default 20), is the one dial on API spend: each extra
+10 a day is about $17 a month.
 
 ## 2. Your runway
 
@@ -60,7 +64,7 @@ On $2,500 take-home with $250 rent, a realistic monthly picture:
 | **Total living costs** | **$1,170** |
 | **Disposable** | **$1,330/month** |
 
-Against a $19.40/month burn, your disposable income covers the business **68
+Against a $48.40/month burn, your disposable income covers the business **27
 times over**. This never touches savings, and there is no realistic scenario
 where Phase 0 puts you under financial pressure.
 
@@ -81,7 +85,7 @@ anything. For anything you pay for outside the system:
 ```bash
 python3 run.py expense domain 12 --note "sending domain, 1yr"
 python3 run.py expense software 8.40 --note "google workspace"
-python3 run.py expense api 15 --note "initial credit float"
+python3 run.py expense api 35 --note "initial credit float"
 
 python3 run.py dashboard    # see the 30-day cost breakdown
 python3 run.py budget       # personal + business together

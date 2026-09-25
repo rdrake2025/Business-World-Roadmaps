@@ -97,8 +97,9 @@ Fixed overhead is ~$138/mo (sending infrastructure, hosting, domain, accounting)
 **$5,000/month profit = 6 Growth clients**, or a realistic blend of ~7–8 clients
 across Starter and Growth. See `01_FINANCIAL_MODEL.md` for scenarios.
 
-Measured cost of a full 10-prompt, 4-engine audit: **$0.06**. The gross margin is
-not a projection — it is arithmetic on a metered cost.
+Cost of a client's monthly audit — 10 questions, 4 engines, each asked three
+times with live web search: about **$1.50**. The gross margin is not a
+projection — it is arithmetic on a metered cost.
 
 ## 6. Go-to-market
 

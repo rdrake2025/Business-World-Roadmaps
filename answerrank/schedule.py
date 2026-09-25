@@ -295,7 +295,7 @@ Spend so far: domain ~$12/yr, Workspace $8.40/mo (14 days free)."""),
 3. Developers -> API keys -> Create restricted key:
    Checkout Sessions = Read, Subscriptions = Read, everything else None.
    It starts rk_. Never paste the sk_ secret key anywhere.
-4. platform.openai.com -> Billing -> add $15. API keys -> new key.
+4. platform.openai.com -> Billing -> add $35. API keys -> new key.
 5. Desktop button -> 2 Keys and settings. It asks for all of it in
    plain words: mailbox, app password, AI key, Stripe key, postal
    address, your trade and cities, payment links - then tests the

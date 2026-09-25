@@ -41,11 +41,22 @@ def _post(url: str, headers: dict[str, str], payload: dict[str, Any], timeout: i
 
 
 class OpenAIEngine(AnswerEngine):
+    """ChatGPT, as a customer meets it: searching the web, from their town.
+
+    This used to ask a small model with no search at all, so it answered
+    from memory, and a model's memory of local businesses is thin and often
+    invented. ChatGPT itself searches the web for local questions
+    (BrightLocal found it cites business sites, mentions and directories,
+    through Bing). The Responses API's web_search tool does the same, from
+    an approximate location, and returns the sources it used.
+    """
+
     name = "openai"
     label = "ChatGPT"
     weight = 1.6  # largest consumer assistant audience
 
-    def __init__(self, api_key: str | None = None, model: str = "gpt-4o-mini", timeout: int = 60):
+    def __init__(self, api_key: str | None = None, model: str = "gpt-5-mini",
+                 timeout: int = 90):
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self.model = model
         self.timeout = timeout
@@ -53,35 +64,93 @@ class OpenAIEngine(AnswerEngine):
     def available(self) -> bool:
         return bool(self.api_key)
 
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"}
+
     def ask(self, prompt: str) -> EngineAnswer:
+        from ..geo import user_location
+
         t0 = time.time()
+        tool: dict[str, Any] = {"type": "web_search"}
+        if self.city or self.state:
+            tool["user_location"] = user_location(self.city, self.state)
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "instructions": SYSTEM_PROMPT,
+            "input": prompt,
+            "tools": [tool],
+            "max_output_tokens": 2500,
+        }
+        if self.model.startswith(("gpt-5", "o")):
+            payload["reasoning"] = {"effort": "low"}
+        data, err = _post("https://api.openai.com/v1/responses", self._headers(),
+                          payload, self.timeout)
+        ms = int((time.time() - t0) * 1000)
+        if err:
+            if err.startswith("HTTP 4"):
+                # A model or account without the tool: answer, but say it
+                # is from memory so nothing quotes it as ChatGPT's view.
+                return self._from_memory(prompt, t0)
+            return EngineAnswer(text="", sources=[], latency_ms=ms, error=err)
+        text, sources, searched = parse_responses_output(data or {})
+        return EngineAnswer(text=text, sources=sources, latency_ms=ms, grounded=searched)
+
+    def _from_memory(self, prompt: str, t0: float) -> EngineAnswer:
         data, err = _post(
-            "https://api.openai.com/v1/chat/completions",
-            {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.3,
-                "max_tokens": 600,
-            },
-            self.timeout,
-        )
+            "https://api.openai.com/v1/chat/completions", self._headers(),
+            {"model": "gpt-4o-mini",
+             "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+                          {"role": "user", "content": prompt}],
+             "temperature": 0.3, "max_tokens": 600},
+            self.timeout)
         ms = int((time.time() - t0) * 1000)
         if err:
             return EngineAnswer(text="", sources=[], latency_ms=ms, error=err)
         text = (data or {}).get("choices", [{}])[0].get("message", {}).get("content", "")
-        return EngineAnswer(text=text, sources=[], latency_ms=ms)
+        return EngineAnswer(text=text, sources=[], latency_ms=ms, grounded=False)
+
+
+def parse_responses_output(data: dict[str, Any]) -> tuple[str, list[str], bool]:
+    """(answer text, cited URLs, whether it searched) from a Responses API reply."""
+    parts: list[str] = []
+    sources: list[str] = []
+    searched = False
+    for item in data.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "web_search_call":
+            searched = True
+        if item.get("type") != "message":
+            continue
+        for block in item.get("content") or []:
+            if not isinstance(block, dict) or block.get("type") != "output_text":
+                continue
+            parts.append(block.get("text", ""))
+            for note in block.get("annotations") or []:
+                if isinstance(note, dict) and note.get("type") == "url_citation" \
+                        and note.get("url") and note["url"] not in sources:
+                    sources.append(note["url"])
+    if not parts and isinstance(data.get("output_text"), str):
+        parts.append(data["output_text"])
+    return "\n".join(p for p in parts if p), sources, searched or bool(sources)
 
 
 class AnthropicEngine(AnswerEngine):
+    """Claude with its web search tool, from the business's town.
+
+    Capped at two searches a question: enough for a local recommendation,
+    and the cost ($10 per 1,000 searches plus the tokens results add) stays
+    small. Answers where Claude chose not to search are marked as from
+    memory.
+    """
+
     name = "anthropic"
     label = "Claude"
     weight = 1.2
 
-    def __init__(self, api_key: str | None = None, model: str = "claude-haiku-4-5-20251001", timeout: int = 60):
+    def __init__(self, api_key: str | None = None,
+                 model: str = "claude-haiku-4-5-20251001", timeout: int = 90):
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         self.model = model
         self.timeout = timeout
@@ -90,28 +159,56 @@ class AnthropicEngine(AnswerEngine):
         return bool(self.api_key)
 
     def ask(self, prompt: str) -> EngineAnswer:
+        from ..geo import user_location
+
         t0 = time.time()
-        data, err = _post(
-            "https://api.anthropic.com/v1/messages",
-            {
-                "x-api-key": self.api_key,
-                "anthropic-version": "2023-06-01",
-                "Content-Type": "application/json",
-            },
-            {
-                "model": self.model,
-                "max_tokens": 600,
-                "system": SYSTEM_PROMPT,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            self.timeout,
-        )
+        headers = {"x-api-key": self.api_key, "anthropic-version": "2023-06-01",
+                   "Content-Type": "application/json"}
+        tool: dict[str, Any] = {"type": "web_search_20250305", "name": "web_search",
+                                "max_uses": 2}
+        if self.city or self.state:
+            tool["user_location"] = user_location(self.city, self.state)
+        payload: dict[str, Any] = {
+            "model": self.model, "max_tokens": 1024, "system": SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": prompt}], "tools": [tool],
+        }
+        data, err = _post("https://api.anthropic.com/v1/messages", headers,
+                          payload, self.timeout)
+        if err and err.startswith("HTTP 400"):
+            # Web search switched off for the organisation: ask without it.
+            payload.pop("tools")
+            data, err = _post("https://api.anthropic.com/v1/messages", headers,
+                              payload, self.timeout)
         ms = int((time.time() - t0) * 1000)
         if err:
             return EngineAnswer(text="", sources=[], latency_ms=ms, error=err)
-        blocks = (data or {}).get("content", [])
-        text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
-        return EngineAnswer(text=text, sources=[], latency_ms=ms)
+        text, sources, searched = parse_claude_content((data or {}).get("content", []))
+        return EngineAnswer(text=text, sources=sources, latency_ms=ms, grounded=searched)
+
+
+def parse_claude_content(blocks: list[Any]) -> tuple[str, list[str], bool]:
+    """(answer text, cited URLs, whether a search returned results)."""
+    parts: list[str] = []
+    sources: list[str] = []
+    searched = False
+    for block in blocks or []:
+        if not isinstance(block, dict):
+            continue
+        kind = block.get("type")
+        if kind == "text":
+            parts.append(block.get("text", ""))
+            for cite in block.get("citations") or []:
+                if isinstance(cite, dict) and cite.get("url") and cite["url"] not in sources:
+                    sources.append(cite["url"])
+        elif kind == "web_search_tool_result":
+            content = block.get("content")
+            if isinstance(content, list):
+                searched = True
+                for result in content:
+                    if isinstance(result, dict) and result.get("url") \
+                            and result["url"] not in sources:
+                        sources.append(result["url"])
+    return "".join(parts).strip(), sources, searched
 
 
 class PerplexityEngine(AnswerEngine):
@@ -151,7 +248,8 @@ class PerplexityEngine(AnswerEngine):
         sources = payload.get("citations") or [
             s.get("url", "") for s in payload.get("search_results", []) if isinstance(s, dict)
         ]
-        return EngineAnswer(text=text, sources=[s for s in sources if s], latency_ms=ms)
+        return EngineAnswer(text=text, sources=[s for s in sources if s], latency_ms=ms,
+                            grounded=True)
 
 
 class GoogleAIOverviewEngine(AnswerEngine):
@@ -223,7 +321,8 @@ class GoogleAIOverviewEngine(AnswerEngine):
                 if org.get("link"):
                     sources.append(org["link"])
 
-        return EngineAnswer(text="\n".join(parts), sources=sources, latency_ms=ms)
+        return EngineAnswer(text="\n".join(parts), sources=sources, latency_ms=ms,
+                            grounded=True)
 
 
 ENGINE_CLASSES = {
@@ -235,7 +334,7 @@ ENGINE_CLASSES = {
 
 
 def build_engines(names: list[str], business_name: str = "", vertical: str = "default",
-                  timeout: int = 60) -> list[AnswerEngine]:
+                  timeout: int = 60, city: str = "", state: str = "") -> list[AnswerEngine]:
     """Instantiate the requested engines, dropping any we lack credentials for."""
     from .mock import MockEngine
 
@@ -247,9 +346,9 @@ def build_engines(names: list[str], business_name: str = "", vertical: str = "de
         cls = ENGINE_CLASSES.get(name)
         if not cls:
             continue
-        eng = cls(timeout=timeout)
+        eng = cls(timeout=max(timeout, 90) if name in {"openai", "anthropic"} else timeout)
         if eng.available():
-            engines.append(eng)
+            engines.append(eng.locate(city, state))
     if not engines:
         engines.append(MockEngine(business_name=business_name, vertical=vertical))
     return engines

@@ -102,13 +102,14 @@ python3 run.py dashboard   # see COST BREAKDOWN
 ```
 
 If spend climbs unexpectedly:
-- Lower `teaser_budget` on the Auditor (default 20/run)
-- Reduce `prompts_per_audit`
-- Drop an engine from `engines` in the config
-- Set `probe_repeats: 1`
+- Lower `teaser_audits_per_day` (default 20; each prospect check is ~5.5 cents)
+- Drop an engine from `teaser_engines` (default ChatGPT and Google)
+- Don't lower `probe_repeats` below 3 for client audits: AI answers change
+  almost every run, and fewer repeats turns the monthly trend into noise
 
-A full 10-prompt, 4-engine audit costs about **$0.06**. If you are spending more
-than $40/month on API calls before 10 clients, something is looping.
+A prospect check costs about **5.5 cents** (live web search on ChatGPT and
+Google); a client's monthly audit about **$1.50**. If you are spending more
+than $60/month on API calls before 10 clients, something is looping.
 
 ## Scaling past $5k
 

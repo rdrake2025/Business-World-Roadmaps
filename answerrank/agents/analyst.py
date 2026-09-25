@@ -38,6 +38,12 @@ CONFIDENT_SAMPLE = 60
 PRIOR_REPLY_RATE = 0.04
 PRIOR_REPLY_TO_WON = 0.15
 
+#: Instantly's Cold Email Benchmark Report 2026: average reply rate 3.43%,
+#: top quartile 5.5%, elite 10.7%; 58% of replies come from the first email.
+BENCHMARK_REPLY = 0.0343
+BENCHMARK_TOP_QUARTILE = 0.055
+BENCHMARK_FIRST_EMAIL_SHARE = 0.58
+
 
 @dataclass
 class Funnel:
@@ -215,6 +221,16 @@ class AnalystAgent(Agent):
             return out
 
         out.append(f.line())
+        if f.sent >= CONFIDENT_SAMPLE:
+            rate = f.reply_rate
+            if rate >= BENCHMARK_TOP_QUARTILE:
+                out.append(f"Reply rate {rate:.1%} is in the top quarter of cold email "
+                           f"(5.5%+, Instantly 2026). Protect what is working: the "
+                           f"targeting and the first line.")
+            elif rate < BENCHMARK_REPLY:
+                out.append(f"Reply rate {rate:.1%} is below the 3.4% average for cold "
+                           f"email (Instantly 2026). 58% of replies come from the first "
+                           f"email, so change that first: the subject and the opening fact.")
 
         verticals = [r for r in self.by_vertical(days)
                      if r["confidence"] != "insufficient"]
@@ -239,7 +255,8 @@ class AnalystAgent(Agent):
             if late_replies and f.replied:
                 share = late_replies / f.replied
                 out.append(
-                    f"{share:.0%} of replies arrive after the first email. "
+                    f"{share:.0%} of replies arrive after the first email "
+                    f"(benchmark: about 42%, Instantly 2026). "
                     + ("The follow-up sequence is carrying the channel — keep it."
                        if share >= 0.4 else
                        "Most replies come from the opener; the follow-ups are "

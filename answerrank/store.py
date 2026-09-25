@@ -117,6 +117,11 @@ CREATE TABLE IF NOT EXISTS site_checks (
 );
 CREATE INDEX IF NOT EXISTS idx_site_checks ON site_checks(business_id, checked_at);
 
+CREATE TABLE IF NOT EXISTS citation_checks (
+    id TEXT PRIMARY KEY, business_id TEXT, checked_at TEXT, raw TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_citation_checks ON citation_checks(business_id, checked_at);
+
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY, value TEXT, created_at TEXT
 );
@@ -399,6 +404,13 @@ class Store:
                  int(a.is_free_teaser), a.created_at, json.dumps(asdict(a), default=str)),
             )
         return a.id
+
+    def teasers_since(self, stamp: str) -> int:
+        """Free teaser audits run since an ISO timestamp."""
+        with self.conn() as cx:
+            return cx.execute(
+                "SELECT COUNT(*) FROM audits WHERE is_free_teaser = 1 AND created_at >= ?",
+                (stamp,)).fetchone()[0]
 
     def get_audit(self, audit_id: str) -> Audit | None:
         with self.conn() as cx:
@@ -772,6 +784,23 @@ class Store:
         with self.conn() as cx:
             rows = cx.execute(
                 """SELECT raw FROM site_checks WHERE business_id = ?
+                   ORDER BY checked_at DESC LIMIT ?""", (business_id, limit)).fetchall()
+        return [json.loads(r["raw"]) for r in rows]
+
+    def save_citation_check(self, business_id: str, check: dict[str, Any]) -> None:
+        with self.conn() as cx:
+            cx.execute(
+                "INSERT INTO citation_checks (id, business_id, checked_at, raw) "
+                "VALUES (?,?,?,?)",
+                (f"cit_{uuid.uuid4().hex[:12]}", business_id,
+                 check.get("checked_at") or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                 json.dumps(check, default=str)))
+
+    def citation_checks(self, business_id: str, limit: int = 3) -> list[dict[str, Any]]:
+        """Where the business was found on the sites engines quote, newest first."""
+        with self.conn() as cx:
+            rows = cx.execute(
+                """SELECT raw FROM citation_checks WHERE business_id = ?
                    ORDER BY checked_at DESC LIMIT ?""", (business_id, limit)).fetchall()
         return [json.loads(r["raw"]) for r in rows]
 

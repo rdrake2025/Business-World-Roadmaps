@@ -78,8 +78,9 @@ a $997 month. The bookkeeper already counts it.
 
 ### 6. AI credits — 10 min
 
-- [ ] platform.openai.com → Billing → add **$15** → API keys → new key.
-      A full audit costs about six cents, so this covers hundreds.
+- [ ] platform.openai.com → Billing → add **$35** → API keys → new key.
+      Every check searches the web the way ChatGPT answers a customer: about
+      5.5 cents per business checked, 20 a day by default (about $33 a month).
 - [ ] Recommended: serper.dev → free account → API key. It is how the system
       finds local businesses and reads Google's AI Overviews.
 
@@ -185,9 +186,9 @@ thing that opened it.
 
 | Gate | Opens when | Adds | Running cost |
 | --- | --- | --- | --- |
-| **0 — Prove the channel** | Tonight | Domain, mailbox, AI credits, server | $27 once, **$19.40/month** |
-| **1 — First client** | Someone pays | LLC (~$150), contract review (~$350), registered agent, accounting | $500 once, **$49.40/month** |
-| **2 — Three clients** | ~$2,000 a month | Insurance (E&O + liability), a second sending domain | **$147.40/month** |
+| **0 — Prove the channel** | Tonight | Domain, mailbox, AI credits, server | $47 once, **$48.40/month** |
+| **1 — First client** | Someone pays | LLC (~$150), contract review (~$350), registered agent, accounting | $500 once, **$78.40/month** |
+| **2 — Three clients** | ~$2,000 a month | Insurance (E&O + liability), a second sending domain | **$176.40/month** |
 | **3 — Bringing someone on** | 4+ paying clients, or fixes piling up uninstalled | A fulfilment helper, paid per client | Scales with revenue |
 
 Six clients is the $5,000 target.

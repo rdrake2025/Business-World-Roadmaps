@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .. import knowledge, markets
-from ..audit import estimate_cost, run_audit
+from ..audit import run_audit
 from ..models import Business, LedgerEntry, new_id, now_iso
 from .base import Agent
 
@@ -100,12 +100,11 @@ class ExplorerAgent(Agent):
         simulated = not self.settings.api_key("serper")
 
         scores: list[float] = []
-        engine_count = len(self.settings.available_engines())
         spend = 0.0
         for biz in businesses:
             audit = run_audit(biz, self.settings, depth="teaser")
             scores.append(audit.score)
-            spend += estimate_cost("teaser", engine_count)
+            spend += audit.cost
 
         if not scores:
             return 0, f"{candidate.label}: no businesses sampled"

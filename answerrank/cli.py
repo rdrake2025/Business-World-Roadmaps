@@ -232,6 +232,16 @@ def _save_console_link(settings: Settings, link: str) -> None:
     path.write_text(link + "\n", encoding="utf-8")
 
 
+def cmd_evidence(args, settings: Settings) -> int:
+    """The professional research behind the agents' rules, with sources."""
+    from . import evidence
+    print(evidence.as_markdown())
+    stale = evidence.overdue()
+    if stale:
+        print("Due a re-check: " + ", ".join(e.source for e in stale))
+    return 0
+
+
 def cmd_open(args, settings: Settings) -> int:
     """What the AnswerRank button's "Open" does.
 
@@ -1452,6 +1462,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--domain", default="",
                    help="e.g. getanswerrank.com (default: the one you send from)")
     s.set_defaults(func=cmd_server_script)
+
+    s = sub.add_parser("evidence", help="print the research the agents work from")
+    s.set_defaults(func=cmd_evidence)
 
     s = sub.add_parser("open", help="open the console: the server's, or start one here")
     s.set_defaults(func=cmd_open)
