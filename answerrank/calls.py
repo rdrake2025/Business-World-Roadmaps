@@ -173,24 +173,32 @@ def pretty_number(phone: str) -> str:
 def evidence(audit) -> dict[str, Any]:
     """The one specific, true thing to open with, taken from a real answer.
 
-    Only real engine answers count. A simulated audit produces plausible
-    competitor names that do not exist, and quoting one to a business owner
-    would be exactly the kind of misrepresentation the exemption forbids.
+    Only answers from a live search count. A simulated audit produces
+    plausible competitor names that do not exist, and a model answering from
+    memory is not what ChatGPT tells a customer (it searches the web for
+    local questions). Quoting either to a business owner would be exactly
+    the misrepresentation the FTC's business-call rules forbid.
     """
-    from .scoring import ENGINE_LABELS
-
     if audit is None:
         return {"real": False}
-    real = [r for r in audit.results if not r.error and r.engine != "mock"]
+    real = [r for r in audit.results
+            if not r.error and r.engine != "mock" and getattr(r, "grounded", False)]
     out: dict[str, Any] = {"real": bool(real), "score": round(audit.score),
                            "asked": len(real),
                            "named": sum(1 for r in real if r.mentioned)}
     hit = next((r for r in real if not r.mentioned and r.competitors), None)
     if hit:
-        out.update(engine=ENGINE_LABELS.get(hit.engine, hit.engine),
+        out.update(engine=SPOKEN.get(hit.engine, hit.engine), engine_key=hit.engine,
                    question=hit.prompt, competitor=hit.competitors[0],
                    also=hit.competitors[1:3])
+    out["margin"] = getattr(audit, "margin", 0.0)
     return out
+
+
+#: How each engine is named out loud. The Google check reads the AI Overview
+#: together with the map and web results, so it is "Google", not "Google's AI".
+SPOKEN = {"openai": "ChatGPT", "anthropic": "Claude", "perplexity": "Perplexity",
+          "google_aio": "Google"}
 
 
 def _a(word: str) -> str:
@@ -213,27 +221,34 @@ def script(prospect: Prospect, ev: dict[str, Any], settings) -> dict[str, Any]:
 
     if ev.get("competitor"):
         named = _names([ev["competitor"], *ev.get("also", [])])
-        found = (f"When I asked {ev['engine']} “{ev['question']}”, it "
-                 f"recommended {named}. {biz.name} didn't come up.")
+        if ev.get("engine_key") == "google_aio":
+            found = (f"when I searched Google for “{ev['question']}”, it showed "
+                     f"{named}. {biz.name} didn't come up.")
+        else:
+            found = (f"when I asked {ev['engine']} “{ev['question']}”, it "
+                     f"recommended {named}. {biz.name} didn't come up.")
         short = (f"I asked {ev['engine']} for {a_trade} in {city}, and it "
                  f"recommended {ev['competitor']} instead of you.")
     elif ev.get("real") and ev.get("asked"):
-        found = (f"When I asked AI assistants for {a_trade} in {city}, {biz.name} "
+        found = (f"when I asked AI assistants for {a_trade} in {city}, {biz.name} "
                  f"came up in {ev['named']} of {ev['asked']} answers.")
         short = f"I checked what AI assistants say about {trade}s in {city}."
     else:
-        found = f"I'd like to show you what they say about {biz.name}."
+        found = (f"I check what AI assistants tell people looking for {a_trade} in "
+                 f"{city}, and I'd like to show you what they say about {biz.name}.")
         short = f"I check what AI assistants recommend for {trade}s in {city}."
 
     return {
-        "opener": (f"Hi, is this the owner? This is {me} with {brand}. I'll be quick. "
-                   f"I check what AI assistants tell people looking for {a_trade} in "
-                   f"{city}. {found} Did you know that was happening?"),
+        # Gong: stating the reason for the call early doubles success; asking
+        # whether it's a bad time costs 40%. So: who, then why, in one breath.
+        "opener": (f"Hi, is this the owner? This is {me} with {brand}. The reason "
+                   f"I'm calling: {found} Did you know that was happening?"),
         "if_listening": ("More people are asking ChatGPT and Google's AI for a "
                          "recommendation instead of scrolling through results. It names "
                          "two or three businesses, and right now you're not one of them. "
                          "I've put together a free report: the questions you're missing, "
                          "who gets named instead, and the three fixes that change it."
+                         + (f" One thing in it: {ev['listing']}" if ev.get("listing") else "")
                          + (" I emailed you about it too." if emailed else "")),
         "ask": "Can I email it over? What's the best address for you?",
         "then": ("If they want to talk: “I can walk you through it in 15 minutes. "

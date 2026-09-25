@@ -1,6 +1,6 @@
-"""Researcher — runs the thirteen researchers and files what they found.
+"""Researcher — runs the fourteen researchers and files what they found.
 
-One slot in the tick order rather than thirteen. The researchers are
+One slot in the tick order rather than fourteen. The researchers are
 subordinate by design: they read what their agent produced, report on it, and
 never act. Putting them behind a single coordinator keeps the fleet legible —
 twenty-six entries in the agent list would be a worse tool, not a better one —
@@ -23,9 +23,22 @@ class ResearcherAgent(Agent):
     interval = 6 * 3600
 
     def investigate(self) -> list[research.Finding]:
+        from .. import evidence
+
         found: list[research.Finding] = []
         for r in research.build(self.store, self.settings):
             found.extend(r.run())
+        # The professional research the rules rest on has a shelf life. AI
+        # search changes by the quarter; a rule built on last year's study
+        # is a guess with a citation.
+        for e in evidence.overdue():
+            found.append(research.Finding(
+                subject=e.used_by[0],
+                claim=f"Research due a re-check: {e.source}.",
+                evidence=f"Last read {e.checked}; checked every {e.review_months} months.",
+                proposal=(f"Re-read {e.url} and update what we do in "
+                          f"answerrank/evidence.py, or remove it if it no longer holds."),
+                severity=research.NOTE, confidence=research.CONFIDENT))
         order = {research.BLOCKING: 0, research.IMPROVE: 1, research.NOTE: 2}
         found.sort(key=lambda f: (order.get(f.severity, 3), f.subject))
         return found
@@ -37,8 +50,8 @@ class ResearcherAgent(Agent):
         total = len(research.RESEARCHERS)
         if not findings:
             # The common and correct outcome. Saying so plainly is the point:
-            # thirteen researchers inventing something every cycle would be
-            # thirteen things the operator stops reading.
+            # fourteen researchers inventing something every cycle would be
+            # fourteen things the operator stops reading.
             return 0, (f"{total} researchers ran, none found anything that the "
                        f"evidence supports saying")
 

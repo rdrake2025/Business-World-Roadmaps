@@ -451,7 +451,7 @@ class ConciergeAgent(Agent):
 
     def _report_for(self, prospect: Prospect):
         """A full audit for the report: a recent one if it exists, else run it."""
-        from ..audit import estimate_cost, run_audit
+        from ..audit import run_audit
         from ..models import LedgerEntry
 
         cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat(
@@ -462,9 +462,8 @@ class ConciergeAgent(Agent):
         audit = run_audit(prospect.business, self.settings, depth="full",
                           check_crawlers=True)
         self.store.save_audit(audit)
-        engines = len(self.settings.available_engines())
         self.store.add_ledger(LedgerEntry(
-            kind="cost", category="api", amount=estimate_cost("full", engines),
+            kind="cost", category="api", amount=audit.cost,
             description=f"report audit for {prospect.business.name}"))
         return audit
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from ..audit import estimate_cost, run_audit
+from ..audit import run_audit
 from ..models import LedgerEntry
 from ..scoring import competitor_gap
 from .base import Agent
@@ -36,7 +36,15 @@ class AuditorAgent(Agent):
         blocked_sites = 0
 
         # --- 1. Teaser audits on freshly discovered prospects ---
-        for prospect in self.store.due_prospects("discovered", self.teaser_budget):
+        # Capped per day as well as per run. Each teaser is a live web search
+        # on ChatGPT and Google now, about five cents, and twenty an hour
+        # around the clock would be $25 a day for businesses nobody has time
+        # to contact.
+        midnight = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
+        room = max(0, int(getattr(self.settings, "teaser_audits_per_day", 30))
+                   - self.store.teasers_since(midnight))
+        for prospect in self.store.due_prospects("discovered", min(self.teaser_budget, room)):
             audit = run_audit(prospect.business, self.settings, depth="teaser",
                               check_crawlers=True)
             self.store.save_audit(audit)
@@ -55,7 +63,7 @@ class AuditorAgent(Agent):
 
             if (audit.crawler_access or {}).get("critical"):
                 blocked_sites += 1
-            spend += estimate_cost("teaser", engine_count)
+            spend += audit.cost
             processed += 1
 
         # --- 2. Full audits for clients due one ---
@@ -76,7 +84,7 @@ class AuditorAgent(Agent):
             audit = run_audit(client.business, self.settings, depth="full",
                               check_crawlers=True)
             self.store.save_audit(audit)
-            spend += estimate_cost("full", engine_count)
+            spend += audit.cost
             clients_audited += 1
             processed += 1
 

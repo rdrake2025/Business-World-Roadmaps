@@ -646,6 +646,10 @@ class Api:
         audit = self.store.get_audit(prospect.last_audit_id) if prospect.last_audit_id \
             else next(iter(self.store.audit_history(prospect.business.id, limit=1)), None)
         ev = calls.evidence(audit)
+        checks = self.store.citation_checks(prospect.business.id, limit=1)
+        if checks and ev.get("real"):
+            from answerrank import citations
+            ev["listing"] = citations.one_liner(prospect.business, checks[0])
         local = calls.local_time(prospect.business.state)
         return {
             "id": prospect.id, "name": prospect.business.name,

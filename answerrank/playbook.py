@@ -426,6 +426,10 @@ SEQUENCE_INTENT = {
 }
 
 
+#: A first email over this many words (before the footer) is not sent.
+FIRST_TOUCH_MAX_WORDS = 100
+
+
 def sequence_check(step: int, body: str) -> list[str]:
     """Problems with a drafted message, before it costs a reputation point."""
     problems = []
@@ -434,6 +438,14 @@ def sequence_check(step: int, body: str) -> list[str]:
         problems.append(f"{len(sentences)} sentences — past about a dozen, replies halve.")
     if step in SEQUENCE_INTENT and not body.strip():
         problems.append("Empty body.")
+    if step == 1:
+        # The signature and the legal footer don't count: the reader skips them.
+        core = body.split("\n---\n")[0]
+        words = len(core.split())
+        if words > FIRST_TOUCH_MAX_WORDS:
+            problems.append(
+                f"{words} words. The best first emails average under 80 "
+                f"(Instantly, 2026); over {FIRST_TOUCH_MAX_WORDS} is rejected.")
     if re.search(r"\b(just checking in|any thoughts|bumping this|circling back)\b",
                  body, re.I):
         problems.append("Contains a content-free nudge. Every touch needs a new idea.")

@@ -220,6 +220,23 @@ class AuditorResearcher(Researcher):
                           "question for this trade."),
                 severity=IMPROVE, confidence=PROVISIONAL))
 
+        # ChatGPT and Claude answer from memory unless they search, and
+        # memory is not what a customer is told. Quoting it would misstate
+        # what the engine says.
+        for engine in ("openai", "anthropic"):
+            answered = [r for a in audits for r in a.results
+                        if r.engine == engine and not r.error]
+            memory = [r for r in answered if not getattr(r, "grounded", False)]
+            if len(answered) >= 10 and self._share(len(memory), len(answered)) >= 0.5:
+                out.append(Finding(
+                    subject=self.subject,
+                    claim=f"Most {engine} answers came from memory, not a web search.",
+                    evidence=f"{len(memory)} of {len(answered)} answers had no search.",
+                    proposal=("Those answers are not what a customer sees and the call "
+                              "script will not quote them. Check the model supports "
+                              "web search and the account allows it."),
+                    severity=BLOCKING, confidence=CONFIDENT))
+
         for engine, count in errors.items():
             share = self._share(count, total_by_engine.get(engine, 1))
             if share >= 0.2:
@@ -233,6 +250,41 @@ class AuditorResearcher(Researcher):
                               "limit before quoting those numbers to a client."),
                     severity=BLOCKING, confidence=CONFIDENT))
         return out
+
+
+class CitationResearcher(Researcher):
+    subject = "citations"
+    question = "Do we check the sites the engines actually quote here?"
+    MIN_ANSWERS = 30
+
+    def investigate(self) -> list[Finding]:
+        from . import citations
+
+        audits = []
+        for p in self.store.get_prospects(limit=400):
+            if p.last_audit_id:
+                a = self.store.get_audit(p.last_audit_id)
+                if a:
+                    audits.append(a)
+        grounded = sum(1 for a in audits for r in a.results
+                       if getattr(r, "grounded", False) and not r.error)
+        if grounded < self.MIN_ANSWERS:
+            return []
+        cited = citations.cited_domains(audits)
+        known = set(citations.CURATED) | set(citations.DIRECTORIES)
+        missing = [(d, n) for d, n in cited.most_common(10)
+                   if d not in known and n >= max(5, grounded // 10)]
+        if not missing:
+            return []
+        d, n = missing[0]
+        return [Finding(
+            subject=self.subject,
+            claim=f"The engines here keep citing {d}, which is not on the standard list.",
+            evidence=f"{n} of {grounded} live-search answers cited it.",
+            proposal=(f"It is checked for clients when it shows up in their own "
+                      f"audits. If it keeps appearing, add it to the standard "
+                      f"directories in citations.py so every client is checked on it."),
+            severity=IMPROVE, confidence=PROVISIONAL)]
 
 
 class FixerResearcher(Researcher):
@@ -565,7 +617,7 @@ class StrategistResearcher(Researcher):
 #: One researcher per doing-agent, in the order the fleet runs them.
 RESEARCHERS: list[type[Researcher]] = [
     ConciergeResearcher, OnboarderResearcher, ScoutResearcher,
-    ProspectorResearcher, AuditorResearcher, FixerResearcher,
+    ProspectorResearcher, AuditorResearcher, CitationResearcher, FixerResearcher,
     ReporterResearcher, OutreachResearcher, BookkeeperResearcher,
     RetentionResearcher, ExplorerResearcher, AnalystResearcher,
     StrategistResearcher,

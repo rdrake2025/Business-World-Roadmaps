@@ -152,7 +152,21 @@ class Settings:
     # Probes per audit. 10 buyer-intent prompts is enough signal to sell on
     # and cheap enough to run for free on cold prospects.
     prompts_per_audit: int = 10
-    probe_repeats: int = 1  # raise to 3 for statistically stabler scores
+    #: Each question asked this many times in a client (full) audit. AI
+    #: answers change almost every run (SparkToro/Gumshoe, Jan 2026), so one
+    #: run per question is noise; three gives a usable share. Teasers stay at
+    #: one: they only open a conversation.
+    probe_repeats: int = 3
+    #: Engines a prospect's free teaser uses: ChatGPT (the assistant most
+    #: people use) and Google. Perplexity and Claude are kept for client
+    #: audits, where their cost is trivial next to the fee.
+    teaser_engines: list[str] = field(
+        default_factory=lambda: ["openai", "google_aio"])
+    #: Prospects checked per day. A live-search teaser costs about five and a
+    #: half cents, so this is the one dial on API spend: 20 a day (about $33 a
+    #: month) keeps ten emails and a morning of calls supplied, since each
+    #: business is called up to four times. Each extra 10 a day is ~$17/month.
+    teaser_audits_per_day: int = 20
     request_timeout: int = 60
     max_retries: int = 3
 

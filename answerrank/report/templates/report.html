@@ -123,6 +123,9 @@
     ask an AI assistant for a {{ vertical_label|lower }} in {{ a.market }}. It combines how
     often you appear, how prominently, whether your own site is used as a source, and
     the tone of the context you appear in.
+    {% if a.margin %}AI assistants give a different answer almost every time they are
+    asked, so each question is asked more than once and the share of answers naming
+    you is accurate to about &plusmn;{{ a.margin|round|int }} points.{% endif %}
   </p>
 
   <div class="tiles">
@@ -272,7 +275,7 @@
   <details open>
     <summary>Every question asked, and what the AI answered</summary>
     <table>
-      <tr><th>Question</th><th>Engine</th><th>Named?</th><th>Rank</th><th>Who was named instead</th></tr>
+      <tr><th>Question</th><th>Engine</th><th>Named?</th><th>Place in that answer</th><th>Who was named instead</th></tr>
       {% for r in results %}
       <tr>
         <td>{{ r.prompt }}</td>
@@ -283,6 +286,9 @@
       </tr>
       {% endfor %}
     </table>
+    <p class="sub" style="margin-top:10px">The order businesses are listed in changes
+      from one answer to the next, so a place in a single answer is not a ranking.
+      What counts is how often you are named.</p>
   </details>
 </section>
 

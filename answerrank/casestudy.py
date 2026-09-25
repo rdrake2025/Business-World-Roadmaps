@@ -13,6 +13,9 @@ It is deliberately strict about what counts:
 * **Enough time.** Structured data is picked up when engines next crawl, and
   reviews compound over months. Under 45 days between audits, the honest
   answer is "too early to say", and that is what it says.
+* **Beyond the noise.** AI answers differ almost every run (SparkToro and
+  Gumshoe, 2026), so a change only counts when it is bigger than the margin
+  of error of the two measurements together.
 * **No spin.** If the numbers did not move, the write-up says so and says
   not to publish it. A case study that overstates a result is found out by
   the first prospect who checks — and prospects in this business check.
@@ -47,6 +50,10 @@ class Evidence:
     top_rival_after: tuple[str, int] | None = None
     fixes_live: bool = False
     platform: str = "unknown"
+    #: Share of all answers naming the business, and its ± margin, each side.
+    share_before: float = 0.0
+    share_after: float = 0.0
+    noise: float = 0.0
 
     @property
     def delta(self) -> float:
@@ -59,9 +66,11 @@ class Evidence:
         """too_early | moved | flat | worse"""
         if self.audits < 2 or self.days < MIN_DAYS:
             return "too_early"
-        if self.delta >= MEANINGFUL_POINTS or self.named_after > self.named_before:
+        bar = max(MEANINGFUL_POINTS, self.noise)
+        shift = self.share_after - self.share_before
+        if shift > self.noise or self.delta >= bar:
             return "moved"
-        if self.delta <= -MEANINGFUL_POINTS:
+        if -shift > self.noise or self.delta <= -bar:
             return "worse"
         return "flat"
 
@@ -99,6 +108,16 @@ def evidence(store, client) -> Evidence:
                 out[r.prompt] = out.get(r.prompt, False) or r.mentioned
         return out
 
+    from .scoring import presence_margin
+
+    def share(audit) -> tuple[float, float]:
+        ok = [r for r in audit.results if not r.error]
+        hits = sum(1 for r in ok if r.mentioned)
+        return (100 * hits / len(ok) if ok else 0.0), presence_margin(hits, len(ok))
+
+    (ev.share_before, m1), (ev.share_after, m2) = share(first), share(last)
+    ev.noise = round((m1 * m1 + m2 * m2) ** 0.5, 1)
+
     before, after = named(first), named(last)
     ev.questions = len(after)
     ev.named_before = sum(before.values())
@@ -135,13 +154,16 @@ def write_up(store, client) -> tuple[Evidence, str]:
         f"| Visibility score | {ev.score_before:.0f}/100 | {ev.score_after:.0f}/100 |",
         f"| Named in AI answers | {ev.named_before} of {ev.questions} | "
         f"{ev.named_after} of {ev.questions} |",
+        f"| Share of all answers naming them | {ev.share_before:.0f}% | "
+        f"{ev.share_after:.0f}% |",
     ]
     if ev.top_rival_before:
         rb = ev.top_rival_before
         ra = ev.top_rival_after or ("—", 0)
         lines.append(f"| Most-named competitor | {rb[0]} ({rb[1]}) | {ra[0]} ({ra[1]}) |")
     lines += ["", f"Measured {ev.days} days apart with the same {ev.questions} questions "
-                  f"on the same engines.", ""]
+                  f"on the same engines. AI answers vary from run to run; a change "
+                  f"has to beat ±{ev.noise:.0f} points to count.", ""]
 
     if ev.newly_answered:
         lines += ["## Questions they now show up for", ""]
@@ -166,8 +188,10 @@ def write_up(store, client) -> tuple[Evidence, str]:
                   f"with the dates and the method above attached.", ""]
     elif ev.verdict == "flat":
         lines += ["## Verdict", "", f"**Do not publish this.** The score moved "
-                  f"{ev.delta:+.0f} points, which is inside normal month-to-month "
-                  f"variation. Keep going, or find out why not (are the fixes live?).", ""]
+                  f"{ev.delta:+.0f} points and the share of answers "
+                  f"{ev.share_after - ev.share_before:+.0f}, inside the ±{ev.noise:.0f} "
+                  f"that AI answers vary by on their own. Keep going, or find out why "
+                  f"not (are the fixes live?).", ""]
     else:
         lines += ["## Verdict", "", f"**Do not publish this.** Visibility went down "
                   f"{abs(ev.delta):.0f} points. Work out why before selling this service "

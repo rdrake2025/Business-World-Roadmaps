@@ -9,7 +9,7 @@ and there is no page two to be on. AnswerRank measures whether a business is
 being named, and does the work to change it.
 
 - **Target:** $5,000/month profit on ~7 clients
-- **Margin:** ~95% (a full 10-prompt, 4-engine audit costs $0.06; the retainer is $997)
+- **Margin:** ~95% (a client's monthly audit, with live web search, costs about $1.50; the retainer is $997)
 - **Human time:** ~5 hours/week — sales calls and approving outreach
 
 ---
@@ -201,8 +201,9 @@ outreach — treat it like a password; restarting issues a new one.
 | `onboarder` | 30m | Writes the welcome the hour a client signs, not the week after |
 | `scout` | 6h | Finds local businesses in defensible verticals, dedupes by domain |
 | `prospector` | 2h | Reads the contact page a business publishes and records the address |
-| `auditor` | 1h | Teaser audits on prospects, full audits for clients |
-| `fixer` | 6h | Generates JSON-LD schema, FAQ copy, GBP and citation plans |
+| `auditor` | 1h | Checks what ChatGPT, Google, Perplexity and Claude tell a customer in that town (live web search), 20 prospects a day and each client monthly |
+| `citations` | 24h | Finds the sites the engines quote for a trade and town, and whether the business and its rival are on them |
+| `fixer` | 6h | Builds each month's work in the order the 2026 ranking-factor research supports |
 | `reporter` | 12h | Renders branded monthly client reports |
 | `outreach` | 4h | Drafts evidence-backed, CAN-SPAM-compliant email |
 | `bookkeeper` | 24h | Bills clients, books costs, tracks the target |
@@ -238,6 +239,16 @@ on. The Analyst runs late, once the tick has produced whatever it is going to,
 and the Strategist runs last so its single recommendation is made with the
 Analyst's findings already written.
 
+### Grounded in published research
+
+The rules the agents follow because of outside research — what AI engines
+cite for local businesses, how much their answers vary, what moves them, what
+cold email and cold calls actually earn, what the mailbox providers require —
+each cite their source in `answerrank/evidence.py`, readable as
+[`business/08_RESEARCH.md`](business/08_RESEARCH.md). A test fails if a rule
+cites research that is not there, and the Researcher flags any entry past its
+shelf life, because AI search changes by the quarter.
+
 ### A researcher for every agent
 
 The fleet acts. The Analyst measures the funnel. Nothing asked whether each
@@ -255,7 +266,8 @@ agent leaves in the database and answers one question about it:
 | onboarder | Do new clients actually hear from us? |
 | scout | Is discovery finding businesses actually worth pitching? |
 | prospector | Can the businesses we find actually be reached? |
-| auditor | Do the questions we ask measure anything? |
+| auditor | Do the questions we ask measure anything, and do they reflect a live search? |
+| citations | Do we check the sites the engines actually quote here? |
 | fixer | Does the work we deliver actually move the score? |
 | reporter | Do the monthly reports start a conversation? |
 | outreach | Which part of the sequence earns replies? |
@@ -267,13 +279,13 @@ agent leaves in the database and answers one question about it:
 
 They are subordinate: they investigate and report, they never act. Acting is
 the operator's decision, or the Strategist's. A single coordinator runs all
-thirteen so the fleet stays legible — twenty-six entries in the agent list
+fourteen so the fleet stays legible — twenty-six entries in the agent list
 would be a worse tool, not a better one — while each researcher remains a
 separate, named, separately tested unit.
 
 **A researcher with insufficient evidence returns nothing.** Silence is the
-correct and common output. Thirteen researchers each inventing a finding every
-cycle would be thirteen things the operator stops reading by the end of the
+correct and common output. Fourteen researchers each inventing a finding every
+cycle would be fourteen things the operator stops reading by the end of the
 first week, and the one real finding would be lost among twelve pieces of
 filler. Every finding carries the arithmetic it rests on, so the reasoning can
 be checked rather than trusted.
@@ -576,6 +588,7 @@ the business rather than costing a day:
 | [Operations manual](business/05_OPERATIONS.md) | Daily rhythm, systemd, backups, troubleshooting |
 | [Budget & schedule](business/06_BUDGET_AND_SCHEDULE.md) | Phased spending, runway, profit splits, quit threshold |
 | [Deployment](business/07_DEPLOYMENT.md) | Laptop, VPS, Docker, backups, monitoring |
+| [The research](business/08_RESEARCH.md) | What the agents' rules rest on, with sources and shelf lives |
 | [Service agreement](business/contracts/SERVICE_AGREEMENT.md) | Client contract template |
 | [Client onboarding](business/contracts/CLIENT_WELCOME_EMAIL.md) | Welcome sequence and retention emails |
 

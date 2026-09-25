@@ -28,6 +28,13 @@ log = logging.getLogger("answerrank.audit")
 
 DEPTHS = {"teaser": 4, "full": 10, "deep": 16}
 
+#: Estimated USD per probe, with web search: OpenAI $10/1k searches plus
+#: tokens on gpt-5-mini; Anthropic $10/1k searches (up to two) plus the
+#: tokens results add; Perplexity Sonar's request fee plus tokens; one
+#: Serper query. Checked against the providers' pricing pages, Sept 2026.
+ENGINE_COST = {"openai": 0.015, "anthropic": 0.03, "perplexity": 0.007,
+               "google_aio": 0.001, "mock": 0.0}
+
 
 def run_audit(business: Business, settings: Settings, depth: str = "full",
               engines: list[AnswerEngine] | None = None,
@@ -40,9 +47,15 @@ def run_audit(business: Business, settings: Settings, depth: str = "full",
     """
     limit = DEPTHS.get(depth, DEPTHS["full"])
     engine_names = settings.available_engines()
+    if depth == "teaser":
+        chosen = [n for n in (getattr(settings, "teaser_engines", None) or [])
+                  if n in engine_names]
+        engine_names = chosen or engine_names
     engines = engines or build_engines(
-        engine_names, business.name, business.vertical, settings.request_timeout
+        engine_names, business.name, business.vertical, settings.request_timeout,
+        city=business.city, state=business.state,
     )
+    repeats = 1 if depth == "teaser" else max(1, int(getattr(settings, "probe_repeats", 1)))
 
     prompts = build_prompts(business.vertical, business.city, business.state, limit)
     audit = Audit(
@@ -53,7 +66,8 @@ def run_audit(business: Business, settings: Settings, depth: str = "full",
         is_free_teaser=(depth == "teaser"),
     )
 
-    jobs = [(engine, prompt, intent) for prompt, intent in prompts for engine in engines]
+    jobs = [(engine, prompt, intent) for prompt, intent in prompts
+            for engine in engines for _ in range(repeats)]
 
     def probe(job) -> ProbeResult:
         engine, prompt, _intent = job
@@ -80,6 +94,7 @@ def run_audit(business: Business, settings: Settings, depth: str = "full",
             sources=answer.sources[:8],
             sentiment=str(signals["sentiment"]),
             latency_ms=answer.latency_ms,
+            grounded=bool(getattr(answer, "grounded", False)),
         )
 
     # Probes are independent network calls; run them concurrently so a
@@ -88,6 +103,8 @@ def run_audit(business: Business, settings: Settings, depth: str = "full",
         audit.results = list(pool.map(probe, jobs))
 
     audit = score_audit(audit)
+    audit.cost = round(sum(ENGINE_COST.get(r.engine, 0.01)
+                           for r in audit.results if not r.error), 4)
 
     if check_crawlers and business.website:
         access = crawlers.check_access(business.website, settings.request_timeout)
@@ -109,8 +126,14 @@ def run_audit(business: Business, settings: Settings, depth: str = "full",
     return audit
 
 
-def estimate_cost(depth: str, engine_count: int) -> float:
-    """Rough USD cost of one audit. Drives the margin model in the P&L."""
-    # Measured against small-model pricing: ~600 output tokens per probe.
-    per_probe = 0.0015
-    return round(DEPTHS.get(depth, 10) * engine_count * per_probe, 4)
+def estimate_cost(depth: str, engines, repeats: int = 3) -> float:
+    """Rough USD cost of one audit, before it runs.
+
+    ``engines`` is a list of engine names, or a count (then priced at a
+    typical engine). After an audit has run, ``audit.cost`` is the figure to
+    book: it counts the probes that actually happened.
+    """
+    per = (sum(ENGINE_COST.get(n, 0.01) for n in engines)
+           if isinstance(engines, (list, tuple)) else float(engines) * 0.012)
+    reps = 1 if depth == "teaser" else max(1, repeats)
+    return round(DEPTHS.get(depth, 10) * per * reps, 4)

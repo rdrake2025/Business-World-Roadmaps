@@ -455,7 +455,10 @@ class TestBudget(unittest.TestCase):
         from answerrank.budget import phase_cost
         one_time, monthly = phase_cost("0_test")
         self.assertLess(one_time, 50)
-        self.assertLess(monthly, 20)
+        # Live web-search checks (about 5.5 cents each) are most of this; the
+        # memory-only checks they replaced cost pennies and measured nothing
+        # a customer sees.
+        self.assertLess(monthly, 60)
 
     def test_phases_are_cumulative(self):
         from answerrank.budget import cumulative_monthly
@@ -842,7 +845,7 @@ class TestConsoleAuth(unittest.TestCase):
                       vertical=biz.vertical, score=20.0, results=[ProbeResult(
                           probe_id="p", engine="openai", prompt="best plumber in Waco",
                           answer_text="...", mentioned=False, cited=False, position=None,
-                          competitors=["Brazos Plumbing"])])
+                          competitors=["Brazos Plumbing"], grounded=True)])
         self.store.save_audit(audit)
         p = Prospect(business=biz, stage="audited", score=20.0, competitor_gap=40.0,
                      last_audit_id=audit.id)
@@ -1156,7 +1159,19 @@ class TestOutreachCopy(unittest.TestCase):
     def test_opener_carries_the_money_argument(self):
         from answerrank.agents.outreach import first_touch
         _subject, body = first_touch(self._prospect(), self.settings)
-        self.assertIn("average ticket", body)
+        self.assertIn("average job", body)
+        self.assertIn("a year going elsewhere", body)
+
+    def test_the_first_email_stays_under_eighty_words(self):
+        """58% of replies come from the first email, and the best average
+        under 80 words (Instantly, 2026). This one ran to 95."""
+        from answerrank.agents.outreach import first_touch
+        from answerrank.playbook import sequence_check
+        _subject, body = first_touch(self._prospect(), self.settings)
+        self.assertLess(len(body.split("\n---\n")[0].split()), 80)
+        self.assertEqual(sequence_check(1, body), [])
+        self.assertTrue(sequence_check(1, "Hi,\n" + "word " * 120 + "\nunsubscribe"),
+                        "a long first email is rejected")
 
     def test_every_message_still_carries_compliance(self):
         from answerrank.agents.outreach import first_touch, followup
@@ -1256,8 +1271,11 @@ class TestExplorer(unittest.TestCase):
         self.assertNotEqual(finding["verdict"], "pursue")
 
     def test_exploration_cost_is_booked(self):
+        """What the audits actually cost is booked. A simulated engine costs
+        nothing, so price it for the test rather than book a fake cost."""
         from answerrank.agents.explorer import ExplorerAgent
-        ExplorerAgent(self.store, self.settings, sample_size=2).run()
+        with unittest.mock.patch.dict("answerrank.audit.ENGINE_COST", {"mock": 0.01}):
+            ExplorerAgent(self.store, self.settings, sample_size=2).run()
         self.assertGreater(self.store.cost_breakdown(30).get("api", 0), 0)
 
 
@@ -4296,7 +4314,8 @@ class TestCalling(_Biz):
     TUESDAY_MORNING = datetime(2026, 9, 29, 14, 0, tzinfo=timezone.utc)
 
     def _audited(self, engine="openai", phone="512-555-0100", stage="audited",
-                 name="Ridge Electric", domain="ridgeelectric.com", email=""):
+                 name="Ridge Electric", domain="ridgeelectric.com", email="",
+                 grounded=True):
         biz = Business(name=name, city="Austin", state="TX", vertical="electrical",
                        website=f"https://{domain}", email=email, phone=phone)
         audit = Audit(business_id=biz.id, business_name=biz.name, market=biz.market,
@@ -4307,7 +4326,8 @@ class TestCalling(_Biz):
                           prompt="best electrician in Austin for a panel upgrade",
                           answer_text="Bright Spark Electric and Volt Pros are ...",
                           mentioned=False, cited=False, position=None,
-                          competitors=["Bright Spark Electric", "Volt Pros"])])
+                          competitors=["Bright Spark Electric", "Volt Pros"],
+                          grounded=grounded)])
         self.store.save_audit(audit)
         p = Prospect(business=biz, stage=stage, score=18.0, competitor_gap=50.0,
                      last_audit_id=audit.id)
@@ -4383,6 +4403,23 @@ class TestCalling(_Biz):
         text = " ".join([s["opener"], s["voicemail"], s["if_listening"]])
         self.assertNotIn("Bright Spark", text, "simulated names are never quoted")
         self.assertNotIn(" 0 of 0", text)
+
+    def test_an_answer_from_memory_is_never_quoted(self):
+        """A model asked without web search answers from memory; that is not
+        what ChatGPT tells a customer, so it is not ChatGPT's answer."""
+        from answerrank import calls
+        p = self._audited(grounded=False)
+        ev = calls.evidence(self.store.get_audit(p.last_audit_id))
+        self.assertFalse(ev["real"])
+        self.assertNotIn("Bright Spark", calls.script(p, ev, self.settings)["opener"])
+
+    def test_the_opener_gives_the_reason_first(self):
+        from answerrank import calls
+        p = self._audited()
+        ev = calls.evidence(self.store.get_audit(p.last_audit_id))
+        opener = calls.script(p, ev, self.settings)["opener"]
+        self.assertIn("The reason I'm calling", opener)
+        self.assertNotIn("bad time", opener.lower())
 
     def test_the_script_says_who_is_calling(self):
         from answerrank import calls
@@ -4697,6 +4734,272 @@ class TestKeysLiveSomewhereReal(unittest.TestCase):
                      "server-setup-x.com.sh", "data/answerrank.db"):
             result = subprocess.run(["git", "check-ignore", "-q", name], cwd=root)
             self.assertEqual(result.returncode, 0, f"{name} is not ignored by git")
+
+
+class TestTheResearchIsReal(unittest.TestCase):
+    """Every rule that cites research points at an entry that exists, and
+    every entry says where it came from and when it was last read."""
+
+    def test_every_entry_is_sourced_and_dated(self):
+        from answerrank import evidence
+        for e in evidence.LIBRARY.values():
+            self.assertTrue(e.url.startswith("https://"), e.key)
+            self.assertRegex(e.checked, r"^\d{4}-\d{2}$", e.key)
+            self.assertTrue(e.finding and e.so_we and e.used_by, e.key)
+
+    def test_every_lever_cites_research_that_exists(self):
+        from answerrank import evidence, method
+        cited = set()
+        for phase in method.PHASES:
+            for lever in phase.levers + method.STANDING:
+                for key in lever.evidence:
+                    self.assertIn(key, evidence.LIBRARY, f"{lever.key} cites {key}")
+                    cited.add(key)
+        self.assertIn("ai_visibility_factors", cited)
+
+    def test_the_method_follows_the_2026_factors(self):
+        """Curated lists are the #1 AI factor and service pages #2; schema is
+        #44. The month-one lever used to be schema."""
+        from answerrank import method
+        month = {l.key: p.month for p in method.PHASES for l in p.levers}
+        self.assertEqual(month["service_pages"], 1)
+        self.assertLessEqual(month["curated_lists"], 2)
+        self.assertIn("third_party_reviews", month)
+        schema = next(l for l in method.PHASES[0].levers if l.key == "localbusiness_schema")
+        self.assertIn("44th", schema.why)
+
+    def test_the_research_brief_matches_the_library(self):
+        """business/08_RESEARCH.md is generated; regenerate it with
+        `python run.py evidence > business/08_RESEARCH.md` after an edit."""
+        from answerrank import evidence
+        doc = pathlib.Path(__file__).resolve().parent.parent / "business" / "08_RESEARCH.md"
+        self.assertEqual(doc.read_text(encoding="utf-8"), evidence.as_markdown())
+
+    def test_stale_research_is_flagged(self):
+        from datetime import date
+        from answerrank import evidence
+        from answerrank.agents.researcher import ResearcherAgent
+        self.assertEqual(evidence.overdue(date(2026, 9, 25)), [])
+        later = evidence.overdue(date(2027, 12, 1))
+        self.assertTrue(later)
+        d = pathlib.Path(tempfile.mkdtemp())
+        s = make_settings(str(d))
+        with unittest.mock.patch.object(evidence, "overdue", lambda today=None: later):
+            found = ResearcherAgent(Store(s.database_path), s).investigate()
+        self.assertTrue(any("re-check" in f.claim for f in found))
+
+
+class TestCitationAgent(_Biz):
+    """Where the engines look for this trade here, and who is on it."""
+
+    def _audit_with_sources(self, biz, sources, competitor="Heart of Texas Plumbing"):
+        a = Audit(business_id=biz.id, business_name=biz.name, market=biz.market,
+                  vertical=biz.vertical, score=20.0, competitors={competitor: 3})
+        a.results = [ProbeResult(probe_id=f"p{i}", engine="openai", prompt=f"q{i}",
+                                 answer_text="", mentioned=False, cited=False,
+                                 position=None, competitors=[competitor],
+                                 sources=sources, grounded=True) for i in range(4)]
+        self.store.save_audit(a)
+        return a
+
+    @staticmethod
+    def _search(on):
+        """A fake site search: `on` is {(domain, name)} pairs that exist."""
+        def search(q):
+            import re
+            domain = re.search(r"site:(\S+)", q).group(1)
+            name = re.search(r'"([^"]+)"', q).group(1)
+            return [{"title": f"{name} - {domain}", "snippet": ""}] if (domain, name) in on else []
+        return search
+
+    def test_it_reads_where_the_engines_looked(self):
+        from answerrank import citations
+        biz = Business(name="Hill Plumbing", city="Waco", state="TX", vertical="plumbing",
+                       website="https://hillplumbing.com")
+        a = self._audit_with_sources(biz, [
+            "https://www.expertise.com/tx/waco/plumbing", "https://hillplumbing.com/x",
+            "https://www.bbb.org/us/tx/waco/profile/x", "https://www.facebook.com/x"])
+        cited = citations.cited_domains([a], biz.website)
+        self.assertEqual(cited["expertise.com"], 4)
+        self.assertNotIn("hillplumbing.com", cited, "their own site is not a listing")
+        self.assertNotIn("facebook.com", cited)
+        kinds = [k for _d, _l, k in citations.targets(cited)]
+        self.assertEqual(kinds[:2], ["curated", "curated"])
+
+    def test_a_client_gets_the_gap_list_and_the_fixer_hands_it_over(self):
+        from answerrank.agents.citations import CitationAgent
+        prospect = self._prospect()
+        won = self._api().win(prospect.id, "pilot")
+        client = self.store.get_client(won["client_id"])
+        self._audit_with_sources(client.business, ["https://www.expertise.com/x"],
+                                 competitor="Bright Spark Electric")
+        on = {("expertise.com", "Bright Spark Electric"), ("bbb.org", "Ridge Electric")}
+        places = lambda q: [{"title": "Ridge Electric", "rating": 4.6, "ratingCount": 31}]  # noqa: E731
+        n, summary = CitationAgent(self.store, self.settings, search=self._search(on),
+                                   places=places).execute()
+        self.assertGreaterEqual(n, 1)
+        check = self.store.citation_checks(client.business.id)[0]
+        self.assertEqual(check["reviews"], {"rating": 4.6, "count": 31})
+        gaps = [r["label"] for r in __import__("answerrank.citations", fromlist=["x"]).gaps(check)]
+        self.assertEqual(gaps, ["Expertise.com"])
+        files = FixerAgent(self.store, self.settings).build_for(
+            client.business, self.store.audit_history(client.business.id, 1)[0], 2)
+        report = next(d for d in files if d.kind == "where_engines_look")
+        self.assertIn("Bright Spark Electric is on it", report.body)
+
+    def test_without_a_search_key_it_does_nothing_and_says_so(self):
+        from answerrank.agents.citations import CitationAgent
+        n, summary = CitationAgent(self.store, self.settings).execute()
+        self.assertEqual(n, 0)
+        self.assertIn("no search key", summary)
+
+    def test_the_call_screen_gets_the_list_gap(self):
+        from answerrank.agents.citations import CitationAgent
+        p = self._prospect(stage="audited")
+        a = self._audit_with_sources(p.business, [], competitor="Bright Spark Electric")
+        p.last_audit_id = a.id
+        self.store.upsert_prospect(p)
+        on = {("threebestrated.com", "Bright Spark Electric")}
+        CitationAgent(self.store, self.settings, search=self._search(on),
+                      places=lambda q: []).execute()
+        sheet = self._api().call_sheet(p.id)
+        self.assertIn("Three Best Rated", sheet["evidence"]["listing"])
+        self.assertIn("Three Best Rated", sheet["script"]["if_listening"])
+
+    def test_retention_notices_reviews_standing_still(self):
+        from answerrank.agents.retention import RetentionAgent
+        prospect = self._prospect()
+        won = self._api().win(prospect.id, "pilot")
+        client = self.store.get_client(won["client_id"])
+        for ago in (40, 0):
+            self.store.save_citation_check(client.business.id, {
+                "checked_at": (datetime.now(timezone.utc) - timedelta(days=ago)).isoformat(
+                    timespec="seconds"),
+                "rows": [], "competitor": "", "reviews": {"rating": 3.8, "count": 12}})
+        health = next(h for h in RetentionAgent(self.store, self.settings).portfolio()
+                      if h.client_id == client.id)
+        text = " ".join(health.signals)
+        self.assertIn("No new Google reviews in 40 days", text)
+        self.assertIn("under 4 stars", text)
+
+
+class TestEnginesAskLikeACustomer(unittest.TestCase):
+    """The ChatGPT check asked a model with no search, from nowhere, so it
+    answered from memory. Customers get a web search from their town."""
+
+    RESPONSES = {"output": [
+        {"type": "web_search_call", "id": "ws_1", "status": "completed"},
+        {"type": "message", "content": [{
+            "type": "output_text",
+            "text": "1. Brazos Valley Plumbing\n2. Heart of Texas Plumbing",
+            "annotations": [
+                {"type": "url_citation", "url": "https://www.expertise.com/tx/waco/plumbing"},
+                {"type": "url_citation", "url": "https://brazosvalleyplumbing.com/"}]}]}]}
+
+    def test_the_chatgpt_check_searches_from_their_town(self):
+        from answerrank.engines import live
+        sent = {}
+
+        def fake_post(url, headers, payload, timeout):
+            sent.update(url=url, payload=payload)
+            return self.RESPONSES, ""
+        eng = live.OpenAIEngine(api_key="k").locate("Waco", "TX")
+        with unittest.mock.patch.object(live, "_post", fake_post):
+            answer = eng.ask("best plumber in Waco")
+        self.assertTrue(sent["url"].endswith("/v1/responses"))
+        tool = sent["payload"]["tools"][0]
+        self.assertEqual(tool["type"], "web_search")
+        self.assertEqual(tool["user_location"]["city"], "Waco")
+        self.assertEqual(tool["user_location"]["region"], "Texas")
+        self.assertEqual(tool["user_location"]["timezone"], "America/Chicago")
+        self.assertTrue(answer.grounded)
+        self.assertIn("Brazos Valley Plumbing", answer.text)
+        self.assertIn("https://www.expertise.com/tx/waco/plumbing", answer.sources)
+
+    def test_without_search_the_answer_is_marked_from_memory(self):
+        from answerrank.engines import live
+        replies = iter([(None, "HTTP 400: tool not supported"),
+                        ({"choices": [{"message": {"content": "1. Acme"}}]}, "")])
+        with unittest.mock.patch.object(live, "_post", lambda *a, **k: next(replies)):
+            answer = live.OpenAIEngine(api_key="k").ask("best plumber in Waco")
+        self.assertFalse(answer.grounded)
+        self.assertEqual(answer.text, "1. Acme")
+
+    def test_the_claude_check_searches_twice_at_most(self):
+        from answerrank.engines import live
+        sent = {}
+        content = [
+            {"type": "server_tool_use", "id": "s1", "name": "web_search",
+             "input": {"query": "best plumber Waco"}},
+            {"type": "web_search_tool_result", "tool_use_id": "s1", "content": [
+                {"type": "web_search_result", "url": "https://www.bbb.org/x", "title": "BBB"}]},
+            {"type": "text", "text": "Brazos Valley Plumbing is well reviewed.",
+             "citations": [{"type": "web_search_result_location",
+                            "url": "https://www.bbb.org/x", "cited_text": "..."}]}]
+
+        def fake_post(url, headers, payload, timeout):
+            sent.update(payload=payload)
+            return {"content": content}, ""
+        with unittest.mock.patch.object(live, "_post", fake_post):
+            answer = live.AnthropicEngine(api_key="k").locate("Waco", "TX").ask("q")
+        tool = sent["payload"]["tools"][0]
+        self.assertEqual((tool["type"], tool["max_uses"]), ("web_search_20250305", 2))
+        self.assertEqual(tool["user_location"]["country"], "US")
+        self.assertTrue(answer.grounded)
+        self.assertEqual(answer.sources, ["https://www.bbb.org/x"])
+
+    def test_teasers_use_the_cheap_engines_and_client_audits_repeat(self):
+        from answerrank import audit as audit_mod
+        from answerrank.engines.mock import MockEngine
+        s = Settings()
+        s.demo_mode = True
+        chosen = {}
+
+        def fake_build(names, *a, **k):
+            chosen["names"], chosen["city"] = list(names), k.get("city")
+            return [MockEngine(business_name="Hill Plumbing", vertical="plumbing")]
+        biz = Business(name="Hill Plumbing", city="Waco", state="TX", vertical="plumbing")
+        with unittest.mock.patch.object(audit_mod, "build_engines", fake_build), \
+                unittest.mock.patch.object(s, "available_engines",
+                                           lambda: ["openai", "anthropic", "perplexity", "google_aio"]):
+            teaser = audit_mod.run_audit(biz, s, depth="teaser")
+            self.assertEqual(chosen["names"], ["openai", "google_aio"])
+            self.assertEqual(chosen["city"], "Waco")
+            full = audit_mod.run_audit(biz, s, depth="full")
+            self.assertEqual(len(chosen["names"]), 4)
+        self.assertEqual(len(teaser.results), audit_mod.DEPTHS["teaser"])
+        self.assertEqual(len(full.results), audit_mod.DEPTHS["full"] * 3,
+                         "each client question is asked three times")
+        self.assertGreater(teaser.margin, full.margin,
+                           "four answers say less than thirty")
+
+    def test_the_auditor_stops_at_the_daily_cap(self):
+        """Twenty live-search teasers an hour, all day, was $25 a day."""
+        from answerrank.agents.auditor import AuditorAgent
+        d = pathlib.Path(tempfile.mkdtemp())
+        s = make_settings(str(d))
+        s.teaser_audits_per_day = 3
+        store = Store(s.database_path)
+        for i in range(6):
+            store.upsert_prospect(Prospect(business=Business(
+                name=f"Shop {i}", city="Waco", state="TX", vertical="plumbing",
+                website=f"https://shop{i}.com", email=f"a@shop{i}.com")))
+        AuditorAgent(store, s).execute()
+        AuditorAgent(store, s).execute()
+        self.assertEqual(len(store.get_prospects("audited", 100)), 3)
+
+    def test_the_margin_is_honest_at_the_extremes(self):
+        from answerrank.scoring import presence_margin
+        self.assertGreater(presence_margin(0, 4), 20, "0 of 4 is not proof of 0%")
+        self.assertLess(presence_margin(15, 120), 10)
+        self.assertEqual(presence_margin(0, 0), 0.0)
+
+    def test_the_price_of_an_audit(self):
+        from answerrank.audit import estimate_cost
+        teaser = estimate_cost("teaser", ["openai", "google_aio"])
+        client = estimate_cost("full", ["openai", "anthropic", "perplexity", "google_aio"])
+        self.assertLess(teaser, 0.15, "a prospect's teaser stays pennies")
+        self.assertLess(client, 3.0, "a client's monthly audit stays trivial next to the fee")
 
 
 class TestTheOneButton(unittest.TestCase):
@@ -5087,6 +5390,21 @@ class TestCaseStudiesAreHonest(_Biz):
         self.assertEqual(ev.verdict, "moved")
         self.assertIn("q2", text)
         self.assertIn("Worth publishing", text)
+
+    def test_a_change_inside_the_noise_is_not_a_result(self):
+        """Two more answers in ten is what AI answers do on their own
+        (SparkToro, 2026); it used to be written up as a win."""
+        from answerrank import casestudy
+        client = self._client_with(20, 22, 60)
+        for a in self.store.audit_history(client.business.id, limit=5):
+            hits = {"p0", "p1"} if a.score == 20 else {"p0", "p1", "p2", "p3"}
+            for r in a.results:
+                r.mentioned = r.probe_id in hits
+            self.store.save_audit(a)
+        ev, text = casestudy.write_up(self.store, client)
+        self.assertGreater(ev.named_after, ev.named_before)
+        self.assertEqual(ev.verdict, "flat")
+        self.assertIn("Do not publish", text)
 
     def test_no_move_says_do_not_publish(self):
         from answerrank import casestudy

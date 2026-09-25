@@ -63,13 +63,17 @@ def subject_line(business: str, city: str, missed: int, total: int) -> str:
     return min(candidates, key=lambda c: abs(len(c) - 43))
 
 
-def first_touch(prospect: Prospect, settings) -> tuple[str, str]:
+def first_touch(prospect: Prospect, settings, audit=None) -> tuple[str, str]:
     """The opener.
 
-    Held to six sentences. Reply-rate data is unambiguous that emails past
-    roughly a dozen sentences lose about half their responses even when well
-    personalised, and the earlier version of this ran to fifteen. Everything
-    that survived the cut is either evidence about their business or the ask.
+    Under 80 words before the signature. 58% of all cold-email replies come
+    from the first email, and the best-performing first emails average under
+    80 words (Instantly, Cold Email Benchmark Report 2026); this ran to 95.
+    Everything left is evidence about their business, or the ask.
+
+    Given the audit, it quotes one real answer: the question, the engine and
+    who it named. Only an answer from a live search is quoted, for the same
+    reason the call script does: that is what a customer would have seen.
     """
     biz = prospect.business
     v = knowledge.get(biz.vertical)
@@ -103,9 +107,9 @@ def first_touch(prospect: Prospect, settings) -> tuple[str, str]:
     money = ""
     if float(risk["annual_revenue"]) >= 8000:
         money = (
-            f"On a ${v.economics.avg_ticket:,.0f} average ticket that is roughly "
-            f"${float(risk['annual_revenue']):,.0f} a year of first-job revenue going "
-            f"elsewhere \u2014 and that estimate is set deliberately low.")
+            f"At a ${v.economics.avg_ticket:,.0f} average job, that's roughly "
+            f"${float(risk['annual_revenue']):,.0f} a year going elsewhere, "
+            f"estimated low.")
 
     if blocks_engines:
         return subject, playbook.email_body(
@@ -120,15 +124,23 @@ def first_touch(prospect: Prospect, settings) -> tuple[str, str]:
             "to change, plus the check I ran \u2014 no charge either way.",
             f"{settings.brand}\n{settings.website}") + _compliance_block(settings)
 
+    from .. import calls
+    ev = calls.evidence(audit) if audit is not None else {}
+    quote = ""
+    if ev.get("competitor"):
+        named = calls._names([ev["competitor"], *ev.get("also", [])[:1]])
+        quote = (f"I searched Google for \u201c{ev['question']}\u201d and it showed {named}."
+                 if ev.get("engine_key") == "google_aio" else
+                 f"I asked {ev['engine']} \u201c{ev['question']}\u201d and it named {named}.")
+
     body = playbook.email_body(
         "Hi,",
         evidence,
-        "When someone asks an assistant who to call, the answer names two or three "
-        "businesses and the rest are never seen.",
+        quote or ("When someone asks an AI assistant who to call, it names two or "
+                  "three businesses. The rest aren't seen."),
         money,
-        "I put the full check into a one-page report \u2014 which questions you're "
-        "missing, who's named instead, and the three fixes that move it fastest.",
-        'Want it? Reply "yes" and it\'s yours, no charge.',
+        "I wrote up which questions you're missing, who's named instead, and the "
+        'three fixes. Want it? Reply "yes", no charge.',
         f"{settings.brand}\n{settings.website}")
 
     return subject, body + _compliance_block(settings)
@@ -307,7 +319,9 @@ class OutreachAgent(Agent):
                 skipped += 1
                 continue
 
-            subject, body = first_touch(prospect, self.settings)
+            audit = (self.store.get_audit(prospect.last_audit_id)
+                     if prospect.last_audit_id else None)
+            subject, body = first_touch(prospect, self.settings, audit)
             if not self._passes_discipline(1, body, prospect):
                 skipped += 1
                 continue

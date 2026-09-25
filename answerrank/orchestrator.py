@@ -37,6 +37,7 @@ from .agents.outreach import OutreachAgent
 from .agents.prospector import ProspectorAgent
 from .agents.reporter import ReporterAgent
 from .agents.researcher import ResearcherAgent
+from .agents.citations import CitationAgent
 from .agents.retention import RetentionAgent
 from .agents.scout import ScoutAgent
 from .agents.strategist import StrategistAgent
@@ -65,7 +66,7 @@ log = logging.getLogger("answerrank.orchestrator")
 # Researcher runs last of all: studying a half-finished tick tells you about
 # the tick, not about the agent.
 AGENT_ORDER = [ConciergeAgent, OnboarderAgent, ScoutAgent, ProspectorAgent,
-               AuditorAgent,
+               AuditorAgent, CitationAgent,
                FixerAgent, ReporterAgent,
                OutreachAgent, BookkeeperAgent, RetentionAgent, ExplorerAgent,
                AnalystAgent, StrategistAgent, ResearcherAgent]

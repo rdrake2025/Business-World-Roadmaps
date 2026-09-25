@@ -133,6 +133,7 @@ def score_audit(audit: Audit) -> Audit:
     }
 
     audit.subscores = {k: round(v * 100, 1) for k, v in subs.items()}
+    audit.margin = presence_margin(sum(1 for r in results if r.mentioned), n)
     audit.score = round(sum(subs[k] * WEIGHTS[k] for k in WEIGHTS) * 100, 1)
     audit.competitors = dict(competitor_counter.most_common(10))
     audit.competitor_mentions_total = sum(competitor_counter.values())
@@ -141,6 +142,21 @@ def score_audit(audit: Audit) -> Audit:
     }
     audit.findings = generate_findings(audit)
     return audit
+
+
+def presence_margin(named: int, asked: int, z: float = 1.96) -> float:
+    """± points on the share of answers naming the business (Wilson, 95%).
+
+    One sweep is a sample of answers that change run to run; this says how
+    far the true share could be from the one measured. Wilson rather than
+    the textbook interval because it stays honest at 0 of 4 and 4 of 4.
+    """
+    if asked <= 0:
+        return 0.0
+    p = named / asked
+    denom = 1 + z * z / asked
+    half = z * ((p * (1 - p) / asked + z * z / (4 * asked * asked)) ** 0.5) / denom
+    return round(100 * half, 1)
 
 
 def share_of_voice(audit: Audit) -> dict[str, float]:
@@ -220,8 +236,9 @@ def generate_findings(audit: Audit) -> list[str]:
     if subs.get("citation", 0) < 20:
         findings.append(
             "The business's own website is almost never used as a source by AI engines. "
-            "This is the single highest-leverage fix: structured data and answer-shaped "
-            "pages make a site quotable."
+            "For home services most engines cite the contractor's own site more than "
+            "anything else, and a dedicated page per service is the second-strongest "
+            "AI-visibility factor (Whitespark 2026): that is the fix."
         )
 
     weak = [e for e, v in audit.engine_breakdown.items() if v < 25]
@@ -236,9 +253,12 @@ def generate_findings(audit: Audit) -> list[str]:
         )
 
     if subs.get("prominence", 0) < 30 and mentions:
+        # The order of names in an AI answer changes almost every run
+        # (SparkToro, 2026), so this is stated as a tendency, never a rank.
         findings.append(
-            "When the business is named, it ranks low in the list. Assistants surface the "
-            "first two or three names; ranking below that captures little traffic."
+            "When the business is named, it tends to come after its competitors in "
+            "the list. The order changes from one answer to the next, so how often it "
+            "is named matters more; being named first more often follows from that."
         )
     return findings
 

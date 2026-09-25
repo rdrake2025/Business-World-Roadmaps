@@ -287,6 +287,9 @@ class EngineAnswer:
     sources: list[str]
     latency_ms: int = 0
     error: str = ""
+    #: Answered from a live web search, as the consumer product does, rather
+    #: than from a model's memory. Only grounded answers are quoted to anyone.
+    grounded: bool = False
 
 
 class AnswerEngine(ABC):
@@ -298,6 +301,14 @@ class AnswerEngine(ABC):
     #: Relative weight in the composite score. Engines with more buyer traffic
     #: matter more; these reflect late-2026 assistant usage share.
     weight: float = 1.0
+
+    #: Where the question is asked from, for engines that can localise.
+    city: str = ""
+    state: str = ""
+
+    def locate(self, city: str, state: str) -> "AnswerEngine":
+        self.city, self.state = city or "", state or ""
+        return self
 
     @abstractmethod
     def ask(self, prompt: str) -> EngineAnswer:

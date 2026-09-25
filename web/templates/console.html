@@ -790,7 +790,8 @@
           esc(ev.question) + '” and it named <b>' + esc(ev.competitor) +
           '</b>, not them.</div>' : '') +
         '<div class="finding">Named in ' + ev.named + ' of ' + ev.asked +
-          ' AI answers · score ' + ev.score + '/100</div>'
+          ' AI answers · score ' + ev.score + '/100</div>' +
+        (ev.listing ? '<div class="finding">' + esc(ev.listing) + '</div>' : '')
       : '<div class="finding" style="background:var(--accent-soft);color:var(--ink)">' +
           '<b>No real check yet.</b> Nothing here is from a real AI answer, so don’t ' +
           'quote any of it. Save an OpenAI key (AnswerRank button, Keys and settings) and the fleet re-checks them.</div>';
