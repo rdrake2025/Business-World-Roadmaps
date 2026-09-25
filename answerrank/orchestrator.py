@@ -37,7 +37,9 @@ from .agents.outreach import OutreachAgent
 from .agents.prospector import ProspectorAgent
 from .agents.reporter import ReporterAgent
 from .agents.researcher import ResearcherAgent
+from .agents.briefing import BriefingAgent
 from .agents.citations import CitationAgent
+from .agents.sender import SenderAgent
 from .agents.retention import RetentionAgent
 from .agents.scout import ScoutAgent
 from .agents.strategist import StrategistAgent
@@ -68,8 +70,8 @@ log = logging.getLogger("answerrank.orchestrator")
 AGENT_ORDER = [ConciergeAgent, OnboarderAgent, ScoutAgent, ProspectorAgent,
                AuditorAgent, CitationAgent,
                FixerAgent, ReporterAgent,
-               OutreachAgent, BookkeeperAgent, RetentionAgent, ExplorerAgent,
-               AnalystAgent, StrategistAgent, ResearcherAgent]
+               OutreachAgent, SenderAgent, BookkeeperAgent, RetentionAgent, ExplorerAgent,
+               AnalystAgent, StrategistAgent, BriefingAgent, ResearcherAgent]
 
 
 def build_fleet(store: Store, settings: Settings) -> list[Agent]:

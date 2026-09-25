@@ -236,8 +236,8 @@ class OutreachAgent(Agent):
             or "SET_YOUR" in self.settings.physical_address
         ):
             problems.append(
-                "CAN-SPAM: no physical postal address configured "
-                "(set `physical_address` in answerrank.yml)."
+                "No postal address yet (the law requires one in every email). "
+                "Add it in Keys and settings on the AnswerRank button."
             )
         if pol.require_unsubscribe and not self.settings.website:
             problems.append("CAN-SPAM: no unsubscribe URL host configured (`website`).")
@@ -352,9 +352,12 @@ class OutreachAgent(Agent):
             subject, body = followup(prospect, step, self.settings)
             if not self._passes_discipline(step, body, prospect):
                 continue
+            from .. import automation
             self.store.save_message(OutreachMessage(
                 prospect_id=prospect.id, subject=subject, body=body,
-                sequence_step=step, status="drafted",
+                sequence_step=step,
+                status=("approved" if automation.enabled(self.store, "approve_followups")
+                        else "drafted"),
                 scheduled_for=now.isoformat(timespec="seconds"),
             ))
             prospect.stage = "following_up"

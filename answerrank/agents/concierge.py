@@ -533,9 +533,12 @@ class ConciergeAgent(Agent):
 
         message_id = ""
         if body:
+            from .. import automation
+            auto = kind == "report" and automation.enabled(self.store, "approve_reports")
             message = OutreachMessage(
                 prospect_id=prospect.id, subject=subject, body=body,
-                sequence_step=prospect.touches + 1, status="drafted", kind=kind,
+                sequence_step=prospect.touches + 1,
+                status="approved" if auto else "drafted", kind=kind,
                 scheduled_for=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             )
             self.store.save_message(message)

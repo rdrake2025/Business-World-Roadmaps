@@ -206,11 +206,13 @@ outreach — treat it like a password; restarting issues a new one.
 | `fixer` | 6h | Builds each month's work in the order the 2026 ranking-factor research supports |
 | `reporter` | 12h | Renders branded monthly client reports |
 | `outreach` | 4h | Drafts evidence-backed, CAN-SPAM-compliant email |
+| `sender` | 15m | Sends what you approved in sending hours, so you never tap Send |
 | `bookkeeper` | 24h | Bills clients, books costs, tracks the target |
 | `retention` | 24h | Scores client health and names the one action per account |
 | `explorer` | 12h | Samples candidate markets to find the next vertical worth entering |
 | `analyst` | 12h | Reads recorded outcomes and reports what is actually converting |
 | `strategist` | 24h | Reads the evidence and recommends the single next move |
+| `briefing` | 15m | Emails the day's list at 7am, and alerts when someone is ready to buy or pays |
 | `researcher` | 6h | Runs a researcher against every agent and reports what holds |
 
 The orchestrator runs them on independent schedules in one process, started
@@ -271,21 +273,23 @@ agent leaves in the database and answers one question about it:
 | fixer | Does the work we deliver actually move the score? |
 | reporter | Do the monthly reports start a conversation? |
 | outreach | Which part of the sequence earns replies? |
+| sender | Do the emails you approve actually leave? |
 | bookkeeper | Is any cost growing faster than the business? |
 | retention | Does the health score see a churn coming? |
 | explorer | Were our guesses about a market right when we measured it? |
 | analyst | Is the Analyst concluding on enough evidence? |
 | strategist | Is the recommended move ever acted on? |
+| briefing | Does your morning briefing reach you? |
 
 They are subordinate: they investigate and report, they never act. Acting is
 the operator's decision, or the Strategist's. A single coordinator runs all
-fourteen so the fleet stays legible — twenty-six entries in the agent list
+sixteen so the fleet stays legible — twenty-six entries in the agent list
 would be a worse tool, not a better one — while each researcher remains a
 separate, named, separately tested unit.
 
 **A researcher with insufficient evidence returns nothing.** Silence is the
-correct and common output. Fourteen researchers each inventing a finding every
-cycle would be fourteen things the operator stops reading by the end of the
+correct and common output. Sixteen researchers each inventing a finding every
+cycle would be sixteen things the operator stops reading by the end of the
 first week, and the one real finding would be lost among twelve pieces of
 filler. Every finding carries the arithmetic it rests on, so the reasoning can
 be checked rather than trusted.

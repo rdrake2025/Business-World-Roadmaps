@@ -212,6 +212,35 @@ def test_imap(host: str, user: str, password: str) -> str:
         return f"could not reach {host}: {exc}"
 
 
+ZONES = [("Eastern", "America/New_York"), ("Central", "America/Chicago"),
+         ("Mountain", "America/Denver"), ("Arizona", "America/Phoenix"),
+         ("Pacific", "America/Los_Angeles"), ("Alaska", "America/Anchorage"),
+         ("Hawaii", "Pacific/Honolulu")]
+
+
+def _ask_briefing(settings, config_path: Path, ask, say) -> None:
+    """Where the morning briefing goes, and the clock it keeps."""
+    say("\n  Every morning you get one email with the day's list, most urgent first, "
+        "plus an alert when someone is ready to buy or pays.")
+    now = getattr(settings, "briefing_email", "") or ""
+    entered = ask(f"  Send it to [{now or 'the mailbox you send from'}]: ").strip()
+    if entered and "@" in entered and entered != now:
+        set_setting("briefing_email", entered, config_path)
+        settings.briefing_email = entered
+    elif entered and "@" not in entered:
+        say("    That isn't an email address. Skipped.")
+
+    current = getattr(settings, "timezone", "") or ""
+    names = "  ".join(f"{i} {n}" for i, (n, _z) in enumerate(ZONES, 1))
+    shown = next((n for n, z in ZONES if z == current), current or "from your first city")
+    entered = ask(f"  Your time zone: {names} [{shown}]: ").strip()
+    if entered.isdigit() and 1 <= int(entered) <= len(ZONES):
+        zone = ZONES[int(entered) - 1][1]
+        if zone != current:
+            set_setting("timezone", zone, config_path)
+            settings.timezone = zone
+
+
 def _ask_targets(settings, config_path: Path, ask, say) -> None:
     """The trade and cities the finder searches, and so the call list."""
     from . import knowledge
@@ -323,6 +352,7 @@ def interactive(settings, path: Path | str = KEYS_FILE,
             set_setting(name, entered, config_path)
             setattr(settings, name, entered)
 
+    _ask_briefing(settings, config_path, ask, say)
     _ask_targets(settings, config_path, ask, say)
 
     current_links = dict(getattr(settings, "payment_links", None) or {})

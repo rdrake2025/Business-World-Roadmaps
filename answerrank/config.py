@@ -140,6 +140,13 @@ class Settings:
     #: Only the call script uses these.
     your_name: str = ""
     callback_phone: str = ""
+    #: Your own time zone (IANA, e.g. "America/Chicago"). Empty means the
+    #: zone of your first city. Decides when the morning briefing arrives and
+    #: when approved emails go out.
+    timezone: str = ""
+    #: Where the morning briefing and instant alerts go. Empty means the
+    #: mailbox you send from.
+    briefing_email: str = ""
     #: What to sell and where. Empty means every trade the price supports,
     #: across the Scout's default cities. Markets are "City, ST".
     trades: list[str] = field(default_factory=list)

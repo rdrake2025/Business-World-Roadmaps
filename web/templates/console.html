@@ -116,6 +116,29 @@
     font-weight:600;text-decoration:none;border:1px solid var(--rule2);color:var(--ink)}
   a.act.primary{background:var(--mark);border-color:var(--mark);color:var(--mark-ink)}
 
+  /* up next + switches */
+  .up{display:flex;gap:11px;align-items:stretch;padding:12px 0;border-bottom:1px solid var(--rule);cursor:pointer}
+  .up:last-child{border-bottom:0;padding-bottom:2px}
+  .up:first-child{padding-top:2px}
+  .up:active{opacity:.6}
+  .up .tone{width:4px;flex:none;border-radius:2px;background:var(--rule2)}
+  .up.hot .tone{background:var(--bad)}
+  .up.now .tone{background:var(--good)}
+  .up.warn .tone{background:var(--warn)}
+  .up.todo .tone{background:var(--mark)}
+  .up .t{font-weight:650;font-size:15px;letter-spacing:-.01em}
+  .up .d{font-size:13px;color:var(--ink2);margin-top:2px;line-height:1.4}
+  .sw{display:flex;gap:12px;align-items:flex-start;padding:11px 0;border-bottom:1px solid var(--rule);cursor:pointer}
+  .sw:last-child{border-bottom:0;padding-bottom:2px}
+  .sw input{width:22px;height:22px;accent-color:var(--mark);margin:1px 0 0;flex:none}
+  .sw .t{font-weight:650;font-size:14.5px}
+  .sw .d{font-size:12.5px;color:var(--ink2);margin-top:2px;line-height:1.4}
+  .sess{display:flex;align-items:center;gap:8px;margin:-4px 0 12px;font-size:13px;color:var(--ink2)}
+  .sess b{color:var(--ink)}
+  .sess button{margin-left:auto;padding:7px 12px;border-radius:9px;border:1px solid var(--rule2);
+    background:var(--card);color:var(--ink);font:600 13px inherit;cursor:pointer}
+  .sess button + button{margin-left:0}
+
   /* calls */
   .badge.good{background:var(--good);color:#fff}
   .badge.off{background:var(--sunk);color:var(--muted)}
@@ -251,7 +274,17 @@
     <div id="todayBanner"></div>
 
     <div class="card">
-      <h2>Needs you now</h2>
+      <h2>Up next</h2>
+      <div id="upList"><div class="barnote">Loading…</div></div>
+    </div>
+
+    <div class="card" style="margin-top:11px">
+      <h2>Automatic</h2>
+      <div id="autoList"><div class="barnote">Loading…</div></div>
+    </div>
+
+    <div class="card" style="margin-top:11px">
+      <h2>At a glance</h2>
       <div class="row"><span class="l">Drafts to review</span><span class="r mono" id="tDraft">–</span></div>
       <div class="row"><span class="l">Approved, ready to send</span><span class="r mono" id="tAppr">–</span></div>
       <div class="row"><span class="l">Sent today</span><span class="r mono" id="tSent">–</span></div>
@@ -284,6 +317,8 @@
     <div class="card">
       <h2>Call list</h2>
       <div class="barnote" id="callStats" style="margin-bottom:8px"></div>
+      <div class="acts" style="margin-bottom:10px">
+        <button class="act primary" id="btnStartCalls">Start calling</button></div>
       <div id="callList"><div class="barnote">Loading…</div></div>
     </div>
     <div class="card">
@@ -530,10 +565,14 @@
         '<p>No drafts waiting.<br>The fleet writes more each cycle.</p></div>';
       return;
     }
-    el.innerHTML = d.items.map(function(m){
+    var head = d.followups
+      ? '<div class="acts" style="margin-bottom:11px"><button class="act" id="btnApproveFollow">' +
+        'Approve all ' + d.followups + ' follow-up' + (d.followups === 1 ? '' : 's') +
+        '</button></div>' : '';
+    el.innerHTML = head + d.items.map(function(m){
       return '<div class="msg" data-id="' + m.id + '">' +
         '<div class="biz">' + esc(m.business) +
-          (m.step > 1 ? '<span class="badge">follow-up ' + m.step + '</span>' : '') +
+          '<span class="badge">' + esc(m.kind_label || "") + '</span>' +
         '</div>' +
         '<div class="mkt">' + esc(m.market) + (m.email ? " · " + esc(m.email) : "") + '</div>' +
         (m.evidence ? '<div class="ev">' + esc(m.evidence) + '</div>' : '') +
@@ -731,7 +770,7 @@
       var pip = $("pip");
       if(d.queue.drafted){ pip.hidden = false; pip.textContent = d.queue.drafted; }
       else pip.hidden = true;
-      renderToday(); renderMoney(); renderPipe();
+      renderToday(); renderMoney(); renderPipe(); loadNext();
       if($("pane-inbox").classList.contains("on")) loadInbox();
     }).catch(function(e){
       if(e.message !== "auth") toast("Could not reach the laptop. Is it awake?", 4000);
@@ -795,11 +834,18 @@
       : '<div class="finding" style="background:var(--accent-soft);color:var(--ink)">' +
           '<b>No real check yet.</b> Nothing here is from a real AI answer, so don’t ' +
           'quote any of it. Save an OpenAI key (AnswerRank button, Keys and settings) and the fleet re-checks them.</div>';
-    openSheet('<h3>' + esc(c.name) + '</h3>' +
+    openSheet((session ? '<div class="sess">Call <b>' + (session.i + 1) + '</b> of ' +
+        session.ids.length + (session.logged ? ' · ' + session.logged + ' logged' : '') +
+        '<button id="btnSkipCall">Skip</button><button id="btnEndSession">End</button></div>' : '') +
+      '<h3>' + esc(c.name) + '</h3>' +
       '<div class="who">' + esc(c.trade) + ' · ' + esc(c.market) +
         (c.local ? ' · ' + esc(c.local) + ' there' : '') + '</div>' +
+      (c.meeting ? '<div class="finding" style="background:var(--accent-soft);color:var(--ink)">' +
+        '<b>Walkthrough booked:</b> ' + esc(c.meeting) + ' (their time)</div>' : '') +
       (c.dial ? '<a class="act primary" href="tel:' + esc(c.dial) + '">Call ' +
         esc(c.phone) + '</a>' : '') +
+      (c.report_url ? '<a class="act" style="margin-top:8px" target="_blank" rel="noopener" href="' +
+        esc(c.report_url) + '">Open their full report</a>' : '') +
       '<div class="sh">What the check found</div>' + facts +
       say("Open with", s.opener) +
       say("If they’re listening", s.if_listening) +
@@ -815,7 +861,10 @@
       '<input id="callEmail" type="email" autocomplete="off" ' +
         'placeholder="Their email, for the report" value="' + esc(c.email || "") + '">' +
       '<input id="callNote" autocomplete="off" ' +
-        'placeholder="Note: who you spoke to, when to call back">' +
+        'placeholder="Note: who you spoke to">' +
+      '<div class="barnote" style="margin:2px 0 4px">Time agreed, for Call back later or ' +
+        'Booked a call (your time):</div>' +
+      '<input id="callWhen" type="datetime-local">' +
       '<div class="outs">' + c.outcomes.map(function(o){
         var cls = (o.key === "send_report" || o.key === "booked") ? "go"
           : (o.key === "not_interested" || o.key === "do_not_call") ? "stop" : "";
@@ -843,17 +892,131 @@
     if(outcome === "send_report" && !email){
       toast("Ask for their email first"); $("callEmail").focus(); return;
     }
+    var whenRaw = ($("callWhen") && $("callWhen").value) || "";
+    if(outcome === "booked" && !whenRaw){
+      toast("Pick the day and time you agreed first"); $("callWhen").focus(); return;
+    }
+    var when = whenRaw ? new Date(whenRaw).toISOString() : "";
     if(outcome === "do_not_call" && !confirm("Stop all calls and emails to them?")) return;
     busy = true; btn.disabled = true;
-    api("/api/call", { id: btn.dataset.pid, outcome: outcome, email: email, note: note })
+    api("/api/call", { id: btn.dataset.pid, outcome: outcome, email: email, note: note,
+                       when: when })
       .then(function(r){
         if(r.error){ toast(r.error, 4500); return; }
-        toast(r.label + ". " + r.next, 5500);
-        closeSheet();
+        if(session) session.logged++;
+        if(r.calendar_url){
+          openSheet('<h3>Booked</h3><div class="who">' + esc(r.next) + '</div>' +
+            '<a class="act primary" target="_blank" rel="noopener" href="' +
+              esc(r.calendar_url) + '">Add to my calendar</a>' +
+            (session ? '<div class="acts" style="margin-top:10px">' +
+              '<button class="act" id="btnNextCall">Next call</button></div>' : ''));
+        } else {
+          toast(r.label + ". " + r.next, 4000);
+          if(session) nextCall(); else closeSheet();
+        }
         return load(true);
       })
       .catch(function(){ toast("That didn't go through"); })
       .then(function(){ busy = false; btn.disabled = false; });
+  });
+
+
+  // ---------------------------------------------------------------- up next
+  // One list, most urgent first, each item one tap from done. Replaces
+  // checking five tabs to work out what matters.
+  var AUTO = {};
+  function loadNext(){
+    return api("/api/next").then(function(d){
+      var items = d.items.filter(function(x){ return x.key !== "blocked"; });
+      $("upList")._items = items;
+      $("upList").innerHTML = items.length ? items.map(function(x, i){
+        return '<div class="up ' + esc(x.tone) + '" data-up="' + i + '">' +
+          '<span class="tone"></span><span><div class="t">' + esc(x.title) + '</div>' +
+          '<div class="d">' + esc(x.detail) + '</div></span></div>';
+      }).join("") : '<div class="barnote">All caught up. The fleet is finding and ' +
+        'checking businesses; this fills up as they reply and the call list grows.</div>';
+    }).catch(function(){});
+  }
+  $("upList").addEventListener("click", function(e){
+    var row = e.target.closest("[data-up]");
+    if(!row || busy) return;
+    var a = ($("upList")._items || [])[Number(row.dataset.up)].action || {};
+    if(a.type === "review") showPane("inbox");
+    else if(a.type === "calls") startCalling();
+    else if(a.type === "call") openCall(a.id);
+    else if(a.type === "pane") showPane(a.pane);
+    else if(a.type === "send") $("btnSend").click();
+  });
+
+  function loadAuto(){
+    return api("/api/automation").then(function(d){
+      d.switches.forEach(function(s){ AUTO[s.key] = s.on; });
+      $("autoList").innerHTML = d.switches.map(function(s){
+        return '<label class="sw"><input type="checkbox" data-sw="' + esc(s.key) + '"' +
+          (s.on ? " checked" : "") + '><span><div class="t">' + esc(s.label) + '</div>' +
+          '<div class="d">' + esc(s.explain) + '</div></span></label>';
+      }).join("");
+    }).catch(function(){});
+  }
+  $("autoList").addEventListener("change", function(e){
+    var box = e.target.closest("input[data-sw]");
+    if(!box) return;
+    api("/api/automation", { key: box.dataset.sw, on: box.checked }).then(function(){
+      AUTO[box.dataset.sw] = box.checked;
+      toast(box.checked ? "Switched on" : "Switched off");
+      loadNext();
+    }).catch(function(){ box.checked = !box.checked; toast("That didn't save"); });
+  });
+
+  // ---------------------------------------------------------------- calling
+  // A calling session: log what happened and the next business opens, so a
+  // morning of calls is dial, talk, tap, repeat.
+  var session = null;
+  function openCall(id){
+    return api("/api/call-sheet?id=" + encodeURIComponent(id)).then(callSheet)
+      .catch(function(){ toast("Could not load that one"); });
+  }
+  function startCalling(){
+    api("/api/calls").then(function(d){
+      var ids = d.items.filter(function(x){ return x.window !== "closed"; })
+        .map(function(x){ return x.id; });
+      if(!ids.length) ids = d.items.map(function(x){ return x.id; });
+      if(!ids.length){ toast("Nobody to call right now"); return; }
+      session = { ids: ids, i: 0, logged: 0 };
+      openCall(ids[0]);
+    }).catch(function(){ toast("Could not load the call list"); });
+  }
+  function nextCall(){
+    if(!session) return;
+    session.i++;
+    if(session.i >= session.ids.length){
+      toast("That's the list: " + session.logged + " call" +
+            (session.logged === 1 ? "" : "s") + " logged.", 4500);
+      session = null; closeSheet(); load(true);
+      return;
+    }
+    openCall(session.ids[session.i]);
+  }
+  $("btnStartCalls").addEventListener("click", startCalling);
+  $("sheetBody").addEventListener("click", function(e){
+    if(e.target.closest("#btnNextCall") || e.target.closest("#btnSkipCall")) nextCall();
+    if(e.target.closest("#btnEndSession")){
+      toast(session && session.logged ? session.logged + " calls logged." : "Session ended");
+      session = null; closeSheet(); load(true);
+    }
+  });
+
+  $("inboxList").addEventListener("click", function(e){
+    var btn = e.target.closest("#btnApproveFollow");
+    if(!btn || busy) return;
+    if(!confirm("Approve every follow-up? They are written from the same template as " +
+                "the first emails you already approved.")) return;
+    busy = true; btn.disabled = true;
+    api("/api/approve-followups", {}).then(function(r){
+      toast(r.approved + " approved" + (AUTO.auto_send ? ". They go out in sending hours." : ""));
+      return loadInbox().then(function(){ return load(true); });
+    }).catch(function(){ toast("That didn't go through"); })
+      .then(function(){ busy = false; });
   });
 
   // ---------------------------------------------------------------- events
@@ -888,7 +1051,9 @@
     card.style.opacity = ".45";
     api("/api/" + act, { ids: [id] }).then(function(){
       card.remove();
-      toast(act === "approve" ? "Approved" : "Skipped — won't be contacted");
+      toast(act === "approve"
+        ? "Approved" + (AUTO.auto_send ? ". It goes out in sending hours." : "")
+        : "Skipped — won't be contacted");
       return load(true);
     }).catch(function(){
       card.style.opacity = "1";
@@ -1097,7 +1262,7 @@
     if(on.id === "pane-brain") loadBrain();
   }
 
-  load();
+  load(); loadAuto();
   setInterval(function(){
     if(document.hidden || busy) return;
     load(true).then(refreshVisible);
