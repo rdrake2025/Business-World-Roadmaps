@@ -152,6 +152,11 @@ website: "{website}"
 # CAN-SPAM: required in every commercial email. Sending is blocked without it.
 physical_address: "{address}"
 
+# What to sell and where. KEYS.bat can change both. Markets are "City, ST";
+# leave empty to search the default twelve cities.
+trades: ["{vertical}"]
+markets: []
+
 engines: [openai, anthropic, perplexity, google_aio]
 prompts_per_audit: 10
 tick_seconds: 300

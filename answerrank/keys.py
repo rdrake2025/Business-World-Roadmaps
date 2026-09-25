@@ -148,13 +148,20 @@ def set_payment_links(links: dict[str, str], config_path: Path | str) -> Path:
     return path
 
 
-def set_setting(name: str, value: str, config_path: Path | str) -> Path:
-    """Set one top-level ``name: "value"`` line in answerrank.yml, keeping
-    every other line exactly as it was (same reasoning as above)."""
+def _quote(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def set_setting(name: str, value: str | list[str], config_path: Path | str) -> Path:
+    """Set one top-level ``name: "value"`` (or ``name: ["a", "b"]``) line in
+    answerrank.yml, keeping every other line exactly as it was (same
+    reasoning as above)."""
     path = Path(config_path)
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    quoted = value.replace("\\", "\\\\").replace('"', '\\"')
-    line = f'{name}: "{quoted}"'
+    if isinstance(value, list):
+        line = f"{name}: [{', '.join(_quote(v) for v in value)}]"
+    else:
+        line = f"{name}: {_quote(value)}"
     at = next((i for i, existing in enumerate(lines)
                if re.match(rf"{re.escape(name)}\s*:", existing)), None)
     if at is None:
@@ -203,6 +210,42 @@ def test_imap(host: str, user: str, password: str) -> str:
                 "Gmail > End User Access > POP and IMAP access.")
     except OSError as exc:
         return f"could not reach {host}: {exc}"
+
+
+def _ask_targets(settings, config_path: Path, ask, say) -> None:
+    """The trade and cities the finder searches, and so the call list."""
+    from . import knowledge
+    from .agents.scout import parse_markets
+
+    say("\n  What you sell and where. The system finds businesses there for your "
+        "call list and emails.")
+    now = list(getattr(settings, "trades", None) or [])
+    while True:
+        entered = ask(f"  Trade (e.g. hvac, plumbing, roofing; 'list' for all 22) "
+                      f"[{', '.join(now) or 'all that fit your price'}]: ").strip().lower()
+        if entered == "list":
+            say("    " + ", ".join(knowledge.VERTICALS))
+            continue
+        break
+    if entered:
+        trades = [t.strip() for t in entered.replace(";", ",").split(",") if t.strip()]
+        unknown = [t for t in trades if t not in knowledge.VERTICALS]
+        if unknown:
+            say(f"    Not a trade the system knows: {', '.join(unknown)}. Skipped. "
+                f"Type 'list' to see them.")
+        elif trades != now:
+            set_setting("trades", trades, config_path)
+            settings.trades = trades
+    now = list(getattr(settings, "markets", None) or [])
+    entered = ask(f"  Cities, up to 3, like: Waco, TX; Temple, TX "
+                  f"[{'; '.join(now) or 'the default 12'}]: ").strip()
+    if entered:
+        markets = [f"{c}, {s}" for c, s in parse_markets(entered.split(";"))][:3]
+        if not markets:
+            say("    Couldn't read that. Use City, ST and separate cities with ;")
+        elif markets != now:
+            set_setting("markets", markets, config_path)
+            settings.markets = markets
 
 
 def interactive(settings, path: Path | str = KEYS_FILE,
@@ -269,6 +312,18 @@ def interactive(settings, path: Path | str = KEYS_FILE,
         set_setting("physical_address", address, config_path)
         settings.physical_address = address
         say(f"  Address saved to {config_path.name}.")
+
+    say("\n  For the call script: your first name, and the number a voicemail asks "
+        "them to call back (a free Google Voice number keeps your own private).")
+    for name, label in (("your_name", "Your first name"),
+                        ("callback_phone", "Callback number")):
+        now = getattr(settings, name, "") or ""
+        entered = ask(f"  {label} [{now or 'not set'}]: ").strip()
+        if entered and entered != now:
+            set_setting(name, entered, config_path)
+            setattr(settings, name, entered)
+
+    _ask_targets(settings, config_path, ask, say)
 
     current_links = dict(getattr(settings, "payment_links", None) or {})
     say("\n  Stripe payment links (Stripe > Payment Links > New, with a recurring "

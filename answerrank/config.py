@@ -136,6 +136,14 @@ class Settings:
     #: ISO date the domain started sending. Drives the warm-up ramp; empty
     #: means the ramp has not started and the first send sets it.
     warmup_start: str = ""
+    #: Who is calling, and the number a voicemail asks them to ring back.
+    #: Only the call script uses these.
+    your_name: str = ""
+    callback_phone: str = ""
+    #: What to sell and where. Empty means every trade the price supports,
+    #: across the Scout's default cities. Markets are "City, ST".
+    trades: list[str] = field(default_factory=list)
+    markets: list[str] = field(default_factory=list)
 
     # Which answer engines to probe. Unavailable ones are skipped gracefully.
     engines: list[str] = field(

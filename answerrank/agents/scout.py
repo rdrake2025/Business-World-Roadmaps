@@ -33,6 +33,21 @@ DEFAULT_MARKETS = [
     ("Kansas City", "MO"), ("Boise", "ID"), ("Greenville", "SC"), ("Tucson", "AZ"),
 ]
 
+def parse_markets(values) -> list[tuple[str, str]]:
+    """["Waco, TX", "Temple TX"] -> [("Waco", "TX"), ("Temple", "TX")]."""
+    out = []
+    for raw in values or []:
+        text = str(raw).strip().rstrip(".")
+        if "," in text:
+            city, _, state = text.rpartition(",")
+        else:
+            city, _, state = text.rpartition(" ")
+        city, state = city.strip(), state.strip().upper()
+        if city and len(state) == 2 and state.isalpha():
+            out.append((city, state))
+    return out
+
+
 #: Fallback if nothing is defensible at the configured price.
 FALLBACK_VERTICALS = ["hvac", "plumbing"]
 
@@ -80,8 +95,15 @@ class ScoutAgent(Agent):
         super().__init__(store, settings)
         self.target = target_per_run
         self.seed_file = seed_file or os.environ.get("ANSWERRANK_SEED_FILE", "")
-        self.verticals = defensible_verticals(
+        # The operator's chosen trade and cities win. Until this, the trade
+        # asked for at setup was never saved, and every trade the price
+        # supports was searched across twelve fixed cities, so a first call
+        # list was spread across the country instead of the operator's patch.
+        chosen = [t for t in (getattr(settings, "trades", None) or [])
+                  if t in knowledge.VERTICALS]
+        self.verticals = chosen or defensible_verticals(
             settings.pricing.growth_monthly, settings.pricing.ladder())
+        self.markets = parse_markets(getattr(settings, "markets", None)) or DEFAULT_MARKETS
 
     # ---------------- sources ----------------
 
@@ -156,7 +178,7 @@ class ScoutAgent(Agent):
         for i in range(count):
             n = existing + i
             vert = self.verticals[n % len(self.verticals)]
-            city, state = DEFAULT_MARKETS[(n // len(self.verticals)) % len(DEFAULT_MARKETS)]
+            city, state = self.markets[(n // len(self.verticals)) % len(self.markets)]
             stem = stems[n % len(stems)]
             tag = hashlib.sha1(f"{stem}{vert}{city}{n}".encode()).hexdigest()[:4]
             name = f"{stem} {suffix.get(vert, 'Services')}"
@@ -187,7 +209,7 @@ class ScoutAgent(Agent):
             for vertical in self.verticals:
                 if len(found) >= self.target:
                     break
-                for city, state in DEFAULT_MARKETS:
+                for city, state in self.markets:
                     if len(found) >= self.target:
                         break
                     found.extend(self.from_serper(vertical, city, state))

@@ -835,6 +835,32 @@ class TestConsoleAuth(unittest.TestCase):
         self.assertEqual(json.loads(raw)["prospect_id"], added["id"],
                          "the sheet that opens next has Sign them up on it")
 
+    def test_the_console_runs_a_call_from_list_to_outcome(self):
+        biz = Business(name="Hill Plumbing", city="Waco", state="TX", vertical="plumbing",
+                       website="https://hillplumbing.com", phone="254-555-0100")
+        audit = Audit(business_id=biz.id, business_name=biz.name, market=biz.market,
+                      vertical=biz.vertical, score=20.0, results=[ProbeResult(
+                          probe_id="p", engine="openai", prompt="best plumber in Waco",
+                          answer_text="...", mentioned=False, cited=False, position=None,
+                          competitors=["Brazos Plumbing"])])
+        self.store.save_audit(audit)
+        p = Prospect(business=biz, stage="audited", score=20.0, competitor_gap=40.0,
+                     last_audit_id=audit.id)
+        self.store.upsert_prospect(p)
+        status, _h, page = self.call("/app", cookie=self.cookie())
+        self.assertIn(b"Call list", page)
+        _s, _h, raw = self.call("/api/calls", cookie=self.cookie())
+        self.assertEqual([i["id"] for i in json.loads(raw)["items"]], [p.id])
+        _s, _h, raw = self.call("/api/call-sheet", qs="id=" + p.id, cookie=self.cookie())
+        sheet = json.loads(raw)
+        self.assertEqual(sheet["dial"], "+12545550100")
+        self.assertIn("Brazos Plumbing", sheet["script"]["opener"])
+        _s, _h, raw = self.call("/api/call", method="POST", cookie=self.cookie(),
+                                body={"id": p.id, "outcome": "voicemail"})
+        self.assertTrue(json.loads(raw)["ok"])
+        _s, _h, raw = self.call("/api/calls", cookie=self.cookie())
+        self.assertEqual(json.loads(raw)["today"]["calls"], 1)
+
     def test_forged_cookie_rejected(self):
         status, _h, _b = self.call("/api/state", cookie="ar_session=forged")
         self.assertTrue(status.startswith("401"))
@@ -4256,6 +4282,195 @@ class _Biz(unittest.TestCase):
     def _api(self):
         from web.api import Api
         return Api(self.store, self.settings)
+
+
+class TestCalling(_Biz):
+    """Email was the only channel, so a business whose email went unanswered,
+    or who published no address, was simply lost."""
+
+    #: A Tuesday at 9:00 in Austin (14:00 UTC, daylight time).
+    TUESDAY_MORNING = datetime(2026, 9, 29, 14, 0, tzinfo=timezone.utc)
+
+    def _audited(self, engine="openai", phone="512-555-0100", stage="audited",
+                 name="Ridge Electric", domain="ridgeelectric.com", email=""):
+        biz = Business(name=name, city="Austin", state="TX", vertical="electrical",
+                       website=f"https://{domain}", email=email, phone=phone)
+        audit = Audit(business_id=biz.id, business_name=biz.name, market=biz.market,
+                      vertical=biz.vertical, score=18.0,
+                      competitors={"Bright Spark Electric": 3},
+                      results=[ProbeResult(
+                          probe_id="p1", engine=engine,
+                          prompt="best electrician in Austin for a panel upgrade",
+                          answer_text="Bright Spark Electric and Volt Pros are ...",
+                          mentioned=False, cited=False, position=None,
+                          competitors=["Bright Spark Electric", "Volt Pros"])])
+        self.store.save_audit(audit)
+        p = Prospect(business=biz, stage=stage, score=18.0, competitor_gap=50.0,
+                     last_audit_id=audit.id)
+        self.store.upsert_prospect(p)
+        return p
+
+    def _list(self, now=None):
+        from answerrank import calls
+        return calls.call_list(self.store, self.settings, now=now or self.TUESDAY_MORNING)
+
+    def _log(self, p, outcome, when=None, **kw):
+        from answerrank import calls
+        result = calls.log_call(self.store, self.settings,
+                                self._api()._prospect(p.id), outcome, **kw)
+        if when is not None:
+            with self.store.writer() as cx:
+                cx.execute("""UPDATE outcomes SET occurred_at = ? WHERE rowid =
+                              (SELECT MAX(rowid) FROM outcomes WHERE prospect_id = ?)""",
+                           (when.isoformat(timespec="seconds"), p.id))
+        return result
+
+    def test_the_list_is_businesses_with_a_phone_and_an_audit(self):
+        from answerrank.agents.scout import SIMULATED_MARKER
+        keep = self._audited()
+        self._audited(phone="", name="No Phone Co", domain="nophone.com")
+        fixture = self._audited(name="Fixture Co", domain="fixture.com")
+        fixture.notes = SIMULATED_MARKER
+        self.store.upsert_prospect(fixture)
+        self._audited(stage="discovered", name="Unaudited Co", domain="unaudited.com")
+        items = self._list()["items"]
+        self.assertEqual([i["id"] for i in items], [keep.id])
+        self.assertEqual(items[0]["dial"], "+15125550100")
+        self.assertEqual(items[0]["local"], "9:00 am")
+        self.assertEqual(items[0]["window"], "good")
+
+    def test_their_clock_not_ours(self):
+        from answerrank import calls
+        utc = timezone.utc
+        summer = datetime(2026, 7, 1, 17, 0, tzinfo=utc)
+        winter = datetime(2026, 1, 15, 17, 0, tzinfo=utc)
+        self.assertEqual(calls.local_time("TX", summer).hour, 12)
+        self.assertEqual(calls.local_time("TX", winter).hour, 11)
+        self.assertEqual(calls.local_time("AZ", summer).hour, 10, "Arizona keeps its clocks")
+        self.assertIsNone(calls.local_time("", summer))
+        for state in ("NY", "TX", "CO", "AZ", "CA", "HI", "AK"):
+            for when in (summer, winter, datetime(2026, 3, 8, 12, tzinfo=utc),
+                         datetime(2026, 11, 1, 12, tzinfo=utc)):
+                self.assertEqual(calls._fallback_local(calls.STATE_TZ[state], when),
+                                 calls.local_time(state, when),
+                                 f"{state} {when}: Windows without tzdata would differ")
+
+    def test_calling_hours(self):
+        from answerrank import calls
+        at = lambda d, h, m=0: datetime(2026, 9, d, h, m)  # noqa: E731
+        self.assertEqual(calls.window(at(29, 8, 30)), "good")
+        self.assertEqual(calls.window(at(29, 12)), "open")
+        self.assertEqual(calls.window(at(29, 19)), "closed")
+        self.assertEqual(calls.window(at(26, 10)), "closed", "Saturday")
+
+    def test_the_script_quotes_only_what_a_real_answer_said(self):
+        from answerrank import calls
+        real = self._audited()
+        ev = calls.evidence(self.store.get_audit(real.last_audit_id))
+        s = calls.script(real, ev, self.settings)
+        self.assertIn("ChatGPT", s["opener"])
+        self.assertIn("Bright Spark Electric", s["opener"])
+        self.assertIn("best electrician in Austin", s["opener"])
+
+        fake = self._audited(engine="mock", name="Mock Co", domain="mock.com")
+        ev = calls.evidence(self.store.get_audit(fake.last_audit_id))
+        self.assertFalse(ev["real"])
+        s = calls.script(fake, ev, self.settings)
+        text = " ".join([s["opener"], s["voicemail"], s["if_listening"]])
+        self.assertNotIn("Bright Spark", text, "simulated names are never quoted")
+        self.assertNotIn(" 0 of 0", text)
+
+    def test_the_script_says_who_is_calling(self):
+        from answerrank import calls
+        p = self._audited()
+        ev = calls.evidence(self.store.get_audit(p.last_audit_id))
+        self.assertIn("[your name]", calls.script(p, ev, self.settings)["voicemail"])
+        self.settings.your_name, self.settings.callback_phone = "Sam", "5125550199"
+        vm = calls.script(p, ev, self.settings)["voicemail"]
+        self.assertIn("Sam", vm)
+        self.assertIn("(512) 555-0199", vm)
+
+    def test_send_the_report_drafts_it_and_takes_them_off_the_list(self):
+        p = self._audited()
+        self.assertIn("error", self._log(p, "send_report"), "an address is needed first")
+        r = self._log(p, "send_report", email="owner@ridgeelectric.com")
+        self.assertTrue(r["ok"])
+        msg = next(m for m in self.store.messages_for(p.id) if m.id == r["message_id"])
+        self.assertEqual(msg.kind, "report")
+        self.assertIn("Thanks for taking my call", msg.body)
+        after = self._api()._prospect(p.id)
+        self.assertEqual(after.stage, "replied")
+        self.assertEqual(after.business.email, "owner@ridgeelectric.com")
+        self.assertEqual(self._list()["items"], [])
+        from answerrank import calls
+        self.assertEqual(calls.today(self.store)["reports"], 1)
+
+    def test_no_answer_comes_back_tomorrow_and_stops_after_four(self):
+        p = self._audited()
+        day = timedelta(days=1)
+        self._log(p, "no_answer", when=self.TUESDAY_MORNING)
+        self.assertEqual(self._list()["items"], [], "not again the same day")
+        self.assertEqual(len(self._list(self.TUESDAY_MORNING + day)["items"]), 1)
+        for n in range(1, 4):
+            self._log(p, "no_answer", when=self.TUESDAY_MORNING + n * day)
+        self.assertEqual(self._list(self.TUESDAY_MORNING + 10 * day)["items"], [],
+                         "four rings is persistent; five is a nuisance")
+
+    def test_no_means_no_calls_and_no_email(self):
+        p = self._audited(email="info@ridgeelectric.com")
+        self.store.save_message(OutreachMessage(
+            prospect_id=p.id, subject="Quick question", body="x", kind="cold",
+            sequence_step=2, status="drafted"))
+        self._log(p, "not_interested")
+        self.assertEqual(self._api()._prospect(p.id).stage, "lost")
+        self.assertTrue(self.store.is_suppressed("info@ridgeelectric.com"))
+        self.assertFalse(any(m.kind == "cold" and m.status == "drafted"
+                             for m in self.store.messages_for(p.id)))
+
+        q = self._audited(name="Volt Pros", domain="voltpros.com", email="hi@voltpros.com")
+        self._log(q, "do_not_call")
+        self.assertEqual(self._api()._prospect(q.id).stage, "suppressed")
+        self.assertTrue(self.store.is_suppressed("hi@voltpros.com"))
+        self.assertEqual(self._list(self.TUESDAY_MORNING + timedelta(days=30))["items"], [])
+
+    def test_a_wrong_number_is_forgotten(self):
+        p = self._audited()
+        self._log(p, "wrong_number")
+        self.assertEqual(self._api()._prospect(p.id).business.phone, "")
+        self.assertEqual(self._list(self.TUESDAY_MORNING + timedelta(days=5))["items"], [])
+
+    def test_no_email_is_a_call_not_a_dead_end(self):
+        """The email agent used to suppress every prospect with no public
+        address, which took them off the call list too."""
+        p = self._audited(email="")
+        OutreachAgent(self.store, self.settings).execute()
+        after = self._api()._prospect(p.id)
+        self.assertEqual(after.stage, "audited")
+        self.assertIn("phone only", after.notes)
+        self.assertEqual([i["id"] for i in self._list()["items"]], [p.id])
+
+    def test_the_finder_searches_your_trade_in_your_cities(self):
+        """The trade chosen at setup was never saved, and every trade the
+        price supports was searched across twelve fixed cities."""
+        self.settings.trades = ["plumbing", "not-a-trade"]
+        self.settings.markets = ["Waco, TX", "Temple TX", "nonsense"]
+        scout = ScoutAgent(self.store, self.settings)
+        self.assertEqual(scout.verticals, ["plumbing"])
+        self.assertEqual(scout.markets, [("Waco", "TX"), ("Temple", "TX")])
+        searched = []
+        with unittest.mock.patch.object(ScoutAgent, "from_serper",
+                                        lambda s, v, c, st: searched.append((v, c)) or []), \
+                unittest.mock.patch.object(self.settings, "api_key",
+                                           lambda name: "k" if name == "serper" else ""):
+            ScoutAgent(self.store, self.settings).execute()
+        self.assertEqual(searched, [("plumbing", "Waco"), ("plumbing", "Temple")])
+
+    def test_numbers(self):
+        from answerrank import calls
+        self.assertEqual(calls.dial_number("(512) 555-0100"), "+15125550100")
+        self.assertEqual(calls.dial_number("1-512-555-0100"), "+15125550100")
+        self.assertEqual(calls.pretty_number("+15125550100"), "(512) 555-0100")
+        self.assertEqual(calls.dial_number(""), "")
 
 
 class TestGettingPaid(_Biz):

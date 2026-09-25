@@ -332,6 +332,18 @@ class Application:
         d = self._body_json(environ)
         return self._json(start, self.api.mark_paid(str(d.get("id", ""))))
 
+    def api_calls(self, environ, start):
+        return self._json(start, self.api.calls())
+
+    def api_call_sheet(self, environ, start):
+        return self._json(start, self.api.call_sheet(_query(environ).get("id", "")))
+
+    def api_call(self, environ, start):
+        d = self._body_json(environ)
+        return self._json(start, self.api.log_call(
+            str(d.get("id", "")), str(d.get("outcome", "")),
+            str(d.get("email", "")), str(d.get("note", ""))))
+
     def api_add(self, environ, start):
         d = self._body_json(environ)
         return self._json(start, self.api.add_business(
@@ -448,6 +460,9 @@ class Application:
             "/api/win": self.api_win,
             "/api/paid": self.api_paid,
             "/api/add": self.api_add,
+            "/api/calls": self.api_calls,
+            "/api/call-sheet": self.api_call_sheet,
+            "/api/call": self.api_call,
             "/api/expense": self.api_expense,
             "/api/markets": self.api_markets,
             "/api/research": self.api_research,

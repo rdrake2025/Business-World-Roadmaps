@@ -9,6 +9,22 @@ Nothing on this list needs you to edit a file or type a command on a server.
 
 ---
 
+## Starting on a Monday
+
+| When | What | Why then |
+| --- | --- | --- |
+| **Friday night** | Steps 1–3 below, first: mailbox, DNS, app password. Then as much of 4–9 as you can. | Google's DKIM wait (24–72 hours) starts when Gmail is switched on. Friday night makes Monday likely; Sunday makes it unlikely. |
+| **Saturday** | Finish 4–10. Once the server is up with your trade and cities, the fleet finds and checks businesses all weekend, and your call list fills up. Get a free Google Voice number if you want your cell private. Call the 2–3 people you know for pilots. | Businesses need to be found and audited before they can be called. |
+| **Sunday** | DKIM, if it's been 24 hours: admin.google.com → Apps → Google Workspace → Gmail → Authenticate email. Read the call list and three audits. Say the opener and the voicemail out loud five times each. Read the first email drafts, but don't send yet. | The script sounds like reading until you've said it a few times. |
+| **Monday 8–9:30am** (their time) | Calls. Tap each name in the call list, dial, tap what happened. | Owners pick up before the first job. |
+| **Monday midday** | If the doctor is all green, send the first 10 emails. If DKIM isn't ready, calls only; email starts the day it is. Send any reports people asked for. | |
+| **Monday 4–6pm** (their time) | Calls again. | After the last job. |
+
+The reports you promise on calls go out as email, so they also wait for DKIM.
+Tell anyone who asks on Monday it'll be with them in a day or two.
+
+---
+
 ## Tonight — about 3 hours
 
 Do them in this order. The server goes last because it copies your keys and
@@ -79,7 +95,9 @@ be your home:
 
 - [ ] Double-click **KEYS.bat**. It asks, in plain words, for the mailbox, the
       app password, whether to read replies automatically (say yes), the AI
-      keys, the Stripe key, the three payment links and the postal address.
+      keys, the Stripe key, the postal address, your first name and callback
+      number (for the call script), **your trade and up to 3 cities** (what the
+      system searches for your call list), and the three payment links.
       It tests the mailbox before saving. Press Enter to keep anything already
       saved — it is safe to run again.
 
@@ -150,6 +168,10 @@ the first email, not after the first client. Every screen is in
 3. **Said yes — waiting for payment.** Updates itself when Stripe sees the
    payment. Tap **They paid** if it does not.
 4. **Fleet.** Any agent red twice in a row is today's first job.
+
+**Plus calling**, as much as you have: 8–9:30am and 4–6pm in *their* time
+zone. Pipeline → **Call list** → tap a name → dial → tap what happened. The
+cold-call script and its rules are in `02_SALES_PLAYBOOK.md`.
 
 ---
 

@@ -625,6 +625,51 @@ class Api:
                 "total_mrr": round(self.store.mrr(), 2),
                 "next": "Welcome email is drafted on the next cycle."}
 
+    # ------------------------------------------------------------------ calls
+
+    def _prospect(self, prospect_id: str):
+        return next((p for p in self.store.get_prospects(limit=10_000)
+                     if p.id == prospect_id), None)
+
+    def calls(self) -> dict[str, Any]:
+        """Who to ring now, best first."""
+        from answerrank import calls
+        return calls.call_list(self.store, self.settings)
+
+    def call_sheet(self, prospect_id: str) -> dict[str, Any]:
+        """Everything needed on one screen while the phone rings."""
+        from answerrank import calls, knowledge
+
+        prospect = self._prospect(prospect_id)
+        if prospect is None:
+            return {"error": "no such prospect"}
+        audit = self.store.get_audit(prospect.last_audit_id) if prospect.last_audit_id \
+            else next(iter(self.store.audit_history(prospect.business.id, limit=1)), None)
+        ev = calls.evidence(audit)
+        local = calls.local_time(prospect.business.state)
+        return {
+            "id": prospect.id, "name": prospect.business.name,
+            "market": prospect.business.market,
+            "trade": knowledge.get(prospect.business.vertical).label,
+            "phone": calls.pretty_number(prospect.business.phone),
+            "dial": calls.dial_number(prospect.business.phone),
+            "email": prospect.business.email,
+            "local": local.strftime("%I:%M %p").lstrip("0").lower() if local else "",
+            "window": calls.window(local),
+            "evidence": ev, "script": calls.script(prospect, ev, self.settings),
+            "outcomes": [{"key": o.key, "label": o.label}
+                         for o in calls.OUTCOMES.values()],
+        }
+
+    def log_call(self, prospect_id: str, outcome: str, email: str = "",
+                 note: str = "") -> dict[str, Any]:
+        from answerrank import calls
+
+        prospect = self._prospect(prospect_id)
+        if prospect is None:
+            return {"error": "no such prospect"}
+        return calls.log_call(self.store, self.settings, prospect, outcome, email, note)
+
     #: Where a prospect already is in the cold sequence. Adding someone you
     #: know by hand takes them out of it.
     _COLD_STAGES = {"discovered", "audited", "queued", "contacted", "following_up"}
