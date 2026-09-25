@@ -13,8 +13,10 @@ record, which is what lets the Analyst measure anything at all.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from .mailer import Mailer
@@ -34,6 +36,65 @@ _SEND_LOCK = threading.Lock()
 
 #: Where the ramp's start date lives once the first real send has happened.
 WARMUP_KEY = "sending.warmup_start"
+
+#: Seconds the automatic sender waits after you approve something on the
+#: phone, so Undo always has time to work. A Send you tap yourself doesn't.
+HOLD_SECONDS = 60
+
+log = logging.getLogger("answerrank.sending")
+
+
+def held(message, now: datetime | None = None, hold: float = HOLD_SECONDS) -> bool:
+    """Approved moments ago, so still inside the Undo window."""
+    if not hold or not getattr(message, "approved_at", ""):
+        return False
+    try:
+        at = datetime.fromisoformat(message.approved_at)
+    except ValueError:
+        return False
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return ((now or datetime.now(timezone.utc)) - at).total_seconds() < hold
+
+
+_KICK: dict[str, Any] = {"timer": None}
+
+
+def kick(store, settings, delay: float = HOLD_SECONDS + 5) -> bool:
+    """Send answers soon after you approve them, not at the next quarter hour.
+
+    Someone who says "send me the link" on the phone should have it before
+    the call ends. This runs the Sender once, just after the Undo window,
+    with every check the Sender applies: the switch, the hours, the DNS
+    check, the caps. Each approval restarts the wait, so a run of approvals
+    goes out together a minute after the last one.
+    """
+    from . import automation
+    from .mailer import SMTPConfig
+
+    if getattr(settings, "demo_mode", False) or not automation.enabled(store, "auto_send") \
+            or not SMTPConfig.from_env().configured():
+        return False
+    pending = _KICK.get("timer")
+    if pending is not None and pending.is_alive():
+        pending.cancel()
+
+    def run() -> None:
+        from .agents.sender import SenderAgent
+        try:
+            SenderAgent(store, settings, background=False).execute()
+            # Something approved while this waited is still in its Undo
+            # window: one more pass for it rather than the next quarter hour.
+            if any(held(m) for m in store.send_queue(500) if (m.kind or "cold") != "cold"):
+                kick(store, settings)
+        except Exception:  # noqa: BLE001 - a missed kick waits for the next cycle
+            log.exception("sending: kick failed")
+
+    timer = threading.Timer(delay, run)
+    timer.daemon = True
+    timer.start()
+    _KICK["timer"] = timer
+    return True
 
 
 def _days_warming(store, settings) -> int:
@@ -67,12 +128,14 @@ def send_batch(store, settings, limit: int = 25, dry_run: bool = False,
                throttle_seconds: float | None = None,
                extra_checks: list[str] | None = None,
                on_event: Callable[[str], None] | None = None,
-               only: str | None = None) -> dict[str, Any]:
+               only: str | None = None, hold: float = 0) -> dict[str, Any]:
     """Deliver up to ``limit`` approved messages. Returns what happened.
 
     ``extra_checks`` lets the CLI add its DNS readiness check, which the
     console cannot run. Anything in it blocks the batch exactly like a
     preflight failure — a caller can add conditions, never remove them.
+    ``hold`` leaves anything approved in the last that-many seconds for the
+    next run (the automatic sender's Undo window).
     """
     from .agents.outreach import OutreachAgent
 
@@ -91,7 +154,7 @@ def send_batch(store, settings, limit: int = 25, dry_run: bool = False,
                 "errors": [], "dry_run": dry_run}
     try:
         return _send_batch_locked(store, settings, limit, dry_run,
-                                  throttle_seconds, say, only)
+                                  throttle_seconds, say, only, hold)
     finally:
         _SEND_LOCK.release()
 
@@ -137,7 +200,7 @@ def bounce_blocker(store, settings, days: int = 14) -> str:
 def _send_batch_locked(store, settings, limit: int, dry_run: bool,
                        throttle_seconds: float | None,
                        say: Callable[[str], None],
-                       only: str | None = None) -> dict[str, Any]:
+                       only: str | None = None, hold: float = 0) -> dict[str, Any]:
     pol = settings.outreach
     days_sending = _days_warming(store, settings)
     cap = pol.warmup_cap(days_sending)
@@ -151,7 +214,11 @@ def _send_batch_locked(store, settings, limit: int, dry_run: bool,
     cold_room = cap - store.cold_sends_today()
     cold_block = bounce_blocker(store, settings)
 
-    queue = store.send_queue(limit if not only else 500)
+    queue = store.send_queue(limit if not (only or hold) else 500)
+    if hold:
+        queue = [m for m in queue if not held(m, hold=hold)]
+        if not only:
+            queue = queue[:limit]
     if only == "warm":
         queue = [m for m in queue if (m.kind or "cold") != "cold"][:limit]
     elif only == "cold":
@@ -212,6 +279,15 @@ def _send_batch_locked(store, settings, limit: int, dry_run: bool,
             withdrawn += 1
             say(f"  withdrew cold message to {email}: they are now '{prospect.stage}'")
             continue
+
+        # Pulled back or edited on the phone since the batch started: a
+        # throttled batch runs for minutes, and Undo has to mean undo.
+        if not dry_run:
+            latest = store.get_message(m.id)
+            if latest is None or latest.status != "approved":
+                withdrawn += 1
+                continue
+            m.subject, m.body = latest.subject, latest.body
 
         if dry_run:
             say(f"  [dry-run] would send to {email}: {m.subject}")

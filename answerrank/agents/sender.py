@@ -27,6 +27,57 @@ WARM_HOURS = (7, 21)
 COLD_HOURS = (8, 17)
 
 
+def next_open(local: datetime, hours: tuple[int, int], weekdays: bool) -> datetime:
+    """When sending next opens, in the operator's time: now, if it is open."""
+    for d in range(8):
+        day = local + timedelta(days=d)
+        if weekdays and day.weekday() >= 5:
+            continue
+        start = day.replace(hour=hours[0], minute=0, second=0, microsecond=0)
+        end = day.replace(hour=hours[1], minute=0, second=0, microsecond=0)
+        if local < end:
+            return max(start, local)
+    return local
+
+
+def _when(local: datetime, at: datetime) -> str:
+    if at <= local:
+        return "now"
+    clock = at.strftime("%I%p").lstrip("0").lower()
+    if at.date() == local.date():
+        return f"at {clock}"
+    if at.date() == (local + timedelta(days=1)).date():
+        return f"tomorrow at {clock}"
+    return f"{at.strftime('%A')} at {clock}"
+
+
+def status(store, settings, now: datetime | None = None) -> str:
+    """One line for the phone: what is approved and when it goes."""
+    from ..mailer import SMTPConfig
+
+    queue = store.send_queue(500)
+    if not automation.enabled(store, "auto_send"):
+        return (f"{len(queue)} approved. Automatic sending is off, so they wait for "
+                f"you to tap Send." if queue else "Automatic sending is off.")
+    if not queue:
+        return "Nothing waiting to send. Anything you approve goes out on its own."
+    if getattr(settings, "demo_mode", False):
+        return f"{len(queue)} approved. This is demo mode, so nothing is really sent."
+    if not SMTPConfig.from_env().configured():
+        return f"{len(queue)} approved, but no mailbox is saved yet, so nothing can send."
+    local = calls.local_in(calls.operator_tz(settings), now)
+    warm = sum(1 for m in queue if (m.kind or "cold") != "cold")
+    cold = len(queue) - warm
+    parts = []
+    if warm:
+        parts.append(f"{warm} answer{'s' if warm != 1 else ''} "
+                     f"{_when(local, next_open(local, WARM_HOURS, False))}")
+    if cold:
+        parts.append(f"{cold} cold email{'s' if cold != 1 else ''} "
+                     f"{_when(local, next_open(local, COLD_HOURS, True))}")
+    return "Sending " + " and ".join(parts) + "."
+
+
 class SenderAgent(Agent):
     name = "sender"
     description = "Sends what you approved, at the right hours, so you never tap Send."
@@ -63,7 +114,9 @@ class SenderAgent(Agent):
             return 0, "demo mode: sending stays manual"
         if not automation.enabled(self.store, "auto_send"):
             return 0, "automatic sending is off; approved emails wait for you to tap Send"
-        queue = self.store.send_queue(500)
+        from ..sending import HOLD_SECONDS, held
+
+        queue = [m for m in self.store.send_queue(500) if not held(m)]
         if not queue:
             return 0, "nothing approved to send"
         if not SMTPConfig.from_env().configured():
@@ -87,7 +140,8 @@ class SenderAgent(Agent):
 
         def run() -> None:
             try:
-                result = send_batch(self.store, self.settings, limit=limit, only=only)
+                result = send_batch(self.store, self.settings, limit=limit, only=only,
+                                    hold=HOLD_SECONDS)
                 log.info("sender: %s sent, %s failed", result.get("sent"), result.get("failed"))
             except Exception:  # noqa: BLE001 - never take the fleet down
                 log.exception("sender: batch failed")

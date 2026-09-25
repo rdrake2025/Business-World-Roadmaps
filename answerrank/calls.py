@@ -519,7 +519,7 @@ def log_call(store, settings, prospect: Prospect, outcome: str,
                 prospect, audit, settings,
                 opening=(f"Thanks for the chat. Confirming our call on {label} "
                          f"(your time). Here's the report I'll walk you through, "
-                         f"so you can look before we talk."))
+                         f"so you can look before we talk."), offer_call=False)
             message = OutreachMessage(prospect_id=prospect.id, subject=subject, body=body,
                                       sequence_step=prospect.touches + 1,
                                       status=("approved" if automation.enabled(
@@ -563,6 +563,65 @@ def log_call(store, settings, prospect: Prospect, outcome: str,
            "next": next_step, "message_id": message_id}
     if outcome == "booked":
         out.update(result_extra)
+    return out
+
+
+#: What can come of a walkthrough, besides a yes (which signs them up and
+#: is handled where clients are created).
+DEBRIEFS = {
+    "callback": "Needs time: call back",
+    "rebook": "Didn't happen: rebook",
+    "no": "Not for them",
+}
+
+
+def debrief(store, settings, prospect: Prospect, result: str, when: str = "",
+            note: str = "") -> dict[str, Any]:
+    """Close the loop on a walkthrough that has happened.
+
+    Before this, a booked walkthrough dropped off the list two hours after
+    its start and nothing asked how it went: the follow-up, the call back
+    and the no were all left to memory, which is where deals go to die.
+    """
+    if result not in DEBRIEFS:
+        return {"error": f"unknown result {result!r}"}
+    biz = prospect.business
+    agreed = parse_when(when)
+    if result == "rebook" and agreed is None:
+        return {"error": "Pick the new day and time first."}
+    out: dict[str, Any] = {"ok": True, "result": result, "label": DEBRIEFS[result]}
+    store.record_outcome(prospect_id=prospect.id, vertical=biz.vertical,
+                         step=prospect.touches, kind="walkthrough",
+                         sentiment=result, note=(note or "")[:300])
+    if result == "callback":
+        store.close_appointments(prospect.id, kind="meeting")
+        due = agreed or datetime.now(timezone.utc) + timedelta(days=2)
+        store.add_appointment(prospect.id, "callback",
+                              due.isoformat(timespec="seconds"), note)
+        out["next"] = f"Back at the top of the call list {their_time(biz.state, due)}."
+    elif result == "rebook":
+        store.close_appointments(prospect.id, kind="meeting", status="missed")
+        store.add_appointment(prospect.id, "meeting",
+                              agreed.isoformat(timespec="seconds"), note)
+        label = their_time(biz.state, agreed)
+        out["next"] = f"Rebooked for {label}. Tap Add to calendar."
+        out["calendar_url"] = calendar_url(
+            f"Walkthrough: {biz.name}", agreed, 30,
+            f"{biz.name}, {biz.market}. Phone {pretty_number(biz.phone)}. "
+            f"Walk them through the report, then the offer (sales playbook).")
+        out["when_label"] = label
+    else:
+        store.close_appointments(prospect.id)
+        store.withdraw_cold(prospect.id)
+        prospect.stage = "lost"
+        store.record_outcome(prospect_id=prospect.id, vertical=biz.vertical,
+                             kind="lost", sentiment="not_interested",
+                             note="after a walkthrough")
+        out["next"] = "Closed. They won't get any more sales emails."
+    prospect.last_touch_at = now_iso()
+    prospect.notes = (prospect.notes or "") + f" | walkthrough: {result}" \
+        + (f" ({note[:80]})" if note else "")
+    store.upsert_prospect(prospect)
     return out
 
 

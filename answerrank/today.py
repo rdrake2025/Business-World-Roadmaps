@@ -9,7 +9,8 @@ action that deals with it.
 The order is how much money is at stake and how fast it goes cold:
 
 1. Anything blocking sending, because nothing else reaches anyone.
-2. A walkthrough starting soon.
+2. A walkthrough starting soon, then one that has just happened and needs
+   its result: a yes there is the payment link, one tap away.
 3. Someone who wrote back and is ready to buy.
 4. A call back you promised, now due.
 5. Answers and reports drafted for people who asked.
@@ -59,22 +60,29 @@ def next_actions(store, settings, now: datetime | None = None) -> dict[str, Any]
         items.append(_item("blocked", "warn", "Sending is blocked", blockers[0],
                            {"type": "none"}))
 
-    # 2 and 11. Walkthroughs
-    later_today = []
+    # 2 and 11. Walkthroughs: about to start, just finished, later today
+    later_today, finished = [], []
     for apt in store.appointments(kind="meeting"):
         start = calls.parse_when(apt["starts_at"])
         p = prospects.get(apt["prospect_id"])
-        if not start or not p or start < now - timedelta(hours=2):
+        if not start or not p or start < now - timedelta(days=14):
             continue
         mine = calls.local_in(calls.operator_tz(settings), start)
         clock = mine.strftime("%I:%M %p").lstrip("0").lower()
-        if start <= now + timedelta(hours=2):
+        if start <= now - timedelta(minutes=30):
+            finished.append(_item(f"debrief:{apt['id']}", "hot",
+                                  f"How did the walkthrough with {p.business.name} go?",
+                                  "One tap: signed up, call back, or not for them. A yes "
+                                  "sends the payment link.",
+                                  {"type": "debrief", "id": p.id}))
+        elif start <= now + timedelta(hours=2):
             items.append(_item(f"meeting:{apt['id']}", "hot",
                                f"{clock}: walkthrough with {p.business.name}",
                                "Open their report and the call notes before you dial.",
                                {"type": "call", "id": p.id}))
         elif start <= now + timedelta(hours=18):
             later_today.append((clock, p))
+    items.extend(finished)
 
     # 3 and 5. Drafts for people who wrote to us
     drafts = store.get_messages("drafted", 500)

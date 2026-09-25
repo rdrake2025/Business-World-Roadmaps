@@ -236,6 +236,9 @@ class OutreachMessage:
     sent_at: str = ""
     created_at: str = field(default_factory=now_iso)
     id: str = field(default_factory=lambda: new_id("msg"))
+    #: When you approved it on the phone. The automatic sender leaves it
+    #: alone for a minute after, so Undo always has time to work.
+    approved_at: str = ""
 
 
 @dataclass

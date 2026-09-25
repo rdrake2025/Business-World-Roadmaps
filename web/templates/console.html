@@ -42,6 +42,9 @@
     --good:#3DBE5A; --bad:#E66767; --warn:#E0A83E;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  /* Components set display:flex, which beat the hidden attribute: badges
+     showed "0" and buttons meant to be hidden stayed on screen. */
+  [hidden]{display:none!important}
   html,body{margin:0;height:100%}
   body{background:var(--bg);color:var(--ink);
     font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
@@ -136,8 +139,27 @@
   .sess{display:flex;align-items:center;gap:8px;margin:-4px 0 12px;font-size:13px;color:var(--ink2)}
   .sess b{color:var(--ink)}
   .sess button{margin-left:auto;padding:7px 12px;border-radius:9px;border:1px solid var(--rule2);
-    background:var(--card);color:var(--ink);font:600 13px inherit;cursor:pointer}
+    background:var(--card);color:var(--ink);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer}
   .sess button + button{margin-left:0}
+  .sess a{color:var(--mark);font-weight:650;text-decoration:none}
+
+  /* review, one email at a time */
+  .sheet.rv{padding-bottom:0}
+  .rvsubj{font-weight:650;font-size:15px;margin:12px 0 8px;letter-spacing:-.01em}
+  .rvbody{white-space:pre-wrap;font-size:14.5px;line-height:1.55;color:var(--ink);
+    background:var(--card);border:1px solid var(--rule);border-radius:11px;padding:13px}
+  .rvfoot{white-space:pre-wrap;font-size:11.5px;color:var(--muted);padding:9px 13px 0;line-height:1.45}
+  .trio{position:sticky;bottom:0;display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:8px;
+    background:var(--bg);padding:12px 0 calc(12px + var(--safe-b));margin-top:12px}
+  .trio.two{grid-template-columns:1fr 1.6fr}
+  .trio.flat{position:static;padding:0;margin-top:0;background:none}
+  .trio button{min-height:50px;border-radius:11px;font-family:inherit;font-size:15px;
+    font-weight:650;border:1px solid var(--rule2);background:var(--card);color:var(--ink);cursor:pointer}
+  .trio button.yes{background:var(--mark);border-color:var(--mark);color:var(--mark-ink)}
+  .trio button:active{opacity:.75}
+  .kb{text-align:center;margin:-4px 0 10px;font-size:11.5px}
+  @media (hover:none){.kb{display:none}}
+  .sheet textarea.big{min-height:46vh;font-size:15px}
 
   /* calls */
   .badge.good{background:var(--good);color:#fff}
@@ -147,7 +169,8 @@
   .sheet .say{font-size:15px;line-height:1.5;color:var(--ink);padding:11px 12px;
     background:var(--accent-soft);border-radius:10px;margin-bottom:8px}
   .outs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
-  .outs button{min-height:48px;padding:10px 8px;border-radius:11px;font:600 14px/1.25 inherit;
+  .outs button{min-height:48px;padding:10px 8px;border-radius:11px;font-family:inherit;
+    font-size:14px;font-weight:600;line-height:1.25;
     border:1px solid var(--rule2);background:var(--card);color:var(--ink);cursor:pointer}
   .outs button.go{border-color:var(--good);color:var(--good)}
   .outs button.stop{color:var(--bad)}
@@ -247,10 +270,14 @@
 
   .toast{position:fixed;left:16px;right:16px;bottom:calc(var(--tabh) + var(--safe-b) + 14px);
     background:var(--ink);color:var(--bg);padding:13px 16px;border-radius:12px;
-    font-size:14px;z-index:60;box-shadow:0 8px 26px rgba(0,0,0,.24);
+    font-size:14px;z-index:80;display:flex;align-items:center;gap:10px;box-shadow:0 8px 26px rgba(0,0,0,.24);
     transform:translateY(16px);opacity:0;visibility:hidden;pointer-events:none;
     transition:transform .26s cubic-bezier(.2,.9,.3,1),opacity .2s ease,visibility .26s}
   .toast.up{transform:translateY(0);opacity:1;visibility:visible}
+  .toast.act{pointer-events:auto}
+  .toast span{flex:1}
+  .toast button{background:none;border:0;color:var(--mark);font-family:inherit;font-size:14px;
+    font-weight:700;cursor:pointer;padding:4px 2px;flex:none}
   @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
@@ -280,6 +307,7 @@
 
     <div class="card" style="margin-top:11px">
       <h2>Automatic</h2>
+      <div class="barnote" id="autoStatus" style="margin-bottom:4px"></div>
       <div id="autoList"><div class="barnote">Loading…</div></div>
     </div>
 
@@ -292,7 +320,7 @@
     </div>
 
     <div class="acts">
-      <button class="act primary" id="btnGoInbox">Review drafts</button>
+      <button class="act primary" id="btnGoInbox">Review drafts one by one</button>
       <button class="act" id="btnSend">Send approved</button>
       <button class="act" id="btnTick">Run a full cycle</button>
     </div>
@@ -306,6 +334,11 @@
   <!-- ============ INBOX ============ -->
   <section class="pane" id="pane-inbox">
     <div id="inboxList"></div>
+    <div class="card" id="apprCard" hidden>
+      <h2>Approved, waiting to send</h2>
+      <div class="barnote" id="apprStatus" style="margin-bottom:6px"></div>
+      <div id="apprList"></div>
+    </div>
   </section>
 
   <!-- ============ PIPELINE ============ -->
@@ -379,6 +412,10 @@
   <!-- ============ BRAIN ============ -->
   <section class="pane" id="pane-brain">
     <div class="card">
+      <h2>This week</h2>
+      <div id="weekBox"><div class="barnote">Loading…</div></div>
+    </div>
+    <div class="card">
       <h2>The next move</h2>
       <div id="nextMove"><div class="barnote">Loading…</div></div>
     </div>
@@ -451,11 +488,17 @@
 
   function money(v){ return "$" + Math.round(v).toLocaleString("en-US"); }
 
-  function toast(msg, ms){
+  // A toast can carry Undo for the email it is about: approving or skipping
+  // by mistake is one tap to take back.
+  function toast(msg, ms, undoId){
     var t = $("toast");
-    t.textContent = msg; t.classList.add("up");
+    t.innerHTML = '<span>' + esc(msg) + '</span>' +
+      (undoId ? '<button data-undo="' + esc(undoId) + '">Undo</button>' : '');
+    t.classList.toggle("act", !!undoId);
+    t.classList.add("up");
     clearTimeout(t._h);
-    t._h = setTimeout(function(){ t.classList.remove("up"); }, ms || 2600);
+    t._h = setTimeout(function(){ t.classList.remove("up", "act"); },
+                      ms || (undoId ? 6000 : 2600));
   }
 
   function api(path, body){
@@ -487,15 +530,12 @@
         'on the laptop.<ul>' +
         S.blockers.map(function(x){ return "<li>" + esc(x) + "</li>"; }).join("") +
         '</ul></div>';
-    } else if(q.drafted){
-      b.innerHTML = '<div class="banner ok"><b>' + q.drafted + ' draft' +
-        (q.drafted === 1 ? "" : "s") + ' waiting</b>Read each one before approving — ' +
-        'they go out under your name.</div>';
     } else {
-      b.innerHTML = '<div class="banner ok"><b>Nothing waiting</b>' +
-        'The fleet will draft more on its next cycle.</div>';
+      b.innerHTML = "";
     }
 
+    $("btnGoInbox").hidden = !q.drafted;
+    $("btnSend").hidden = !!AUTO.auto_send;
     $("btnSend").disabled = !q.approved || !S.can_send;
     $("btnSend").textContent = q.approved
       ? "Send " + q.approved + " approved" : "Nothing approved to send";
@@ -565,10 +605,12 @@
         '<p>No drafts waiting.<br>The fleet writes more each cycle.</p></div>';
       return;
     }
-    var head = d.followups
-      ? '<div class="acts" style="margin-bottom:11px"><button class="act" id="btnApproveFollow">' +
+    var head = '<div class="acts" style="margin-bottom:11px">' +
+      '<button class="act primary" id="btnReview">Review ' + (d.total || d.items.length) +
+        ' one by one</button>' +
+      (d.followups ? '<button class="act" id="btnApproveFollow">' +
         'Approve all ' + d.followups + ' follow-up' + (d.followups === 1 ? '' : 's') +
-        '</button></div>' : '';
+        '</button>' : '') + '</div>';
     el.innerHTML = head + d.items.map(function(m){
       return '<div class="msg" data-id="' + m.id + '">' +
         '<div class="biz">' + esc(m.business) +
@@ -578,8 +620,9 @@
         (m.evidence ? '<div class="ev">' + esc(m.evidence) + '</div>' : '') +
         '<div class="subj">' + esc(m.subject) + '</div>' +
         '<details><summary>Read the full email</summary><pre>' + esc(m.body) + '</pre></details>' +
-        '<div class="pair">' +
-          '<button class="no" data-a="reject">Skip</button>' +
+        '<div class="trio flat">' +
+          '<button data-a="reject">' + (m.kind === "cold" ? "Skip" : "I'll handle it") + '</button>' +
+          '<button data-a="edit">Edit</button>' +
           '<button class="yes" data-a="approve">Approve</button>' +
         '</div></div>';
     }).join("");
@@ -674,11 +717,13 @@
 
   // ---------------------------------------------------------------- sheet
   function closeSheet(){
-    $("sheet").classList.remove("up");
+    $("sheet").classList.remove("up", "rv");
     $("scrim").classList.remove("up");
+    if(R){ R = null; load(true); if($("pane-inbox").classList.contains("on")) loadInbox(); }
   }
 
   function openSheet(html){
+    $("sheet").classList.remove("rv");
     $("sheetBody").innerHTML = html;
     $("sheet").classList.add("up");
     $("scrim").classList.add("up");
@@ -778,8 +823,35 @@
   }
 
   function loadInbox(){
+    loadApproved();
     return api("/api/inbox").then(renderInbox).catch(function(){});
   }
+
+  // Approved and not yet gone: each can be pulled back until it sends.
+  function loadApproved(){
+    return Promise.all([api("/api/inbox?status=approved&limit=50"), api("/api/automation")])
+      .then(function(r){
+        var d = r[0];
+        $("apprCard").hidden = !d.items.length;
+        $("apprStatus").textContent = r[1].status || "";
+        $("apprList").innerHTML = d.items.map(function(m){
+          return '<div class="row"><span class="l">' + esc(m.business) +
+            '<br><span style="font-size:12px;color:var(--muted)">' + esc(m.kind_label) +
+            ' · ' + esc(m.subject) + '</span></span>' +
+            '<button class="opslink" data-pull="' + esc(m.id) + '">Pull back</button></div>';
+        }).join("");
+      }).catch(function(){});
+  }
+  $("apprList").addEventListener("click", function(e){
+    var btn = e.target.closest("[data-pull]");
+    if(!btn || busy) return;
+    busy = true;
+    api("/api/undo", { id: btn.dataset.pull }).then(function(r){
+      toast(r.error || r.label);
+      return loadInbox().then(function(){ return load(true); });
+    }).catch(function(){ toast("That didn't go through"); })
+      .then(function(){ busy = false; });
+  });
 
   function loadReports(){
     api("/api/reports").then(function(d){
@@ -841,7 +913,9 @@
       '<div class="who">' + esc(c.trade) + ' · ' + esc(c.market) +
         (c.local ? ' · ' + esc(c.local) + ' there' : '') + '</div>' +
       (c.meeting ? '<div class="finding" style="background:var(--accent-soft);color:var(--ink)">' +
-        '<b>Walkthrough booked:</b> ' + esc(c.meeting) + ' (their time)</div>' : '') +
+        '<b>Walkthrough booked:</b> ' + esc(c.meeting) + ' (their time)</div>' +
+        '<button class="act" style="margin-bottom:8px" data-debrief="' + esc(c.id) + '">' +
+          'Walkthrough done? Tap for how it went</button>' : '') +
       (c.dial ? '<a class="act primary" href="tel:' + esc(c.dial) + '">Call ' +
         esc(c.phone) + '</a>' : '') +
       (c.report_url ? '<a class="act" style="margin-top:8px" target="_blank" rel="noopener" href="' +
@@ -941,7 +1015,8 @@
     var row = e.target.closest("[data-up]");
     if(!row || busy) return;
     var a = ($("upList")._items || [])[Number(row.dataset.up)].action || {};
-    if(a.type === "review") showPane("inbox");
+    if(a.type === "review") openReview(a.id);
+    else if(a.type === "debrief") openDebrief(a.id);
     else if(a.type === "calls") startCalling();
     else if(a.type === "call") openCall(a.id);
     else if(a.type === "pane") showPane(a.pane);
@@ -951,6 +1026,8 @@
   function loadAuto(){
     return api("/api/automation").then(function(d){
       d.switches.forEach(function(s){ AUTO[s.key] = s.on; });
+      $("autoStatus").textContent = d.status || "";
+      if(S) renderToday();
       $("autoList").innerHTML = d.switches.map(function(s){
         return '<label class="sw"><input type="checkbox" data-sw="' + esc(s.key) + '"' +
           (s.on ? " checked" : "") + '><span><div class="t">' + esc(s.label) + '</div>' +
@@ -964,7 +1041,7 @@
     api("/api/automation", { key: box.dataset.sw, on: box.checked }).then(function(){
       AUTO[box.dataset.sw] = box.checked;
       toast(box.checked ? "Switched on" : "Switched off");
-      loadNext();
+      loadNext(); loadAuto();
     }).catch(function(){ box.checked = !box.checked; toast("That didn't save"); });
   });
 
@@ -1019,6 +1096,218 @@
       .then(function(){ busy = false; });
   });
 
+  // ---------------------------------------------------------------- review
+  // One email at a time, the whole of it on screen, and the next opens as
+  // you decide. Undo takes back the last decision; Edit changes the words
+  // and keeps the legal footer as it was.
+  var R = null;
+  function openReview(startId, editFirst){
+    api("/api/inbox?limit=100").then(function(d){
+      var items = d.items;
+      if(!items.length){ toast("No drafts waiting"); return; }
+      var k = -1;
+      items.forEach(function(x, i){ if(x.id === startId) k = i; });
+      if(k > 0) items.unshift(items.splice(k, 1)[0]);
+      R = { items: items, i: 0, approved: 0, skipped: 0, last: null };
+      if(editFirst && k >= 0) editReview(); else showReview();
+    }).catch(function(){ toast("Could not load the drafts"); });
+  }
+  function reviewHead(){
+    return '<div class="sess">Email <b>' + Math.min(R.i + 1, R.items.length) + '</b> of ' +
+      R.items.length + (R.last ? ' · <a href="#" id="rvUndo">Undo</a>' : '') +
+      '<button id="rvEnd">Done</button></div>';
+  }
+  function reviewSheet(html){
+    openSheet(html);
+    $("sheet").classList.add("rv");
+  }
+  function showReview(){
+    if(R.i >= R.items.length){
+      openSheet(reviewHead() + '<h3>All read</h3><div class="who">' + R.approved +
+        ' approved, ' + R.skipped + ' skipped.' + (AUTO.auto_send && R.approved
+          ? ' Approved emails go out on their own in sending hours.' : '') + '</div>' +
+        '<button class="act primary" id="rvClose">Back to Today</button>');
+      return;
+    }
+    var m = R.items[R.i], warm = m.kind !== "cold";
+    reviewSheet(reviewHead() +
+      '<h3>' + esc(m.business) + '<span class="badge">' + esc(m.kind_label) + '</span></h3>' +
+      '<div class="who">' + esc(m.market) + (m.email ? ' · ' + esc(m.email) : '') + '</div>' +
+      (m.evidence ? '<div class="finding">' + esc(m.evidence) + '</div>' : '') +
+      '<div class="rvsubj">' + esc(m.subject) + '</div>' +
+      '<div class="rvbody">' + esc(m.text) + '</div>' +
+      (m.footer ? '<div class="rvfoot">' + esc(m.footer) + '</div>' : '') +
+      '<div class="trio"><button data-rv="skip">' + (warm ? "I'll handle it" : "Skip") +
+        '</button><button data-rv="edit">Edit</button>' +
+        '<button class="yes" data-rv="approve">Approve</button></div>' +
+      '<div class="barnote kb">Keys: A approve · S skip · E edit · U undo</div>');
+  }
+  function editReview(){
+    var m = R.items[R.i];
+    reviewSheet(reviewHead() + '<h3>Edit: ' + esc(m.business) + '</h3>' +
+      '<input id="rvSubj" autocomplete="off" value="' + esc(m.subject) + '">' +
+      '<textarea id="rvText" class="big">' + esc(m.text) + '</textarea>' +
+      (m.footer ? '<div class="barnote" style="margin-top:8px">Kept at the end, as the ' +
+        'law requires:</div><div class="rvfoot">' + esc(m.footer) + '</div>' : '') +
+      '<div class="trio two"><button data-rv="cancel">Cancel</button>' +
+        '<button class="yes" data-rv="save">Save and approve</button></div>');
+  }
+  function reviewAct(act){
+    if(!R || busy || R.i >= R.items.length) return;
+    var m = R.items[R.i];
+    if(act === "edit"){ editReview(); return; }
+    if(act === "cancel"){ showReview(); return; }
+    busy = true;
+    var done;
+    if(act === "save"){
+      done = api("/api/edit", { id: m.id, subject: $("rvSubj").value, text: $("rvText").value })
+        .then(function(r){
+          if(r.error){ toast(r.error, 6000); throw new Error("kept"); }
+          m.subject = r.subject; m.text = r.text; m.body = r.body;
+          return api("/api/approve", { ids: [m.id] });
+        });
+      act = "approve";
+    } else {
+      done = api("/api/" + (act === "approve" ? "approve" : "reject"), { ids: [m.id] });
+    }
+    done.then(function(){
+      if(act === "approve") R.approved++; else R.skipped++;
+      R.last = { id: m.id, i: R.i, act: act };
+      R.i++;
+      showReview();
+    }).catch(function(e){ if(e.message !== "kept") toast("That didn't go through"); })
+      .then(function(){ busy = false; });
+  }
+  function reviewUndo(){
+    if(!R || !R.last || busy) return;
+    busy = true;
+    var last = R.last;
+    api("/api/undo", { id: last.id }).then(function(r){
+      if(r.error){ toast(r.error, 4000); return; }
+      if(last.act === "approve") R.approved--; else R.skipped--;
+      R.i = last.i; R.last = null;
+      showReview();
+      toast(r.label);
+    }).catch(function(){ toast("That didn't go through"); })
+      .then(function(){ busy = false; });
+  }
+  $("sheetBody").addEventListener("click", function(e){
+    var b = e.target.closest("[data-rv]");
+    if(b){ reviewAct(b.dataset.rv); return; }
+    if(e.target.closest("#rvUndo")){ e.preventDefault(); reviewUndo(); return; }
+    if(e.target.closest("#rvEnd") || e.target.closest("#rvClose")) closeSheet();
+  });
+  document.addEventListener("keydown", function(e){
+    if(!R || !$("sheet").classList.contains("up")) return;
+    var tag = (e.target.tagName || "").toLowerCase();
+    if(tag === "input" || tag === "textarea" || e.metaKey || e.ctrlKey || e.altKey) return;
+    var k = e.key.toLowerCase();
+    if(k === "a") reviewAct("approve");
+    else if(k === "s") reviewAct("skip");
+    else if(k === "e") reviewAct("edit");
+    else if(k === "u") reviewUndo();
+    else return;
+    e.preventDefault();
+  });
+  $("inboxList").addEventListener("click", function(e){
+    if(e.target.closest("#btnReview")) openReview();
+  });
+  $("toast").addEventListener("click", function(e){
+    var b = e.target.closest("[data-undo]");
+    if(!b) return;
+    api("/api/undo", { id: b.dataset.undo }).then(function(r){
+      toast(r.error || r.label);
+      if($("pane-inbox").classList.contains("on")) loadInbox();
+      return load(true);
+    }).catch(function(){ toast("That didn't go through"); });
+  });
+
+  // ---------------------------------------------------------------- debrief
+  // After a walkthrough: one tap for how it went. A yes signs them up and
+  // sends the payment link while they are still warm.
+  var PLANS = '<option value="growth">Growth — $997/mo</option>' +
+    '<option value="starter">Starter — $499/mo</option>' +
+    '<option value="managed">Managed — $1,997/mo</option>' +
+    '<option value="pilot">Free pilot — prove it works</option>';
+  function openDebrief(pid){
+    api("/api/call-sheet?id=" + encodeURIComponent(pid)).then(function(c){
+      if(c.error){ toast(c.error); return; }
+      openSheet('<h3>How did it go?</h3><div class="who">Walkthrough with ' + esc(c.name) +
+        (c.meeting ? ' · ' + esc(c.meeting) + ' their time' : '') + '</div>' +
+        '<div class="sh" style="font-size:11px;letter-spacing:.09em;text-transform:uppercase;' +
+          'color:var(--muted);margin:16px 0 8px;font-weight:650">They said yes</div>' +
+        '<select id="dbPlan">' + PLANS + '</select>' +
+        '<button class="act primary" data-db="signed" data-pid="' + esc(c.id) + '">' +
+          'Sign them up and send the payment link</button>' +
+        '<div class="sh" style="font-size:11px;letter-spacing:.09em;text-transform:uppercase;' +
+          'color:var(--muted);margin:18px 0 8px;font-weight:650">Not yet</div>' +
+        '<div class="barnote" style="margin-bottom:4px">When to call back, or the new time ' +
+          '(your time):</div>' +
+        '<input id="dbWhen" type="datetime-local">' +
+        '<input id="dbNote" autocomplete="off" placeholder="Note: what they said">' +
+        '<div class="outs">' +
+          '<button data-db="callback" data-pid="' + esc(c.id) + '">Needs time: call back</button>' +
+          '<button data-db="rebook" data-pid="' + esc(c.id) + '">Didn’t happen: rebook</button>' +
+          '<button class="stop" data-db="no" data-pid="' + esc(c.id) + '">Not for them</button>' +
+          (c.report_url ? '<a class="act" style="min-height:48px;font-size:14px" target="_blank" ' +
+            'rel="noopener" href="' + esc(c.report_url) + '">Their report</a>' : '') +
+        '</div>');
+    }).catch(function(){ toast("Could not load that one"); });
+  }
+  $("sheetBody").addEventListener("click", function(e){
+    var d = e.target.closest("[data-debrief]");
+    if(d && !busy){ session = null; openDebrief(d.dataset.debrief); }
+  });
+  $("sheetBody").addEventListener("click", function(e){
+    var btn = e.target.closest("[data-db]");
+    if(!btn || busy) return;
+    var result = btn.dataset.db;
+    var raw = ($("dbWhen") && $("dbWhen").value) || "";
+    if(result === "rebook" && !raw){ toast("Pick the new day and time first"); $("dbWhen").focus(); return; }
+    if(result === "signed" && !confirm("Sign them up? The payment link goes to them now.")) return;
+    if(result === "no" && !confirm("Close this one? They get no more sales emails.")) return;
+    busy = true; btn.disabled = true;
+    api("/api/debrief", { id: btn.dataset.pid, result: result, plan: ($("dbPlan") || {}).value,
+                          when: raw ? new Date(raw).toISOString() : "",
+                          note: (($("dbNote") && $("dbNote").value) || "").trim() })
+      .then(function(r){
+        if(r.error){ toast(r.error, 5000); return; }
+        if(r.calendar_url){
+          openSheet('<h3>Rebooked</h3><div class="who">' + esc(r.next) + '</div>' +
+            '<a class="act primary" target="_blank" rel="noopener" href="' +
+            esc(r.calendar_url) + '">Add to my calendar</a>');
+        } else {
+          closeSheet();
+          toast((r.name ? r.name + " signed. " : r.label + ". ") + r.next, 7000);
+        }
+        return load(true);
+      })
+      .catch(function(){ toast("That didn't go through"); })
+      .then(function(){ busy = false; btn.disabled = false; });
+  });
+
+  function loadWeek(){
+    return api("/api/week").then(function(d){
+      var w = d.week;
+      $("weekBox").innerHTML =
+        '<div class="meter">' +
+          '<div><div class="mv mono">' + w.calls + '</div><div class="mk">calls</div></div>' +
+          '<div><div class="mv mono">' + w.sent + '</div><div class="mk">emails</div></div>' +
+          '<div><div class="mv mono">' + w.booked + '</div><div class="mk">booked</div></div>' +
+          '<div><div class="mv mono">' + w.won + '</div><div class="mk">signed</div></div>' +
+        '</div>' +
+        d.steps.map(function(s){
+          return '<div class="row"><span class="l">' + esc(s.label) +
+            '<br><span style="font-size:11.5px;color:var(--muted)">healthy ' +
+            esc(s.healthy) + '</span></span><span class="r mono" style="color:' +
+            (!s.judged ? 'var(--muted)' : s.ok ? 'var(--good)' : 'var(--bad)') + '">' +
+            (s.judged ? Math.round(s.value * 100) + '%' : 'too early') + '</span></div>';
+        }).join("") +
+        '<div class="finding" style="background:var(--accent-soft);color:var(--ink);margin-top:10px">' +
+          '<b>The one thing to change:</b> ' + esc(d.fix) + '</div>';
+    }).catch(function(){});
+  }
+
   // ---------------------------------------------------------------- events
 
   // Money has no tab of its own — five is the most a phone nav carries
@@ -1034,26 +1323,29 @@
     if(p === "inbox") loadInbox();
     if(p === "money") loadReports();
     if(p === "clients") loadClients();
-    if(p === "brain") loadBrain();
+    if(p === "brain"){ loadBrain(); loadWeek(); }
   }
 
   Array.prototype.forEach.call(document.querySelectorAll("nav button"), function(b){
     b.addEventListener("click", function(){ showPane(b.dataset.p); });
   });
 
-  $("btnGoInbox").addEventListener("click", function(){ showPane("inbox"); });
+  $("btnGoInbox").addEventListener("click", function(){ openReview(); });
 
   $("inboxList").addEventListener("click", function(e){
     var btn = e.target.closest("button[data-a]");
     if(!btn || busy) return;
     var card = btn.closest(".msg"), id = card.dataset.id, act = btn.dataset.a;
+    if(act === "edit"){ openReview(id, true); return; }
+    var warm = btn.textContent !== "Skip";
     busy = true;
     card.style.opacity = ".45";
     api("/api/" + act, { ids: [id] }).then(function(){
       card.remove();
       toast(act === "approve"
         ? "Approved" + (AUTO.auto_send ? ". It goes out in sending hours." : "")
-        : "Skipped — won't be contacted");
+        : warm ? "Left for you to answer yourself" : "Skipped. They won't be contacted.",
+        0, id);
       return load(true);
     }).catch(function(){
       card.style.opacity = "1";
@@ -1163,7 +1455,8 @@
     if(!win || busy) return;
     var plan = $("winPlan").value;
     if(!confirm(plan === "pilot" ? "Start a free pilot for this business?" :
-                "Sign them up on " + plan + "? They go live when they pay.")) return;
+                "Sign them up on " + plan + "? The payment link goes to them now, " +
+                "and they go live when they pay.")) return;
     busy = true; win.disabled = true; win.textContent = "Signing…";
     api("/api/win", { id: win.dataset.pid, plan: plan }).then(function(r){
       if(r.error){ toast(r.error, 4500); return; }
@@ -1234,7 +1527,8 @@
     busy = true;
     btn.disabled = true; btn.textContent = "Approving\u2026";
     api("/api/approve", { ids: [btn.dataset.mid] }).then(function(){
-      btn.textContent = "Approved \u2014 send from the Today tab";
+      btn.textContent = AUTO.auto_send ? "Approved. It goes out in a minute or two"
+                                       : "Approved. Tap Send approved on Today";
       return load(true);
     }).catch(function(){
       btn.disabled = false; btn.textContent = "Approve this reply";

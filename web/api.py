@@ -111,14 +111,19 @@ class Api:
         followups = sum(1 for m in msgs if (m.kind or "cold") == "cold" and m.sequence_step > 1)
         msgs = msgs[:limit]
         by_id = {p.id: p for p in self.store.get_prospects(limit=5000)}
+        from answerrank import drafts
+
         items = []
         for m in msgs:
             p = by_id.get(m.prospect_id)
+            core, footer = drafts.split(m.body)
             items.append({
                 "id": m.id,
                 "step": m.sequence_step,
                 "subject": m.subject,
                 "body": m.body,
+                "text": drafts.unwrap(core),
+                "footer": footer.strip(),
                 "business": p.business.name if p else "(unknown)",
                 "market": p.business.market if p else "",
                 "email": p.business.email if p else "",
@@ -141,17 +146,23 @@ class Api:
 
     # ------------------------------------------------------------------ today
 
+    def week(self) -> dict[str, Any]:
+        from answerrank import weekly
+        return weekly.review(self.store, self.settings)
+
     def next_up(self) -> dict[str, Any]:
         from answerrank import today
         return today.next_actions(self.store, self.settings)
 
     def automation(self, key: str = "", on: bool | None = None) -> dict[str, Any]:
         from answerrank import automation
+        from answerrank.agents import sender
         if key:
             if key not in automation.SWITCHES:
                 return {"error": f"unknown switch {key!r}"}
             automation.set_switch(self.store, key, bool(on))
-        return {"switches": automation.state(self.store)}
+        return {"switches": automation.state(self.store),
+                "status": sender.status(self.store, self.settings)}
 
     def prospects(self, stage: str | None = None, limit: int = 40,
                   hot: bool = False, q: str = "") -> dict[str, Any]:
@@ -288,29 +299,100 @@ class Api:
     # ------------------------------------------------------------ writes
 
     def approve(self, ids: list[str]) -> dict[str, Any]:
-        wanted, n = set(ids), 0
-        for m in self.store.get_messages("drafted", 500):
+        """Approve drafts. Answers to people go out about a minute later
+        (after the Undo window) rather than at the next quarter hour."""
+        from answerrank import sending
+        from answerrank.models import now_iso
+
+        wanted, n, warm = set(ids), 0, False
+        for m in self.store.get_messages("drafted", 1000):
             if m.id in wanted:
-                m.status = "approved"
+                m.status, m.approved_at = "approved", now_iso()
                 self.store.save_message(m)
                 n += 1
-        return {"approved": n}
+                warm = warm or (m.kind or "cold") != "cold"
+        soon = sending.kick(self.store, self.settings) if warm else False
+        return {"approved": n, "sending_soon": soon}
+
+    def edit(self, message_id: str, subject: str, text: str) -> dict[str, Any]:
+        """Change a draft's words. The legal footer is kept as it was, and a
+        cold email is checked again exactly as the Outreach agent checks it."""
+        from answerrank import drafts
+        from answerrank.models import now_iso
+
+        m = self.store.get_message(message_id)
+        if m is None:
+            return {"error": "That email isn't here any more."}
+        if m.status not in {"drafted", "approved"}:
+            return {"error": "That one has already gone, so it can't be changed."}
+        body = drafts.rebuild(text, m.body)
+        problems = drafts.problems(m, body)
+        if problems:
+            return {"error": problems[0]}
+        m.subject = " ".join((subject or m.subject).split())[:150] or m.subject
+        m.body = body
+        if m.status == "approved":
+            m.approved_at = now_iso()
+        self.store.save_message(m)
+        return {"ok": True, "id": m.id, "subject": m.subject, "body": m.body,
+                "text": drafts.editable(m.body)}
+
+    def undo(self, message_id: str) -> dict[str, Any]:
+        """Take back the last decision on an email: an approval, while it
+        hasn't gone yet, or a skip, including the business it stopped."""
+        import json
+
+        m = self.store.get_message(message_id)
+        if m is None:
+            return {"error": "That email isn't here any more."}
+        if m.status == "approved":
+            m.status, m.approved_at = "drafted", ""
+            self.store.save_message(m)
+            return {"ok": True, "status": "drafted",
+                    "label": "Pulled back. It's in your drafts again."}
+        if m.status == "sent":
+            return {"error": "That one has already gone."}
+        raw = self.store.kv_get(f"undo.{m.id}") or ""
+        if m.status in {"suppressed", "superseded"} and raw:
+            snap = json.loads(raw)
+            m.status = "drafted"
+            self.store.save_message(m)
+            p = self._prospect(m.prospect_id)
+            if p and snap.get("stage"):
+                p.stage, p.notes = snap["stage"], snap.get("notes") or ""
+                self.store.upsert_prospect(p)
+            self.store.kv_set(f"undo.{m.id}", "")
+            return {"ok": True, "status": "drafted", "label": "Back in your drafts."}
+        return {"error": "Nothing to undo for that one."}
 
     def reject(self, ids: list[str]) -> dict[str, Any]:
-        """Skip a draft and stop pitching that business.
+        """Skip a draft.
 
-        A rejection is a judgement that this prospect should not be
-        contacted, so it suppresses the prospect too — otherwise the next
-        cycle drafts the same message again.
+        Skipping a cold email is a judgement that this business should not
+        be contacted, so it suppresses the prospect too — otherwise the next
+        cycle drafts the same message again. Skipping an answer to someone
+        who wrote in only means you'll answer them yourself: it must never
+        stop a hot lead.
         """
+        import json
+
         wanted, n = set(ids), 0
         by_id = {p.id: p for p in self.store.get_prospects(limit=5000)}
-        for m in self.store.get_messages("drafted", 500):
+        for m in self.store.get_messages("drafted", 1000):
             if m.id not in wanted:
+                continue
+            p = by_id.get(m.prospect_id)
+            warm = (m.kind or "cold") != "cold"
+            self.store.kv_set(f"undo.{m.id}", json.dumps(
+                {"stage": "" if warm or not p else p.stage,
+                 "notes": "" if warm or not p else p.notes}))
+            if warm:
+                m.status = "superseded"
+                self.store.save_message(m)
+                n += 1
                 continue
             m.status = "suppressed"
             self.store.save_message(m)
-            p = by_id.get(m.prospect_id)
             if p:
                 p.stage = "suppressed"
                 p.notes = (p.notes or "") + " | skipped by operator"
@@ -592,19 +674,33 @@ class Api:
         link = "" if pilot else payments.link_for(
             self.settings, plan, payments.reference_for(prospect, client),
             prospect.business.email)
+        email = prospect.business.email
+        # You just heard them say yes: the link goes now, not after another
+        # visit to the inbox. It is the same fixed email every time.
         if link and not payments.link_already_sent(self.store, prospect,
                                                    self.settings, plan):
             subject, body = payments.payment_email(prospect, client, self.settings)
             self.store.save_message(OutreachMessage(
                 prospect_id=prospect.id, subject=subject, body=body, kind="invoice",
-                sequence_step=0, status="drafted", scheduled_for=now_iso()))
+                sequence_step=0, status="approved" if email else "drafted",
+                scheduled_for=now_iso()))
+            if email:
+                from answerrank import sending
+                sending.kick(self.store, self.settings, delay=5)
 
+        from answerrank import automation
         if pilot:
             nxt = ("A free pilot starts now: welcome, first audit and month-1 plan "
                    "on the next cycle. Use it to prove the work moves the score.")
+        elif link and not email:
+            nxt = ("There's no email for them yet: copy the payment link from "
+                   "Clients and text it. They go live the moment it's paid.")
+        elif link and automation.enabled(self.store, "auto_send"):
+            nxt = (f"The payment link goes to {email} in a minute (answers go out "
+                   f"7am-9pm). They go live the moment it's paid.")
         elif link:
-            nxt = ("The payment link is in your inbox to approve. They go live — "
-                   "welcome, audit, plan — the moment it's paid.")
+            nxt = ("The payment link is approved: tap Send approved on Today. They "
+                   "go live the moment it's paid.")
         else:
             nxt = (f"No payment link is set up for {plan}. Send them an invoice for "
                    f"${price:,.0f}, then tap Paid when it arrives. (Add a link in "
@@ -707,6 +803,25 @@ class Api:
             "outcomes": [{"key": o.key, "label": o.label}
                          for o in calls.OUTCOMES.values()],
         }
+
+    def debrief(self, prospect_id: str, result: str, plan: str = "growth",
+                when: str = "", note: str = "") -> dict[str, Any]:
+        """How a walkthrough went. A yes signs them up and sends the link."""
+        from answerrank import calls
+
+        prospect = self._prospect(prospect_id)
+        if prospect is None:
+            return {"error": "no such prospect"}
+        if result == "signed":
+            out = self.win(prospect_id, plan)
+            if out.get("error"):
+                return out
+            self.store.close_appointments(prospect_id)
+            self.store.record_outcome(prospect_id=prospect_id,
+                                      vertical=prospect.business.vertical,
+                                      kind="walkthrough", sentiment="signed", note=plan)
+            return {**out, "ok": True, "result": "signed", "label": "Signed up"}
+        return calls.debrief(self.store, self.settings, prospect, result, when, note)
 
     def log_call(self, prospect_id: str, outcome: str, email: str = "",
                  note: str = "", when: str = "") -> dict[str, Any]:

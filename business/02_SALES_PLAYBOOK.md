@@ -117,7 +117,10 @@ Do not present. **Show them the report and stay quiet.**
    paste; if you'd rather I implement it, that's the $1,997 tier."
 5. **Minutes 15–20.** Objections, then ask for the card. Do not offer to
    "send over a proposal" — that is where these deals go to die. Take payment
-   on the call or set a specific follow-up time.
+   on the call or set a specific follow-up time. On a yes, tap **Walkthrough
+   done?** on their call sheet, then **Sign them up**: the payment link is in
+   their inbox before you hang up. Up next asks how it went half an hour
+   after the start time if you forget.
 
 ## Objection handling
 
@@ -165,7 +168,7 @@ Do not present. **Show them the report and stay quiet.**
 | --- | --- | --- |
 | Mon | Review and approve the week's outreach batch | 30 min |
 | Tue–Thu | Take calls; approve daily batches | 60 min/day |
-| Fri | Review pipeline, run `dashboard`, fix what isn't converting | 45 min |
+| Fri | Read the "Your week" email; change the one thing it names | 10 min |
 
 Roughly **5 hours a week on sales**. Everything else runs itself.
 

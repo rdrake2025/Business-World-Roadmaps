@@ -117,8 +117,9 @@ does it.
 
 - Someone ready to buy: approve the drafted answer with the pay link.
 - Calls: tap to start a session. Log each call and the next one opens.
-- Drafts: read and approve. Approved emails send themselves in sending
-  hours; you never tap Send.
+- Drafts: one at a time; Approve, Skip or Edit, and Undo if you slip.
+  Approved emails send themselves in sending hours; you never tap Send.
+- After a walkthrough: tap how it went. Signed up sends the pay link.
 
 When Up next is empty, you're done.
 

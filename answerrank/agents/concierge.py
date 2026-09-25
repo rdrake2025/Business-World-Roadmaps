@@ -102,8 +102,15 @@ def classify(text: str, is_client: bool = False) -> str:
 _body = playbook.email_body
 
 
+def booking_line(settings) -> str:
+    """One line offering a 15-minute call, if you have a booking page."""
+    link = (getattr(settings, "booking_link", "") or "").strip()
+    return (f"If it's easier to talk it through, pick 15 minutes that suit you "
+            f"here: {link}" if link else "")
+
+
 def report_email(prospect: Prospect, audit, settings,
-                 opening: str = "") -> tuple[str, str]:
+                 opening: str = "", offer_call: bool = True) -> tuple[str, str]:
     """The free report the first email promised, as the email itself.
 
     Every cold opener ends 'Want it? Reply "yes" and it's yours', and every
@@ -166,6 +173,7 @@ def report_email(prospect: Prospect, audit, settings,
         f"You can take that list and do it yourself; it's yours either way. If "
         f"you'd rather I did it, it's ${price:,.0f}/month, no long contract, "
         f"cancel any time. Reply \"start\" and I'll send the invoice.",
+        booking_line(settings) if offer_call else "",
         f"{settings.brand}\n{settings.website}",
     ]
     subject = f"Your AI visibility report — {biz.name[:30]}"
@@ -221,6 +229,7 @@ def draft_response(intent: str, prospect: Prospect, settings,
             "Hi,",
             "Glad it was useful.",
             next_step,
+            booking_line(settings),
             "If you'd rather do it yourself, the list in the report is yours to "
             "keep either way.",
             brand))
@@ -239,6 +248,7 @@ def draft_response(intent: str, prospect: Prospect, settings,
                 f"in {biz.market}, and do the work that moves it.",
                 payback,
                 next_step,
+                booking_line(settings),
                 brand))
 
         return ("answer_question", _body(
@@ -252,6 +262,7 @@ def draft_response(intent: str, prospect: Prospect, settings,
                                       f"any time."),
             payback,
             next_step,
+            booking_line(settings),
             brand))
 
     if intent == "referral":

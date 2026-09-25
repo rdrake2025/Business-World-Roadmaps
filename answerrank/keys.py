@@ -240,6 +240,17 @@ def _ask_briefing(settings, config_path: Path, ask, say) -> None:
             set_setting("timezone", zone, config_path)
             settings.timezone = zone
 
+    say("\n  A booking link lets people pick a 15-minute call with you themselves. "
+        "Free: Google Calendar > Create > Appointment schedule, or calendly.com. "
+        "Answers to interested people include it.")
+    link = getattr(settings, "booking_link", "") or ""
+    entered = ask(f"  Booking link [{link or 'none, leave blank to skip'}]: ").strip()
+    if entered and entered.startswith(("http://", "https://")) and entered != link:
+        set_setting("booking_link", entered, config_path)
+        settings.booking_link = entered
+    elif entered and not entered.startswith(("http://", "https://")):
+        say("    That isn't a web link (it should start with https://). Skipped.")
+
 
 def _ask_targets(settings, config_path: Path, ask, say) -> None:
     """The trade and cities the finder searches, and so the call list."""
