@@ -13,17 +13,17 @@ about **$6 a month**. You will not need to type any commands on it.
 
 ## Before you start
 
-- Your keys are saved (double-click **KEYS.bat** if you haven't).
+- Your keys are saved (AnswerRank button → **Keys and settings**, if you haven't).
 - You know your domain, e.g. `getanswerrank.com`.
 - You can log in to wherever you bought the domain (the "registrar").
 
 ## 1. Make the setup file (on your laptop, 1 minute)
 
-In the AnswerRank folder, run:
+AnswerRank button → **5 Make the server setup file**. Press Enter to use the
+domain you send from.
 
-    python run.py server-script --domain getanswerrank.com
-
-It writes a file called `server-setup-getanswerrank.com.sh` and prints your
+It writes a file called `server-setup-getanswerrank.com.sh`, opens it in
+Notepad, and prints your
 **console link** — the address you'll use on your phone from now on.
 **Save that link somewhere safe; it is your login.**
 
@@ -70,15 +70,15 @@ live. Then open your console link on your phone and add it to your home screen.
 
 ## From now on
 
-- **Use the console link, not start.bat.** The server runs the agents. If you
-  double-click start.bat on the laptop out of habit, it will notice the server
-  is running the business and refuse to start a second copy (two copies would
-  send every email twice).
+- **The server runs the agents.** The AnswerRank button's **Open AnswerRank**
+  notices and opens your server's console instead of starting a second copy
+  on the laptop (two copies would send every email twice). On your phone, use
+  the console link.
 - **Updates are automatic.** Every night at 4:30 the server pulls the latest
-  version, the same way start.bat does on the laptop.
+  version, the same way the AnswerRank button does on the laptop.
 - **Backups are automatic.** The database is backed up every night at 3:00 and
   kept for 30 days, on the server.
-- **Keys:** to change one, run KEYS.bat on the laptop, make a new setup file,
+- **Keys:** to change one, use Keys and settings on the laptop, make a new setup file,
   and ask for help applying it — or change it on the server with the
   provider's web console.
 

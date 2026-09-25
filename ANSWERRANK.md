@@ -16,8 +16,10 @@ being named, and does the work to change it.
 
 ## Quick start
 
-**Windows** — double-click **`start.bat`** in the project folder. No terminal
-needed.
+**Windows** — double-click **`start.bat`** in the project folder once. It sets
+everything up and puts an **AnswerRank** button on the desktop; after that the
+button opens a menu for everything (open, keys and settings, email domain,
+what still needs doing, server setup, practice run). No terminal needed.
 
 **Mac / Linux** — one command:
 
@@ -353,11 +355,11 @@ and retention at the same time.
 | `approve` / `send` | Approve and deliver messages |
 | `win NAME --plan growth` | They said yes: sign them up (awaiting payment; `--plan pilot` is free) |
 | `paid NAME` | Their payment arrived: they go live and count as revenue |
-| `keys` | Save the mailbox password and API keys (or double-click KEYS.bat) |
+| `keys` | Save the mailbox password and API keys (AnswerRank button, option 2) |
 | `case-study NAME` | Before/after write-up for a client — or "too early", or "don't publish" |
 | `server-script --domain D` | Write the one file that sets up the always-on server (deploy/SERVER.md) |
 | `console-link` | Print the phone console address with its login |
-| `simulate [--sales N]` | Run made-up sales through the real agents (or double-click SIMULATE.bat) |
+| `simulate [--sales N]` | Run made-up sales through the real agents (AnswerRank button, option 6) |
 | `dashboard` | KPIs and progress to target |
 | `forecast` | Model the path to the profit target |
 | `export AUDIT_ID` | Export an audit's deliverables |
@@ -381,7 +383,7 @@ and retention at the same time.
 What happens after someone says yes, end to end:
 
 1. **They say "sign us up".** The Concierge answers with the payment link for
-   their plan (set the links once with KEYS.bat). You tap **Sign them up** on
+   their plan (set the links once in Keys and settings). You tap **Sign them up** on
    the phone. They are now *waiting for payment* — not revenue, not welcomed.
 2. **They pay.** With a read-only Stripe key saved, the Bookkeeper sees it by
    itself within two hours. Without one, tap **They paid** on the Clients tab.
@@ -393,7 +395,7 @@ What happens after someone says yes, end to end:
    (WordPress, Wix, Squarespace, GoDaddy, Shopify, Webflow…).
 5. **Their homepage is checked daily** for the fixes. A client three weeks in
    with nothing live is flagged in Retention with a ten-minute call to fix it.
-6. **Replies are read for you** once KEYS.bat has switched it on: quoted text
+6. **Replies are read for you** once Keys and settings has switched it on: quoted text
    stripped, out-of-office ignored, bounce notices counted toward the bounce
    brake, and mail from strangers listed rather than dropped.
 
@@ -504,7 +506,7 @@ a defensible tier, best-paying first — twenty trades rather than eleven.
 
 ## Turning the domain on
 
-Double-click **SETUP-DOMAIN.bat** (Windows) or run **./setup-domain.sh**
+AnswerRank button → **Email domain** (Windows) or run **./setup-domain.sh**
 (macOS, Linux). It asks for the domain and the mailbox provider, and nothing
 else. From a terminal it is:
 

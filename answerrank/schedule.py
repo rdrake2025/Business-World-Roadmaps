@@ -275,8 +275,8 @@ LAUNCH: list[tuple[int, str, int, str]] = [
 1. workspace.google.com -> Business Starter, 1 user, on your SENDING
    domain (buy one there if you have none - never your main domain).
    Make hello@yourdomain and verify the domain when it asks.
-2. Double-click SETUP-DOMAIN.bat. Type the domain, pick Google. Paste
-   the MX, SPF and DMARC rows it prints at your registrar.
+2. Desktop button -> 3 Email domain. Press Enter, pick Google.
+   Paste the MX, SPF and DMARC rows it prints at your registrar.
 3. DKIM will NOT be ready tonight. Google only lets you make the key
    24-72 hours after Gmail is switched on. That is LAUNCH 4.
 4. myaccount.google.com -> Security -> 2-Step Verification ON. Then
@@ -296,17 +296,17 @@ Spend so far: domain ~$12/yr, Workspace $8.40/mo (14 days free)."""),
    Checkout Sessions = Read, Subscriptions = Read, everything else None.
    It starts rk_. Never paste the sk_ secret key anywhere.
 4. platform.openai.com -> Billing -> add $15. API keys -> new key.
-5. Double-click KEYS.bat. It asks for all of it in plain words: the
-   mailbox, the app password, the AI key, the Stripe key, the three
-   payment links and your postal address - then tests the mailbox.
+5. Desktop button -> 2 Keys and settings. It asks for all of it in
+   plain words: mailbox, app password, AI key, Stripe key, postal
+   address, your trade and cities, payment links - then tests the
+   mailbox.
 
 The postal address goes at the foot of every email. A USPS PO Box or a
 virtual mailbox keeps your home address off them."""),
 
     (0, "LAUNCH 3: Server and phone console", 45, """Setup, part three. deploy/SERVER.md has every screen.
 
-1. In the project folder (where start.bat is):
-     python run.py server-script --domain yourdomain.com
+1. Desktop button -> 5 Make the server setup file.
    SAVE the console link it prints. It is your login.
 2. digitalocean.com -> Create -> Droplets -> Ubuntu 24.04, Basic,
    $6/month. Advanced Options -> Add Initialization scripts -> paste
@@ -314,18 +314,19 @@ virtual mailbox keeps your home address off them."""),
 3. At your registrar: A record, name @, value = that IP address.
 4. After ~15 minutes open the console link on your phone and Add to
    Home Screen. Delete the server-setup file from the laptop.
-5. python run.py doctor. Expect DKIM to be the only thing still red."""),
+5. Desktop button -> 4 What still needs doing. Expect DKIM to be
+   the only thing still red."""),
 
     (2, "LAUNCH 4: DNS - turn on DKIM", 20, """24-72 hours after Gmail was switched on.
 
 1. admin.google.com -> Apps -> Google Workspace -> Gmail ->
    Authenticate email -> Generate new record -> 2048-bit.
-2. Paste it at your registrar as a TXT record (SETUP-DOMAIN.bat shows
-   the exact name and value).
+2. Paste it at your registrar as a TXT record (desktop button ->
+   3 Email domain shows the exact name and value).
 3. Wait an hour, then back in Google Admin -> Start authentication.
    It can take up to 48 hours to show as authenticating.
-4. Double-click SETUP-DOMAIN.bat again until it says ready.
-   python run.py doctor - everything green means you can send.
+4. Desktop button -> 3 Email domain, again, until it says ready.
+   Then 4 What still needs doing: all green means you can send.
 
 Until then: send a few real emails a day from the new address."""),
 
@@ -349,8 +350,8 @@ Pick ONE trade and 2-3 mid-size metros - less competition than the big
 cities, same budgets. HVAC has the highest urgency and the worst AI
 visibility; the system knows 22 trades if you'd rather another.
 
-Double-click SIMULATE.bat once (nothing real is sent) to watch a month
-of the business run end to end.
+Desktop button -> 6 Practice run (nothing real is sent) shows a
+month of the business run end to end.
 
 Then open three audits on the console and read them critically.
 Would you pay $997/mo for that? If not, say what's wrong - that is

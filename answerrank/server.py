@@ -94,5 +94,5 @@ def write(domain: str, out_dir: Path = ROOT, **kw) -> tuple[Path, str, list[str]
                         f"DigitalOcean accepts it.")
     if not Path(kw.get("keys_path", KEYS_FILE)).exists():
         warnings.append("No keys.env yet, so the server will have no mailbox or API "
-                        "keys. Run KEYS.bat first, then make this file again.")
+                        "keys. Do Keys and settings first (AnswerRank button), then make this file again.")
     return path, link, warnings

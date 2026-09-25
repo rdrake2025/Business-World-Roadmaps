@@ -567,7 +567,7 @@ class ConciergeAgent(Agent):
             cfg = self._imap_config()
             return 0, ("no new replies" if cfg else
                        "mailbox not connected — replies are pasted in from the "
-                       "console (run KEYS.bat to have them read automatically)")
+                       "console (Keys and settings on the AnswerRank button reads them automatically)")
 
         prospects = [p for p in self.store.get_prospects(limit=10_000) if p.business.email]
         handled = bounced = skipped = unmatched = 0

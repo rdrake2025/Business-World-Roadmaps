@@ -9,7 +9,7 @@ could be sent, no real audit could run, and no reply could be read.
 
 So the keys live in one small file, ``keys.env``, next to ``answerrank.yml``.
 It is never committed (see ``.gitignore``), it is read at startup, and it is
-written by ``run.py keys`` (or KEYS.bat), which asks for each one in plain
+written by ``run.py keys`` (the AnswerRank button's Keys and settings), which asks for each one in plain
 language and tests the mailbox before saving. A real environment variable
 still wins over the file, so a server can be configured the usual way.
 """
@@ -108,7 +108,7 @@ def write(values: dict[str, str], path: Path | str = KEYS_FILE) -> Path:
     merged = read(p)
     merged.update({k: v for k, v in values.items() if v is not None})
     lines = ["# AnswerRank keys. Private: never share this file or commit it.",
-             "# Edit with `run.py keys` (or KEYS.bat) rather than by hand.", ""]
+             "# Change them with the AnswerRank button -> Keys and settings, not by hand.", ""]
     known = [k.name for k in KEYS]
     for name in known + sorted(set(merged) - set(known)):
         if merged.get(name):
