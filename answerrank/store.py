@@ -617,6 +617,18 @@ class Store:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def outcomes_with_prefix(self, prefix: str, days: int = 365) -> list[dict[str, Any]]:
+        """Every outcome whose kind starts with ``prefix``, newest first —
+        one query for all prospects rather than one per prospect."""
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        pattern = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        with self.conn() as cx:
+            rows = cx.execute(
+                """SELECT * FROM outcomes WHERE kind LIKE ? ESCAPE '\\'
+                   AND occurred_at >= ? ORDER BY occurred_at DESC""",
+                (pattern, since)).fetchall()
+        return [dict(r) for r in rows]
+
     def has_outcome(self, subject_id: str, kind: str) -> bool:
         """Whether this has *ever* happened to this subject.
 

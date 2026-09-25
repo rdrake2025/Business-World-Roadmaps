@@ -190,6 +190,22 @@ def followup(prospect: Prospect, step: int, settings) -> tuple[str, str]:
     return subject, body + _compliance_block(settings)
 
 
+def worth_pitching(prospect: Prospect, settings, log=None) -> bool:
+    """A real, demonstrable problem, at a business the retainer honestly
+    makes sense for. The same bar for an email and for a call."""
+    # The price this trade can actually defend, not one flat number.
+    # Quoting every trade $997 discarded half the library for a reason
+    # that was never about the market.
+    price = settings.quote_for(prospect.business.vertical)
+    fit = qualify.score_fit(prospect.business, prospect.score, price)
+    if not fit.worth_pitching:
+        if log is not None:
+            log.debug("skipping %s: %s", prospect.business.name,
+                      fit.blockers[0] if fit.blockers else f"tier {fit.tier}")
+        return False
+    return prospect.is_hot or (prospect.score is not None and prospect.score < 55)
+
+
 class OutreachAgent(Agent):
     name = "outreach"
     description = "Drafts compliant, evidence-backed outreach for audited prospects."
@@ -236,17 +252,16 @@ class OutreachAgent(Agent):
             self.log.debug("skipping %s: fixture data", prospect.business.name)
             return False
 
-        # The price this trade can actually defend, not one flat number.
-        # Quoting every trade $997 discarded half the library for a reason
-        # that was never about the market.
-        price = self.settings.quote_for(prospect.business.vertical)
-        fit = qualify.score_fit(prospect.business, prospect.score, price)
-        if not fit.worth_pitching:
-            self.log.debug("skipping %s: %s", prospect.business.name,
-                           fit.blockers[0] if fit.blockers else f"tier {fit.tier}")
-            return False
+        return worth_pitching(prospect, self.settings, self.log)
 
-        return prospect.is_hot or (prospect.score is not None and prospect.score < 55)
+    def _phone_only(self, prospect: Prospect) -> bool:
+        """No address to email, but a number to call and a gap worth calling
+        about. Suppressing these threw away exactly the businesses a call
+        can still reach."""
+        email = prospect.business.email
+        return (not email or "@" not in email) and bool(prospect.business.phone) \
+            and SIMULATED_MARKER not in (prospect.notes or "") \
+            and worth_pitching(prospect, self.settings)
 
     def _passes_discipline(self, step: int, body: str, prospect: Prospect) -> bool:
         """The playbook's own check, run against our own drafts.
@@ -276,6 +291,15 @@ class OutreachAgent(Agent):
                 self.settings.quote_for(p.business.vertical)),
         )[: self.draft_budget]
         for prospect in candidates:
+            if not self._eligible(prospect) and self._phone_only(prospect):
+                # Kept for the call list; looked at again in a week in case
+                # an address has turned up.
+                prospect.next_action_at = (now + timedelta(days=7)).isoformat(timespec="seconds")
+                if "phone only" not in (prospect.notes or ""):
+                    prospect.notes = (prospect.notes or "") + " | phone only: no email found"
+                self.store.upsert_prospect(prospect)
+                skipped += 1
+                continue
             if not self._eligible(prospect):
                 prospect.stage = "suppressed"
                 prospect.notes = (prospect.notes or "") + " | filtered: no evidence or no email"

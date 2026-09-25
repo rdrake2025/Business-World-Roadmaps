@@ -102,7 +102,8 @@ def classify(text: str, is_client: bool = False) -> str:
 _body = playbook.email_body
 
 
-def report_email(prospect: Prospect, audit, settings) -> tuple[str, str]:
+def report_email(prospect: Prospect, audit, settings,
+                 opening: str = "") -> tuple[str, str]:
     """The free report the first email promised, as the email itself.
 
     Every cold opener ends 'Want it? Reply "yes" and it's yours', and every
@@ -137,6 +138,7 @@ def report_email(prospect: Prospect, audit, settings) -> tuple[str, str]:
 
     paragraphs = [
         "Hi,",
+        *([opening] if opening else []),
         f"Here's the full check on {biz.name}. I asked {n} questions a customer "
         f"in {biz.market} would ask an AI assistant, on "
         f"{', '.join(engines)}.",

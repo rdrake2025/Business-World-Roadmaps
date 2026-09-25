@@ -55,6 +55,43 @@ Then stop. Three touches, then suppressed. A fourth touch converts nobody and
 costs complaint rate — which is the one resource that, once spent, cannot be
 bought back.
 
+## The cold call (2 minutes)
+
+The phone console's **Call list** (Pipeline tab) shows who to ring, best
+times first, in *their* time zone. Tap a name for the number, the one true
+thing the audit found, the script and the voicemail. The phone dials; nothing
+in the system does.
+
+The only goal of a cold call is **their email address for the free report**,
+or a booked 15-minute walkthrough. Not a sale.
+
+1. **Open with the finding.** "Hi, is this the owner? This is [name] with
+   [brand]. I'll be quick. When I asked ChatGPT 'best plumber in Waco for an
+   emergency', it recommended [competitor]. You didn't come up. Did you know
+   that was happening?" Then stop talking.
+2. **If they're listening:** more people ask AI for a recommendation than
+   scroll the results; it names two or three businesses; you've put together a
+   free report on why they're missing and the three fixes.
+3. **Ask:** "Can I email it over? What's the best address?" Type it in and
+   tap **Send them the report**. The report is drafted with "Thanks for taking
+   my call" at the top; approve it in the inbox the same day.
+4. **Voicemail:** about 20 seconds, on screen. Say your number twice.
+
+**Best times:** 8–9:30am and 4–6pm their time, weekdays. Owners are on jobs
+in between. The list puts those first.
+
+**The rules**, because calling businesses is only exempt from the Do Not Call
+rules when you keep them:
+
+- Dial by hand, to the number the business publishes.
+- Only say what the report shows. Never suggest you're with Google, OpenAI or
+  any AI company, and never promise a ranking.
+- **"Not interested" ends it.** Say thanks, hang up, tap **Not interested**:
+  no more calls or emails to them. "Don't call" is the same, harder.
+
+Four attempts at most, a day or two apart. The list stops showing a business
+after that, or after any real conversation.
+
 ## The call (20 minutes)
 
 Do not present. **Show them the report and stay quiet.**

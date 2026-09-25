@@ -111,6 +111,24 @@
   button.act.primary{background:var(--mark);border-color:var(--mark);color:var(--mark-ink)}
   button.act.primary:disabled{opacity:.42}
   button.act:disabled{cursor:not-allowed}
+  a.act{box-sizing:border-box;width:100%;padding:15px;border-radius:12px;display:flex;
+    align-items:center;justify-content:center;min-height:52px;font-size:15.5px;
+    font-weight:600;text-decoration:none;border:1px solid var(--rule2);color:var(--ink)}
+  a.act.primary{background:var(--mark);border-color:var(--mark);color:var(--mark-ink)}
+
+  /* calls */
+  .badge.good{background:var(--good);color:#fff}
+  .badge.off{background:var(--sunk);color:var(--muted)}
+  .sheet .sh{font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--muted);margin:18px 0 8px;font-weight:650}
+  .sheet .say{font-size:15px;line-height:1.5;color:var(--ink);padding:11px 12px;
+    background:var(--accent-soft);border-radius:10px;margin-bottom:8px}
+  .outs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
+  .outs button{min-height:48px;padding:10px 8px;border-radius:11px;font:600 14px/1.25 inherit;
+    border:1px solid var(--rule2);background:var(--card);color:var(--ink);cursor:pointer}
+  .outs button.go{border-color:var(--good);color:var(--good)}
+  .outs button.stop{color:var(--bad)}
+  .outs button:disabled{opacity:.45}
 
   /* inbox */
   .msg{background:var(--card);border:1px solid var(--rule);border-radius:13px;
@@ -262,6 +280,11 @@
     <div class="grid2" style="margin-bottom:11px">
       <div class="stat"><div class="v mono" id="pTotal">–</div><div class="k">Prospects</div></div>
       <div class="stat"><div class="v mono" id="pHot">–</div><div class="k">Hot leads</div></div>
+    </div>
+    <div class="card">
+      <h2>Call list</h2>
+      <div class="barnote" id="callStats" style="margin-bottom:8px"></div>
+      <div id="callList"><div class="barnote">Loading…</div></div>
     </div>
     <div class="card">
       <h2>Got a reply? Find them</h2>
@@ -483,6 +506,7 @@
           (x.score === null ? "–" : Math.round(x.score)) + '</span></div>';
       }).join("");
     }
+    loadCalls();
     api("/api/prospects?stage=replied&limit=30").then(function(d){
       $("repliedList").innerHTML = d.items.length ? rows(d.items)
         : '<div class="barnote">Nobody waiting on an answer.</div>';
@@ -727,6 +751,109 @@
       }).join("") : '<div class="barnote">None generated yet.</div>';
     }).catch(function(){});
   }
+
+
+  // ---------------------------------------------------------------- calls
+  // Who to ring, what to say, and one tap for what happened. The phone
+  // itself dials; nothing here places a call.
+  function loadCalls(){
+    return api("/api/calls").then(function(d){
+      var t = d.today;
+      $("callStats").textContent = t.calls
+        ? t.calls + " call" + (t.calls === 1 ? "" : "s") + " today · " + t.spoke +
+          " spoke · " + t.reports + " report" + (t.reports === 1 ? "" : "s") +
+          " · " + t.booked + " booked"
+        : (d.count ? d.count + " to call. Best times first." : "");
+      $("callList").innerHTML = d.items.length ? d.items.slice(0, 15).map(function(x){
+        var badge = x.window === "good" ? '<span class="badge good">good time</span>'
+          : x.window === "closed" ? '<span class="badge off">closed</span>' : "";
+        return '<div class="row tap" data-call="' + esc(x.id) + '"><span class="l">' +
+          esc(x.name) + '<br><span style="font-size:12px;color:var(--muted)">' +
+          esc(x.trade) + ' · ' + esc(x.market) +
+          (x.attempts ? ' · try ' + (x.attempts + 1) : '') + '</span></span>' +
+          '<span class="r mono" style="font-size:12.5px;text-align:right">' +
+          (x.about ? '~' : '') + esc(x.local) + badge + '</span></div>';
+      }).join("") : '<div class="barnote">Nobody to call yet. The fleet finds and ' +
+        'checks new businesses around the clock; the ones with a phone number ' +
+        'show up here.</div>';
+    }).catch(function(){});
+  }
+
+  function callSheet(c){
+    if(c.error){ toast(c.error); return; }
+    var ev = c.evidence, s = c.script;
+    var say = function(label, text){
+      return '<div class="sh">' + label + '</div><div class="say">' + esc(text) + '</div>';
+    };
+    var facts = ev.real
+      ? (ev.competitor ? '<div class="finding">Asked <b>' + esc(ev.engine) + '</b> “' +
+          esc(ev.question) + '” and it named <b>' + esc(ev.competitor) +
+          '</b>, not them.</div>' : '') +
+        '<div class="finding">Named in ' + ev.named + ' of ' + ev.asked +
+          ' AI answers · score ' + ev.score + '/100</div>'
+      : '<div class="finding" style="background:var(--accent-soft);color:var(--ink)">' +
+          '<b>No real check yet.</b> Nothing here is from a real AI answer, so don’t ' +
+          'quote any of it. Save an OpenAI key with KEYS.bat and the fleet re-checks them.</div>';
+    openSheet('<h3>' + esc(c.name) + '</h3>' +
+      '<div class="who">' + esc(c.trade) + ' · ' + esc(c.market) +
+        (c.local ? ' · ' + esc(c.local) + ' there' : '') + '</div>' +
+      (c.dial ? '<a class="act primary" href="tel:' + esc(c.dial) + '">Call ' +
+        esc(c.phone) + '</a>' : '') +
+      '<div class="sh">What the check found</div>' + facts +
+      say("Open with", s.opener) +
+      say("If they’re listening", s.if_listening) +
+      say("Then ask", s.ask) +
+      '<div class="finding">' + esc(s.then) + '</div>' +
+      say("Voicemail, about 20 seconds", s.voicemail) +
+      '<div class="sh">If they say</div>' +
+      s.objections.map(function(o){
+        return '<div class="finding"><b>' + esc(o[0]) + '</b>: ' + esc(o[1]) + '</div>';
+      }).join("") +
+      '<div class="finding"><b>' + esc(s.never) + '</b></div>' +
+      '<div class="sh">What happened?</div>' +
+      '<input id="callEmail" type="email" autocomplete="off" ' +
+        'placeholder="Their email, for the report" value="' + esc(c.email || "") + '">' +
+      '<input id="callNote" autocomplete="off" ' +
+        'placeholder="Note: who you spoke to, when to call back">' +
+      '<div class="outs">' + c.outcomes.map(function(o){
+        var cls = (o.key === "send_report" || o.key === "booked") ? "go"
+          : (o.key === "not_interested" || o.key === "do_not_call") ? "stop" : "";
+        return '<button class="' + cls + '" data-outcome="' + esc(o.key) +
+          '" data-pid="' + esc(c.id) + '">' + esc(o.label) + '</button>';
+      }).join("") + '</div>');
+  }
+
+  $("callList").addEventListener("click", function(e){
+    var row = e.target.closest("[data-call]");
+    if(!row || busy) return;
+    row.style.opacity = ".5";
+    api("/api/call-sheet?id=" + encodeURIComponent(row.dataset.call))
+      .then(callSheet)
+      .catch(function(){ toast("Could not load that one"); })
+      .then(function(){ row.style.opacity = "1"; });
+  });
+
+  $("sheetBody").addEventListener("click", function(e){
+    var btn = e.target.closest("button[data-outcome]");
+    if(!btn || busy) return;
+    var outcome = btn.dataset.outcome;
+    var email = ($("callEmail") && $("callEmail").value || "").trim();
+    var note = ($("callNote") && $("callNote").value || "").trim();
+    if(outcome === "send_report" && !email){
+      toast("Ask for their email first"); $("callEmail").focus(); return;
+    }
+    if(outcome === "do_not_call" && !confirm("Stop all calls and emails to them?")) return;
+    busy = true; btn.disabled = true;
+    api("/api/call", { id: btn.dataset.pid, outcome: outcome, email: email, note: note })
+      .then(function(r){
+        if(r.error){ toast(r.error, 4500); return; }
+        toast(r.label + ". " + r.next, 5500);
+        closeSheet();
+        return load(true);
+      })
+      .catch(function(){ toast("That didn't go through"); })
+      .then(function(){ busy = false; btn.disabled = false; });
+  });
 
   // ---------------------------------------------------------------- events
 
