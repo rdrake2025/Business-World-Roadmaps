@@ -171,17 +171,36 @@ item does it:
 
 - **Someone ready to buy** → their drafted answer, with the payment link.
 - **A walkthrough soon** → their report and your notes.
+- **How did the walkthrough go?** → one tap. *Signed up* sends the payment
+  link at once; *call back* and *rebook* put them back on your list at the
+  time you pick; *not for them* closes it.
 - **Call back / Call N businesses** → a calling session: dial, talk, tap what
   happened, and the next business opens. Call backs come back at the time
   you agreed; a booked walkthrough gives you an *Add to my calendar* button
   and drafts a confirmation with their report.
 - **Answers to people who asked**, then **first emails and follow-ups** →
-  read, approve. You never tap Send: approved emails go out on their own
-  (answers 7am–9pm, cold emails weekdays 8am–5pm), within every cap.
+  one email at a time, the whole of it on screen: **Approve**, **Skip** or
+  **Edit**, and the next one opens. On the PC, the keys A, S, E and U (undo)
+  do the same. You never tap Send: approved emails go out on their own
+  (answers within a couple of minutes, 7am–9pm; cold emails weekdays
+  8am–5pm), within every cap.
 - **Someone hasn't paid**, **Save a client** → the Clients tab.
 
 When Up next is empty, you're done. Alerts arrive by email the moment someone
 is ready to buy or pays, so nothing waits for tomorrow.
+
+**Changed your mind?** Every approve and skip has **Undo**, and anything
+approved but not yet sent sits under *Approved, waiting to send* in the inbox
+with a **Pull back** button. Skipping an answer to someone who wrote in only
+means you'll answer them yourself; it never stops the lead.
+
+**Friday afternoon** a "Your week" email does the weekly review for you: the
+numbers, each step of the funnel against healthy, and the one thing to
+change. The same is on the Brain tab under *This week*.
+
+**Booking link** (Keys and settings): paste a Google Calendar booking page
+or Calendly link and answers to interested people offer it, so nobody trades
+three emails to find a time.
 
 **Automatic** (Today tab) has two more switches for when you trust the
 drafts: approve follow-ups automatically, and send reports people asked for

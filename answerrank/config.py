@@ -147,6 +147,10 @@ class Settings:
     #: Where the morning briefing and instant alerts go. Empty means the
     #: mailbox you send from.
     briefing_email: str = ""
+    #: A page where people book 15 minutes with you (a Google Calendar
+    #: booking page or Calendly). Answers to interested people offer it, so
+    #: nobody trades three emails to find a time.
+    booking_link: str = ""
     #: What to sell and where. Empty means every trade the price supports,
     #: across the Scout's default cities. Markets are "City, ST".
     trades: list[str] = field(default_factory=list)

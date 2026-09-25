@@ -302,6 +302,15 @@ class Application:
         ids = self._body_json(environ).get("ids") or []
         return self._json(start, self.api.reject([str(i) for i in ids]))
 
+    def api_edit(self, environ, start):
+        d = self._body_json(environ)
+        return self._json(start, self.api.edit(str(d.get("id", "")),
+                                               str(d.get("subject", "")),
+                                               str(d.get("text", ""))))
+
+    def api_undo(self, environ, start):
+        return self._json(start, self.api.undo(str(self._body_json(environ).get("id", ""))))
+
     def api_send(self, environ, start):
         d = self._body_json(environ)
         return self._json(start, self.api.send(
@@ -343,6 +352,15 @@ class Application:
         return self._json(start, self.api.log_call(
             str(d.get("id", "")), str(d.get("outcome", "")),
             str(d.get("email", "")), str(d.get("note", "")), str(d.get("when", ""))))
+
+    def api_debrief(self, environ, start):
+        d = self._body_json(environ)
+        return self._json(start, self.api.debrief(
+            str(d.get("id", "")), str(d.get("result", "")), str(d.get("plan", "growth")),
+            str(d.get("when", "")), str(d.get("note", ""))))
+
+    def api_week(self, environ, start):
+        return self._json(start, self.api.week())
 
     def api_next(self, environ, start):
         return self._json(start, self.api.next_up())
@@ -458,6 +476,8 @@ class Application:
             "/ops": self.ops,
             "/api/approve": self.api_approve,
             "/api/reject": self.api_reject,
+            "/api/edit": self.api_edit,
+            "/api/undo": self.api_undo,
             "/api/send": self.api_send,
             "/api/tick": self.api_tick,
             "/api/clients": self.api_clients,
@@ -475,6 +495,8 @@ class Application:
             "/api/call-sheet": self.api_call_sheet,
             "/api/call": self.api_call,
             "/api/next": self.api_next,
+            "/api/week": self.api_week,
+            "/api/debrief": self.api_debrief,
             "/api/automation": self.api_automation,
             "/api/approve-followups": self.api_approve_followups,
             "/api/expense": self.api_expense,

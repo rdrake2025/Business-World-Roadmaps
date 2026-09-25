@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS deliverables (
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY, prospect_id TEXT, subject TEXT, body TEXT,
     sequence_step INTEGER, status TEXT, scheduled_for TEXT, sent_at TEXT,
-    created_at TEXT, kind TEXT DEFAULT 'cold'
+    created_at TEXT, kind TEXT DEFAULT 'cold', approved_at TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_message_status ON messages(status);
 
@@ -138,6 +138,12 @@ CREATE TABLE IF NOT EXISTS suppression (
 """
 
 
+def _message(row) -> OutreachMessage:
+    data = {k: row[k] for k in row.keys()}
+    data["approved_at"] = data.get("approved_at") or ""
+    return OutreachMessage(**data)
+
+
 class Store:
     def __init__(self, path: str):
         self.path = path
@@ -158,7 +164,8 @@ class Store:
         if not Path(self.path).exists():
             return
         wanted = {"ledger": [("dedupe_key", "TEXT")],
-                  "messages": [("kind", "TEXT DEFAULT 'cold'")]}
+                  "messages": [("kind", "TEXT DEFAULT 'cold'"),
+                               ("approved_at", "TEXT DEFAULT ''")]}
         with self.conn() as cx:
             for table, columns in wanted.items():
                 exists = cx.execute(
@@ -483,12 +490,18 @@ class Store:
             cx.execute(
                 """INSERT OR REPLACE INTO messages
                    (id,prospect_id,subject,body,sequence_step,status,scheduled_for,
-                    sent_at,created_at,kind)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    sent_at,created_at,kind,approved_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (m.id, m.prospect_id, m.subject, m.body, m.sequence_step, m.status,
-                 m.scheduled_for, m.sent_at, m.created_at, m.kind or "cold"),
+                 m.scheduled_for, m.sent_at, m.created_at, m.kind or "cold",
+                 m.approved_at or ""),
             )
         return m.id
+
+    def get_message(self, message_id: str) -> OutreachMessage | None:
+        with self.conn() as cx:
+            r = cx.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+        return _message(r) if r else None
 
     def send_queue(self, limit: int = 100) -> list[OutreachMessage]:
         """Approved messages in the order they should leave.
@@ -508,7 +521,7 @@ class Store:
                    LIMIT ?""",
                 (limit,),
             ).fetchall()
-        return [OutreachMessage(**{k: r[k] for k in r.keys()}) for r in rows]
+        return [_message(r) for r in rows]
 
     def messages_for(self, prospect_id: str) -> list[OutreachMessage]:
         with self.conn() as cx:
@@ -516,7 +529,7 @@ class Store:
                 "SELECT * FROM messages WHERE prospect_id = ? ORDER BY created_at ASC",
                 (prospect_id,),
             ).fetchall()
-        return [OutreachMessage(**{k: r[k] for k in r.keys()}) for r in rows]
+        return [_message(r) for r in rows]
 
     def withdraw_cold(self, prospect_id: str) -> int:
         """Pull any not-yet-sent cold message to someone who has left the
@@ -548,7 +561,7 @@ class Store:
             args = (status,)
         with self.conn() as cx:
             rows = cx.execute(q + " ORDER BY created_at ASC LIMIT ?", args + (limit,)).fetchall()
-        return [OutreachMessage(**{k: r[k] for k in r.keys()}) for r in rows]
+        return [_message(r) for r in rows]
 
     def sends_today(self) -> int:
         today = datetime.now(timezone.utc).date().isoformat()

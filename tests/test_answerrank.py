@@ -4936,6 +4936,326 @@ class TestTheDailyLoop(_Biz):
         self.assertIn(b"Hill Plumbing", body)
 
 
+
+class TestTheFastestDay(_Biz):
+    """Fewer taps between the work and the money: review one at a time with
+    edit and undo, a result for every walkthrough, links that go at once,
+    booking without back-and-forth, and the Friday review written for you."""
+
+    NOW = TestTheDailyLoop.NOW
+    _audited = TestTheDailyLoop._audited
+    _hot_reply = TestTheDailyLoop._hot_reply
+    _next = TestTheDailyLoop._next
+
+    def _cold(self, words=40, step=1):
+        from answerrank.agents.outreach import _compliance_block
+        from answerrank import playbook
+        p = self._audited(name="Volt Pros", domain="voltpros.com", email="hi@voltpros.com")
+        body = playbook.email_body(
+            "Hi,", " ".join(["word"] * words) + ".",
+            "Summit Plumbing and Drain Co was named instead of you when I asked for the "
+            "best emergency electrician in Austin late on a Sunday night.",
+            "AnswerRank\nhttps://answerrank.example") + _compliance_block(self.settings)
+        m = OutreachMessage(prospect_id=p.id, subject="Volt Pros and AI search", body=body,
+                            kind="cold", sequence_step=step)
+        self.store.save_message(m)
+        return p, m
+
+    # ---------------------------------------------------------- review
+    def test_the_whole_email_is_editable_and_the_footer_is_not(self):
+        p, m = self._cold()
+        item = self._api().inbox()["items"][0]
+        self.assertNotIn("unsubscribe", item["text"].lower())
+        self.assertIn("unsubscribe", item["footer"].lower())
+        self.assertIn("Summit Plumbing and Drain Co was named instead of you when I asked "
+                      "for the best", item["text"], "wrapping undone for the phone")
+        added = item["text"] + "\n\nOne more thing: " + "this is a long sentence " * 4
+        r = self._api().edit(m.id, "New subject", added)
+        self.assertTrue(r["ok"], r)
+        saved = self.store.get_message(m.id)
+        self.assertEqual(saved.subject, "New subject")
+        self.assertTrue(saved.body.endswith(item["footer"] + "\n"), "footer kept exactly")
+        self.assertIn("One more thing", saved.body)
+        self.assertLessEqual(max(len(line) for line in saved.body.split("\n")), 78)
+        self.assertIn("error", self._api().edit(m.id, "", ""), "empty is refused")
+        long = self._api().edit(m.id, "", " ".join(["word"] * 150))
+        self.assertIn("words", long["error"], "a cold first email is checked again")
+        saved.status = "sent"
+        self.store.save_message(saved)
+        self.assertIn("error", self._api().edit(m.id, "", "Hi"))
+
+    def test_an_unedited_email_comes_back_identical(self):
+        from answerrank import drafts
+        _p, m = self._cold()
+        self.assertEqual(drafts.rebuild(drafts.editable(m.body), m.body), m.body)
+
+    def test_undo_takes_back_an_approval_or_a_skip(self):
+        p, m = self._cold()
+        self._api().approve([m.id])
+        self.assertTrue(self.store.get_message(m.id).approved_at)
+        self.assertEqual(self._api().undo(m.id)["status"], "drafted")
+        self.assertEqual(self.store.get_message(m.id).status, "drafted")
+        self._api().reject([m.id])
+        self.assertEqual(self._api()._prospect(p.id).stage, "suppressed")
+        self._api().undo(m.id)
+        self.assertEqual(self.store.get_message(m.id).status, "drafted")
+        self.assertEqual(self._api()._prospect(p.id).stage, "audited", "business back too")
+        saved = self.store.get_message(m.id)
+        saved.status = "sent"
+        self.store.save_message(saved)
+        self.assertIn("error", self._api().undo(m.id))
+
+    def test_skipping_an_answer_never_stops_a_hot_lead(self):
+        p = self._hot_reply()
+        draft = self.store.messages_for(p.id)[0]
+        self._api().reject([draft.id])
+        self.assertEqual(self.store.get_message(draft.id).status, "superseded")
+        self.assertEqual(self._api()._prospect(p.id).stage, "replied")
+        self.assertFalse(self.store.is_suppressed(p.business.email))
+
+    def test_the_sender_leaves_a_fresh_approval_alone_so_undo_works(self):
+        from answerrank.sending import send_batch
+        p = self._prospect(stage="replied")
+        m = OutreachMessage(prospect_id=p.id, subject="Re", body="x", kind="reply",
+                            status="approved",
+                            approved_at=datetime.now(timezone.utc).isoformat())
+        self.store.save_message(m)
+        self.assertEqual(send_batch(self.store, self.settings, dry_run=True,
+                                    hold=60)["reasons"], ["No approved messages. Approve some first."])
+        self.assertEqual(send_batch(self.store, self.settings, dry_run=True)["sent"], 1,
+                         "a Send you tap yourself doesn't wait")
+        m.approved_at = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+        self.store.save_message(m)
+        self.assertEqual(send_batch(self.store, self.settings, dry_run=True, hold=60)["sent"], 1)
+
+    def test_an_email_pulled_back_mid_batch_does_not_go(self):
+        from answerrank import sending
+        a = self._prospect(stage="replied")
+        b = self._audited(name="Volt Pros", domain="voltpros.com", email="hi@voltpros.com")
+        b.stage = "replied"
+        self.store.upsert_prospect(b)
+        first = OutreachMessage(prospect_id=a.id, subject="A", body="x", kind="reply",
+                                status="approved")
+        second = OutreachMessage(prospect_id=b.id, subject="B", body="x", kind="reply",
+                                 status="approved")
+        self.store.save_message(first)
+        self.store.save_message(second)
+        api = self._api()
+
+        class Pulls:
+            def __init__(self, settings):
+                pass
+
+            def send(self, to, subject, body):
+                api.undo(second.id)
+                return True, "sent"
+        with unittest.mock.patch.object(sending, "Mailer", Pulls):
+            r = sending.send_batch(self.store, self.settings)
+        self.assertEqual(r["sent"], 1)
+        self.assertEqual(self.store.get_message(second.id).status, "drafted")
+
+    def test_approving_an_answer_sends_it_within_a_minute(self):
+        from answerrank import sending
+        p = self._hot_reply()
+        _c, cold = self._cold()
+        with unittest.mock.patch.object(sending, "kick", return_value=True) as kick:
+            self._api().approve([cold.id])
+            kick.assert_not_called()
+            r = self._api().approve([self.store.messages_for(p.id)[0].id])
+        kick.assert_called_once()
+        self.assertTrue(r["sending_soon"])
+        self.assertFalse(sending.kick(self.store, self.settings), "never in demo mode")
+
+    def test_approvals_in_a_row_go_out_together(self):
+        import time
+        from answerrank import sending
+        self.settings.demo_mode = False
+        runs = []
+
+        class Sender:
+            def __init__(self, *a, **k):
+                pass
+
+            def execute(self):
+                runs.append(time.time())
+                return 0, ""
+        with unittest.mock.patch("answerrank.mailer.SMTPConfig.configured",
+                                 lambda self: True), \
+                unittest.mock.patch("answerrank.agents.sender.SenderAgent", Sender):
+            for _ in range(3):
+                self.assertTrue(sending.kick(self.store, self.settings, delay=0.3))
+                time.sleep(0.1)
+            time.sleep(0.6)
+        self.assertEqual(len(runs), 1)
+
+    def test_the_phone_says_when_approved_email_goes(self):
+        from answerrank.agents import sender
+        p = self._prospect(stage="replied")
+        self.store.save_message(OutreachMessage(prospect_id=p.id, subject="Re", body="x",
+                                                kind="reply", status="approved"))
+        _c, cold = self._cold()
+        cold.status = "approved"
+        self.store.save_message(cold)
+        saturday_night = datetime(2026, 10, 3, 22, 0)
+        self.assertIn("demo mode", sender.status(self.store, self.settings))
+        self.settings.demo_mode = False
+        with unittest.mock.patch("answerrank.agents.sender.calls.local_in",
+                                 lambda tz, now=None: saturday_night), \
+                unittest.mock.patch("answerrank.mailer.SMTPConfig.configured",
+                                    lambda self: True):
+            line = sender.status(self.store, self.settings)
+        self.assertEqual(line, "Sending 1 answer tomorrow at 7am and 1 cold email "
+                               "Monday at 8am.")
+        from answerrank import automation
+        automation.set_switch(self.store, "auto_send", False)
+        self.assertIn("tap Send", sender.status(self.store, self.settings))
+
+    # ---------------------------------------------------------- walkthroughs
+    def _walkthrough(self, hours_ago=1):
+        p = self._audited(email="owner@ridgeelectric.com")
+        p.stage = "replied"
+        self.store.upsert_prospect(p)
+        self.store.add_appointment(p.id, "meeting",
+                                   (self.NOW - timedelta(hours=hours_ago)).isoformat())
+        return p
+
+    def test_after_a_walkthrough_up_next_asks_how_it_went(self):
+        p = self._walkthrough()
+        item = next(i for i in self._next()["items"] if i["key"].startswith("debrief"))
+        self.assertEqual(item["action"], {"type": "debrief", "id": p.id})
+        self.assertEqual(item["tone"], "hot")
+        r = self._api().debrief(p.id, "signed", "growth")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(self.store.appointments(prospect_id=p.id), [])
+        invoice = next(m for m in self.store.messages_for(p.id) if m.kind == "invoice")
+        self.assertEqual(invoice.status, "approved", "the link goes without another tap")
+        self.assertFalse(any(i["key"].startswith("debrief") for i in self._next()["items"]))
+        kinds = self.store.outcome_counts(days=1)
+        self.assertEqual(kinds.get("walkthrough"), 1)
+
+    def test_a_walkthrough_can_become_a_call_back_a_rebook_or_a_no(self):
+        p = self._walkthrough()
+        r = self._api().debrief(p.id, "callback",
+                                when=(self.NOW + timedelta(days=3)).isoformat())
+        self.assertIn("call list", r["next"])
+        self.assertEqual(len(self.store.appointments(kind="callback", prospect_id=p.id)), 1)
+        self.assertEqual(self.store.appointments(kind="meeting", prospect_id=p.id), [])
+
+        q = self._walkthrough()
+        self.assertIn("error", self._api().debrief(q.id, "rebook"))
+        r = self._api().debrief(q.id, "rebook", when=(self.NOW + timedelta(days=1)).isoformat())
+        self.assertIn("calendar.google.com", r["calendar_url"])
+        self.assertEqual(len(self.store.appointments(kind="meeting", prospect_id=q.id)), 1)
+        self.assertEqual(len(self.store.appointments(kind="meeting", status="missed",
+                                                     prospect_id=q.id)), 1)
+        self.assertEqual(self._api().debrief(q.id, "no")["result"], "no")
+        self.assertEqual(self._api()._prospect(q.id).stage, "lost")
+        self.assertEqual(self.store.appointments(prospect_id=q.id), [])
+
+    def test_signing_up_sends_the_link_or_says_how_to(self):
+        p = self._prospect(stage="replied")
+        r = self._api().win(p.id, "growth")
+        invoice = next(m for m in self.store.messages_for(p.id) if m.kind == "invoice")
+        self.assertEqual(invoice.status, "approved")
+        self.assertIn(p.business.email, r["next"])
+        q = self._audited(name="Volt Pros", domain="voltpros.com", email="")
+        r = self._api().win(q.id, "growth")
+        self.assertIn("copy the payment link", r["next"])
+        self.assertFalse(any(m.status == "approved" for m in self.store.messages_for(q.id)))
+
+    # ---------------------------------------------------------- booking
+    def test_the_booking_link_goes_in_answers_to_interested_people(self):
+        from answerrank.agents.concierge import draft_response, report_email
+        p = self._audited(email="owner@ridgeelectric.com")
+        audit = self.store.get_audit(p.last_audit_id)
+        _a, body = draft_response("interested", p, self.settings, report_sent=True)
+        self.assertNotIn("15 minutes", body, "nothing offered without a link")
+        self.settings.booking_link = "https://calendar.app.google/abc123"
+        _a, body = draft_response("interested", p, self.settings, report_sent=True)
+        self.assertIn("https://calendar.app.google/abc123", body)
+        _a, body = draft_response("question", p, self.settings, text="how does it work")
+        self.assertIn("pick 15 minutes", body)
+        _s, body = report_email(p, audit, self.settings)
+        self.assertIn("pick 15 minutes", body)
+        _s, body = report_email(p, audit, self.settings, offer_call=False)
+        self.assertNotIn("pick 15 minutes", body, "not when the call is already booked")
+
+    # ---------------------------------------------------------- friday
+    def test_the_friday_review_finds_the_one_thing_to_fix(self):
+        from answerrank import weekly
+        r = weekly.review(self.store, self.settings)
+        self.assertIn("Too early", r["fix"])
+        self.assertEqual(r["broken"], "")
+        for _ in range(200):
+            self.store.record_outcome(prospect_id="p", vertical="electrical", kind="sent")
+        self.store.record_outcome(prospect_id="p", vertical="electrical", kind="replied")
+        for _ in range(6):
+            self.store.record_outcome(prospect_id="p", vertical="electrical",
+                                      kind="call_no_answer")
+        r = weekly.review(self.store, self.settings)
+        self.assertEqual(r["broken"], "Reply rate", "0.5% on 200 sends")
+        self.assertEqual(r["week"]["calls"], 6)
+        subject, body = weekly.email(r, "https://x.example/app")
+        self.assertIn("Fix: Reply rate", subject)
+        self.assertIn("THE ONE THING TO CHANGE", body)
+        self.assertIn("too early", body, "later steps aren't judged on no data")
+
+    def test_the_friday_review_arrives_once_a_week(self):
+        from answerrank.agents.briefing import BriefingAgent
+
+        class FakeMailer:
+            def __init__(self):
+                self.sent = []
+
+            def send(self, to, subject, body):
+                self.sent.append(subject)
+                return True, "sent"
+        self.settings.demo_mode = False
+        mail = FakeMailer()
+        agent = BriefingAgent(self.store, self.settings, mailer=mail)
+        friday = datetime(2026, 10, 2, 16, 0)
+        with unittest.mock.patch("answerrank.agents.briefing.calls.local_in",
+                                 lambda tz, now=None: friday):
+            agent.execute()
+            agent.execute()
+        self.assertEqual(len(mail.sent), 2, "the day's list and the week, once each")
+        self.assertTrue(mail.sent[1].startswith("Your week"))
+
+    def test_the_phone_has_the_new_screens(self):
+        from web.app import Application
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        s = make_settings(tmp.name)
+        app = Application(s, Store(s.database_path))
+        import io
+        from wsgiref.util import setup_testing_defaults
+
+        def call(path, body=None):
+            env = {}
+            setup_testing_defaults(env)
+            env["PATH_INFO"], env["HTTP_COOKIE"] = path, f"ar_session={app.token}"
+            if body is not None:
+                raw = json.dumps(body).encode()
+                env.update(REQUEST_METHOD="POST", CONTENT_LENGTH=str(len(raw)),
+                           CONTENT_TYPE="application/json")
+                env["wsgi.input"] = io.BytesIO(raw)
+            cap = {}
+            out = b"".join(app(env, lambda st, h: cap.update(status=st)))
+            return cap["status"], out
+        _st, page = call("/app")
+        for text in (b"Review drafts one by one", b"This week", b"Pull back"):
+            self.assertIn(text, page)
+        for path, body in (("/api/edit", {"id": "nope", "text": "x"}),
+                           ("/api/undo", {"id": "nope"}),
+                           ("/api/debrief", {"id": "nope", "result": "no"})):
+            st, out = call(path, body)
+            self.assertTrue(st.startswith("200"), path)
+            self.assertIn("error", json.loads(out), path)
+        _st, out = call("/api/week")
+        self.assertEqual(len(json.loads(out)["steps"]), 4)
+        _st, out = call("/api/automation")
+        self.assertIn("status", json.loads(out))
+
 class TestTheResearchIsReal(unittest.TestCase):
     """Every rule that cites research points at an entry that exists, and
     every entry says where it came from and when it was last read."""

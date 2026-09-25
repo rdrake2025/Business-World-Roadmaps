@@ -7,6 +7,8 @@ Knowing what needed doing meant opening the console. Now it comes to you:
 * **As it happens**: someone wrote back ready to buy or asking for their
   report, a client paid, or cold sending paused itself. Those can't wait
   for tomorrow's briefing.
+* **Friday afternoon**: the week reviewed, and the one step of the funnel
+  to fix (see ``weekly.py``). That was 45 minutes of the playbook's Friday.
 
 It goes to the briefing address (Keys and settings), or the mailbox you
 send from. The reply reader ignores mail from your own address, so a
@@ -168,6 +170,17 @@ class BriefingAgent(Agent):
             subject, body = self.digest(now)
             if self._send(subject, body):
                 self.store.kv_set("briefing.digest_date", today_local)
+                sent += 1
+
+        year, week, _ = local.isocalendar()
+        stamp = f"{year}-W{week:02d}"
+        if local.weekday() == 4 and local.hour >= 15 \
+                and self.store.kv_get("briefing.weekly") != stamp:
+            from .. import weekly
+            subject, body = weekly.email(weekly.review(self.store, self.settings, now),
+                                         self.console())
+            if self._send(subject, body):
+                self.store.kv_set("briefing.weekly", stamp)
                 sent += 1
         return sent, (f"sent {sent} briefing email(s) to {self.recipient()}"
                       if sent else "nothing new to tell you")

@@ -400,7 +400,9 @@ What happens after someone says yes, end to end:
 
 1. **They say "sign us up".** The Concierge answers with the payment link for
    their plan (set the links once in Keys and settings). You tap **Sign them up** on
-   the phone. They are now *waiting for payment* — not revenue, not welcomed.
+   the phone, or **Signed up** when Up next asks how a walkthrough went, and the
+   link goes to them straight away. They are now *waiting for payment* — not
+   revenue, not welcomed.
 2. **They pay.** With a read-only Stripe key saved, the Bookkeeper sees it by
    itself within two hours. Without one, tap **They paid** on the Clients tab.
    One reminder goes out after 3 days; after 10 you are told to call.
