@@ -91,7 +91,7 @@ outreach:
     print(f"Wrote {path}")
     print("\nNext:")
     print("  1. Edit physical_address, from_email and website — sending is blocked until you do.")
-    print("  2. Save your keys: python run.py keys   (or double-click KEYS.bat)")
+    print("  2. Save your keys: AnswerRank button -> Keys and settings")
     print("  3. Run: python3 run.py tick")
     return 0
 
@@ -184,6 +184,10 @@ def cmd_server_script(args, settings: Settings) -> int:
     """Write the one file that sets up the always-on server."""
     from . import server
 
+    args.domain = args.domain or _my_domain(settings)
+    if not args.domain:
+        print("  Which domain? Example: run.py server-script --domain getanswerrank.com")
+        return 1
     try:
         path, link, warnings = server.write(args.domain)
     except ValueError as exc:
@@ -204,9 +208,54 @@ def cmd_server_script(args, settings: Settings) -> int:
     print("   4. Wait about 10 minutes, then run the doctor on this laptop.\n")
     print("  Your console, once it's up (save this — it's your login):")
     print(f"    {link}\n")
-    print("  After that, don't run start.bat for the business any more: the")
-    print("  server runs the agents, and your phone uses the link above.")
+    _save_console_link(settings, link)
+    print("  It's also saved on this computer: the AnswerRank button's")
+    print("  \"Open AnswerRank\" opens it once the server is running.")
     return 0
+
+
+def _my_domain(settings: Settings) -> str:
+    """The domain in the address you send from, unless it's still the template's."""
+    email = settings.from_email or ""
+    domain = email.split("@")[-1].lower() if "@" in email else ""
+    return "" if domain in {"", "answerrank.io", "yourdomain.com"} else domain
+
+
+def _link_file(settings: Settings) -> Path:
+    """Private, next to the database, which git never sees."""
+    return Path(settings.database_path).parent / "console-link.txt"
+
+
+def _save_console_link(settings: Settings, link: str) -> None:
+    path = _link_file(settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(link + "\n", encoding="utf-8")
+
+
+def cmd_open(args, settings: Settings) -> int:
+    """What the AnswerRank button's "Open" does.
+
+    Once a server runs the business, starting a second copy on the laptop
+    is refused (it would send every email twice) — which left the button
+    doing nothing useful. So when the server is up, this opens its console
+    instead. Exit code 3 tells start.bat not to start a local copy.
+    """
+    import webbrowser
+
+    store = _store(settings)
+    elsewhere = _fleet_elsewhere(settings, store)
+    if not elsewhere:
+        return 0
+    path = _link_file(settings)
+    link = path.read_text(encoding="utf-8").strip() if path.exists() else ""
+    if link:
+        webbrowser.open(link)
+        print(f"  Your business runs on your server. Opened: {link}")
+    else:
+        print(f"  Your business runs on your server at {elsewhere}.")
+        print("  Open your console link on your phone (it was printed when the")
+        print("  server setup file was made).")
+    return 3
 
 
 def cmd_console_link(args, settings: Settings) -> int:
@@ -1084,7 +1133,10 @@ def cmd_domain(args, settings: Settings) -> int:
     """
     from . import dns_setup
 
-    domain = args.domain.strip().lower().removeprefix("http://")
+    if not (args.domain or _my_domain(settings)):
+        print("Which domain? Type the one you bought, e.g. getanswerrank.com")
+        return 1
+    domain = (args.domain or _my_domain(settings)).strip().lower().removeprefix("http://")
     domain = domain.removeprefix("https://").split("/")[0].removeprefix("www.")
     if "." not in domain:
         print(f"{domain!r} does not look like a domain. Example: answerrank.io")
@@ -1339,7 +1391,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_doctor)
 
     s = sub.add_parser("domain", help="set up the sending domain and check its DNS")
-    s.add_argument("domain", help="the domain you bought, e.g. answerrank.io")
+    s.add_argument("domain", nargs="?", default="",
+                   help="the domain you bought (default: the one you send from)")
     s.add_argument("--provider", help="google | zoho | microsoft | fastmail")
     s.add_argument("--mailbox", default="hello", help="the part before the @")
     s.add_argument("--check-only", action="store_true",
@@ -1396,8 +1449,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_case_study)
 
     s = sub.add_parser("server-script", help="write the file that sets up your server")
-    s.add_argument("--domain", required=True, help="e.g. getanswerrank.com")
+    s.add_argument("--domain", default="",
+                   help="e.g. getanswerrank.com (default: the one you send from)")
     s.set_defaults(func=cmd_server_script)
+
+    s = sub.add_parser("open", help="open the console: the server's, or start one here")
+    s.set_defaults(func=cmd_open)
 
     s = sub.add_parser("console-link", help="print the console address with its login")
     s.add_argument("--set", help="use this token (the server setup does this)")

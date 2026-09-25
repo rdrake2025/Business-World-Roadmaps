@@ -57,61 +57,61 @@ Business drives global progress:
 ## 🚀 Business World Roadmaps
 Explore these ten expertly crafted roadmaps, each a complete guide to mastery in a high-demand business field. All roadmaps are located in the same root directory as this file:
 
-1. **[📈 Entrepreneurship & Startups](./Entrepreneurship_Startups_README.md)**  
+1. **[📈 Entrepreneurship & Startups](./roadmaps/Entrepreneurship_Startups_README.md)**  
    Launch and scale startups with lean methodologies and AI-driven growth. Build business plans and MVPs with Notion and Figma.  
    *Key Skills*: Lean startup, fundraising, growth hacking, AI analytics.  
    *Projects*: Business plan, pitch deck, MVP prototype.  
    *Communities*: Y Combinator, Reddit r/Entrepreneur.  
 
-2. **[💼 Business Management & Leadership](./Business_Management_Leadership_README.md)**  
+2. **[💼 Business Management & Leadership](./roadmaps/Business_Management_Leadership_README.md)**  
    Lead teams and organizations with strategic management and leadership skills. Create strategies using Google Suite and Tableau.  
    *Key Skills*: Strategic planning, team leadership, OKR alignment, change management.  
    *Projects*: Leadership plan, OKR dashboard, change management strategy.  
    *Communities*: PMI, Reddit r/management.  
 
-3. **[💰 Finance & Investment](./Finance_Investment_README.md)**  
+3. **[💰 Finance & Investment](./roadmaps/Finance_Investment_README.md)**  
    Master financial markets, portfolio management, and AI-driven investing. Build models with Excel, Python, and Bloomberg Terminal.  
    *Key Skills*: Financial modeling, risk analysis, ESG investing, algo trading.  
    *Projects*: Portfolio optimizer, valuation model, trading bot.  
    *Communities*: CFA Institute, Reddit r/Finance.  
 
-4. **[📢 Marketing & Branding](./Marketing_Branding_README.md)**  
+4. **[📢 Marketing & Branding](./roadmaps/Marketing_Branding_README.md)**  
    Create impactful campaigns and brands with AI-driven marketing and omnichannel strategies. Design campaigns using Canva and HubSpot.  
    *Key Skills*: Digital marketing, SEO, branding, AI analytics, social media.  
    *Projects*: Marketing campaign, brand style guide, SEO audit.  
    *Communities*: HubSpot Community, Reddit r/marketing.  
 
-5. **[🤝 Sales & Business Development](./Sales_Business_Development_README.md)**  
+5. **[🤝 Sales & Business Development](./roadmaps/Sales_Business_Development_README.md)**  
    Drive revenue and partnerships with sales strategies and CRM tools. Build pipelines using Salesforce and Google Sheets.  
    *Key Skills*: Sales funnel, CRM, negotiation, partnership strategies.  
    *Projects*: Sales pipeline, pitch script, CRM dashboard.  
    *Communities*: Sales Hacker, Reddit r/sales.  
 
-6. **[📦 Operations & Supply Chain](./Supply_Chain_Logistics_README.md)**  
+6. **[📦 Operations & Supply Chain](./roadmaps/Operations_Supply_Chain_README.md)**  
    Optimize global supply chains with AI, blockchain, and sustainable logistics. Design systems using AnyLogic and Tableau.  
    *Key Skills*: Inventory management, route optimization, ESG logistics, blockchain.  
    *Projects*: Supply chain dashboard, logistics simulation, green logistics plan.  
    *Communities*: CSCMP, Reddit r/supplychain.  
 
-7. **[📑 Human Resources & People Management](./Human_Resources_People_Management_README.md)**  
+7. **[📑 Human Resources & People Management](./roadmaps/Human_Resources_People_Management_README.md)**  
    Build thriving teams with recruitment, DEI, and HR analytics. Create policies and dashboards with Google Suite and Tableau.  
    *Key Skills*: Talent acquisition, DEI, HR analytics, hybrid work models.  
    *Projects*: HR policy, DEI initiative, performance dashboard.  
    *Communities*: SHRM, Reddit r/humanresources.  
 
-8. **[🌐 International Business & Global Trade](./International_Business_Global_Trade_README.md)**  
+8. **[🌐 International Business & Global Trade](./roadmaps/International_Business_Global_Trade_README.md)**  
    Navigate global markets with trade strategies, ESG compliance, and AI analytics. Build trade models with Python and Tableau.  
    *Key Skills*: Market entry, trade finance, blockchain trade, geopolitical analysis.  
    *Projects*: Market analysis, export plan, trade dashboard.  
    *Communities*: WITA, Reddit r/internationalbusiness.  
 
-9. **[💡 Innovation & Product Management](./Innovation_Product_Management_README.md)**  
+9. **[💡 Innovation & Product Management](./roadmaps/Innovation_Product_Management_README.md)**  
    Create groundbreaking products with agile, AI-driven design, and sustainable innovation. Prototype with Figma and Python.  
    *Key Skills*: Product roadmaps, user research, AI PM, ESG product design.  
    *Projects*: MVP prototype, GTM strategy, analytics dashboard.  
    *Communities*: Product School, Reddit r/productmanagement.  
 
-10. **[🏛 Corporate Strategy & Consulting](./Corporate_Strategy_Consulting_README.md)**  
+10. **[🏛 Corporate Strategy & Consulting](./roadmaps/Corporate_Strategy_Consulting_README.md)**  
     Shape business success with strategic frameworks, AI analytics, and digital transformation. Solve cases with PowerPoint and Python.  
     *Key Skills*: SWOT, financial modeling, ESG strategy, digital transformation.  
     *Projects*: Strategy deck, DCF model, transformation roadmap.  

@@ -13,8 +13,8 @@ Nothing on this list needs you to edit a file or type a command on a server.
 
 | When | What | Why then |
 | --- | --- | --- |
-| **Friday night** | Steps 1–3 below, first: mailbox, DNS, app password. Then as much of 4–9 as you can. | Google's DKIM wait (24–72 hours) starts when Gmail is switched on. Friday night makes Monday likely; Sunday makes it unlikely. |
-| **Saturday** | Finish 4–10. Once the server is up with your trade and cities, the fleet finds and checks businesses all weekend, and your call list fills up. Get a free Google Voice number if you want your cell private. Call the 2–3 people you know for pilots. | Businesses need to be found and audited before they can be called. |
+| **Friday night** | Steps 1–4 below, first: mailbox, first run, DNS, app password. Then as much of 5–10 as you can. | Google's DKIM wait (24–72 hours) starts when Gmail is switched on. Friday night makes Monday likely; Sunday makes it unlikely. |
+| **Saturday** | Finish 5–11. Once the server is up with your trade and cities, the fleet finds and checks businesses all weekend, and your call list fills up. Get a free Google Voice number if you want your cell private. Call the 2–3 people you know for pilots. | Businesses need to be found and audited before they can be called. |
 | **Sunday** | DKIM, if it's been 24 hours: admin.google.com → Apps → Google Workspace → Gmail → Authenticate email. Read the call list and three audits. Say the opener and the voicemail out loud five times each. Read the first email drafts, but don't send yet. | The script sounds like reading until you've said it a few times. |
 | **Monday 8–9:30am** (their time) | Calls. Tap each name in the call list, dial, tap what happened. | Owners pick up before the first job. |
 | **Monday midday** | If the doctor is all green, send the first 10 emails. If DKIM isn't ready, calls only; email starts the day it is. Send any reports people asked for. | |
@@ -39,21 +39,29 @@ settings when it is created.
       any registrar (~$12/year). Pattern: `get<brand>.com`, `<brand>hq.com`.
 - [ ] Make `hello@yourdomain` and verify the domain when Google asks.
 
-### 2. DNS records — 15 min
+### 2. First run — 10 min
 
-- [ ] Double-click **SETUP-DOMAIN.bat**, type the domain, pick Google.
+- [ ] Double-click **start.bat** in the folder, **once**. It sets everything up,
+      asks six questions (name, domain, address, trade, prices), and puts an
+      **AnswerRank button on your desktop**. From then on, use that button: it
+      opens a menu for everything below, and it updates itself.
+
+
+### 3. DNS records — 15 min
+
+- [ ] Desktop **AnswerRank** button → **3 Email domain**. Press Enter, pick Google.
 - [ ] At your registrar, paste the **MX**, **SPF** and **DMARC** rows it prints.
 - [ ] **DKIM will not be ready tonight.** Google only lets a new account
       generate the key 24–72 hours after Gmail is switched on. It is on the
       "what waits" list below.
 
-### 3. App password — 5 min
+### 4. App password — 5 min
 
 - [ ] myaccount.google.com → Security → **2-Step Verification** on.
 - [ ] myaccount.google.com/apppasswords → make one called `Mail`. Copy the 16
       letters. (That page does not exist until 2-Step Verification is on.)
 
-### 4. Stripe — 40 min
+### 5. Stripe — 40 min
 
 - [ ] stripe.com → sign up → **Activate payments**. Sole proprietor is fine.
       You will need your SSN, a bank account for payouts, and a website — use
@@ -68,14 +76,14 @@ settings when it is created.
 Stripe keeps 2.9% + 30¢ per charge plus 0.7% for subscriptions — about $36 of
 a $997 month. The bookkeeper already counts it.
 
-### 5. AI credits — 10 min
+### 6. AI credits — 10 min
 
 - [ ] platform.openai.com → Billing → add **$15** → API keys → new key.
       A full audit costs about six cents, so this covers hundreds.
 - [ ] Recommended: serper.dev → free account → API key. It is how the system
       finds local businesses and reads Google's AI Overviews.
 
-### 6. Postal address — 10 min
+### 7. Postal address — 10 min
 
 Every commercial email must carry a postal address. It does **not** have to
 be your home:
@@ -86,14 +94,9 @@ be your home:
 - [ ] Or use your home address for now and change it later. Nothing cold goes
       out for a few days anyway (see DKIM), so there is time for the box.
 
-### 7. Update and first-run setup — 10 min
-
-- [ ] Double-click **start.bat**. It updates, runs the self-check, and on the
-      first run asks six questions (name, domain, address, trade, prices).
-
 ### 8. Keys — 10 min
 
-- [ ] Double-click **KEYS.bat**. It asks, in plain words, for the mailbox, the
+- [ ] AnswerRank button → **2 Keys and settings**. It asks, in plain words, for the mailbox, the
       app password, whether to read replies automatically (say yes), the AI
       keys, the Stripe key, the postal address, your first name and callback
       number (for the call script), **your trade and up to 3 cities** (what the
@@ -108,8 +111,8 @@ the time. A laptop cannot do that, so this $6/month server is needed before
 the first email, not after the first client. Every screen is in
 [`deploy/SERVER.md`](../deploy/SERVER.md).
 
-- [ ] In the project folder: `python run.py server-script --domain yourdomain.com`
-      — **save the console link it prints. It is your login.**
+- [ ] AnswerRank button → **5 Make the server setup file**. **Save the console
+      link it prints. It is your login.** The file opens in Notepad for you.
 - [ ] DigitalOcean → Create → Droplets → Ubuntu 24.04, Basic, **$6/month** →
       Advanced Options → Add Initialization scripts → paste the whole
       `server-setup-….sh` file → Create. Note the IP address.
@@ -119,9 +122,9 @@ the first email, not after the first client. Every screen is in
 
 ### 10. Check — 10 min
 
-- [ ] `python run.py doctor` on the laptop. Tonight, expect **DKIM** (and
+- [ ] AnswerRank button → **4 What still needs doing**. Tonight, expect **DKIM** (and
       possibly the unsubscribe link, while HTTPS finishes) to be the only red.
-- [ ] Optional: double-click **SIMULATE.bat** to watch a month of the business
+- [ ] Optional: AnswerRank button → **6 Practice run** to watch a month of the business
       run with made-up clients. Nothing real is sent.
 
 ### 11. Pilots — 10 min
@@ -152,7 +155,7 @@ the first email, not after the first client. Every screen is in
 | When | What |
 | --- | --- |
 | Day 1 | Call or message your 2–3 pilots. In the console: Pipeline → **Add a business you know** → Sign them up → **Free pilot**. Free, starts at once, and never sent cold email. |
-| Day 1–3 | DKIM: admin.google.com → Apps → Google Workspace → Gmail → Authenticate email → Generate new record (2048-bit) → paste at registrar → Start authentication. Re-run SETUP-DOMAIN.bat until it says ready. |
+| Day 1–3 | DKIM: admin.google.com → Apps → Google Workspace → Gmail → Authenticate email → Generate new record (2048-bit) → paste at registrar → Start authentication. Then AnswerRank button → 3 Email domain until it says ready. |
 | Day 3–5 | **First send.** Console → Review drafts → read every one → approve → Send approved. |
 | Every weekday | The 10 minutes below. |
 | Week 2+ | Replies arrive. The Concierge drafts each answer; you read and send within two hours. Book the call. |

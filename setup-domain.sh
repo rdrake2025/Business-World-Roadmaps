@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Domain setup for macOS and Linux. Companion to SETUP-DOMAIN.bat.
+# Domain setup for macOS and Linux. Companion to the Windows menu's Email domain option.
 #
 # Separate from start.sh on purpose: DNS takes minutes to hours to appear, so
 # this is something you run, go and add a record, and run again. Burying it in

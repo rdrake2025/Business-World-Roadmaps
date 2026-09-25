@@ -935,6 +935,8 @@ class TestConsoleApi(unittest.TestCase):
 
     def test_send_still_blocked_even_with_everything_approved(self):
         self.settings.physical_address = "123 Main St, Austin, TX 78701"
+        # The real 90-second gap between sends made this one test take 90s.
+        self.settings.outreach.min_seconds_between_sends = 0
         from web.api import Api
         api = Api(self.store, self.settings)
         _p, m = self._draft()
@@ -4209,6 +4211,8 @@ class TestWrappedEmailsStayReadable(unittest.TestCase):
         self.assertTrue(second.startswith("   "), repr(second))
 
 
+@unittest.skipIf(os.environ.get("ANSWERRANK_QUICK"),
+                 "the start button's self-check skips the 40-second simulation")
 class TestThirtySalesEndToEnd(unittest.TestCase):
     """The simulation itself, small enough for the suite: made-up buyers
     through the real agents, the real send path and the console API, with a
@@ -4693,6 +4697,73 @@ class TestKeysLiveSomewhereReal(unittest.TestCase):
                      "server-setup-x.com.sh", "data/answerrank.db"):
             result = subprocess.run(["git", "check-ignore", "-q", name], cwd=root)
             self.assertEqual(result.returncode, 0, f"{name} is not ignored by git")
+
+
+class TestTheOneButton(unittest.TestCase):
+    """Everything goes through one desktop button and its menu."""
+
+    ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+    def _bat(self):
+        return (self.ROOT / "start.bat").read_text(encoding="utf-8")
+
+    def test_every_menu_command_exists(self):
+        import re
+        from answerrank import cli
+        parser = cli.build_parser()
+        text = self._bat()
+        used = set(re.findall(r'"%VPY%" run\.py ([a-z][a-z-]*)', text))
+        self.assertTrue({"open", "keys", "domain", "doctor", "server-script",
+                         "simulate", "web", "setup"} <= used)
+        registered = set(parser._subparsers._group_actions[0].choices)
+        self.assertEqual(used - registered, set(), "the menu calls a command that doesn't exist")
+
+    def test_the_old_launchers_are_gone_and_nothing_points_at_them(self):
+        for name in ("KEYS.bat", "SETUP-DOMAIN.bat", "SIMULATE.bat"):
+            self.assertFalse((self.ROOT / name).exists(), name)
+        for folder in ("answerrank", "web", "business", "deploy"):
+            for f in (self.ROOT / folder).rglob("*"):
+                if f.suffix in {".py", ".md", ".html", ".bat"}:
+                    text = f.read_text(encoding="utf-8", errors="ignore")
+                    for name in ("KEYS.bat", "SETUP-DOMAIN.bat", "SIMULATE.bat"):
+                        self.assertNotIn(name, text, f"{f} still mentions {name}")
+
+    def test_files_python_rewrites_are_never_hidden(self):
+        """On Windows, Python cannot open a hidden file for writing, so
+        hiding keys.env would break saving keys the second time."""
+        import re
+        hide = re.search(r"for %%F in \(([^)]*)\) do \(\s*if exist \"%%F\" attrib \+h",
+                         self._bat()).group(1).split()
+        for name in ("keys.env", "answerrank.yml", "budget.yml", "start.bat"):
+            self.assertNotIn(name, hide)
+
+    def test_the_button_has_an_icon(self):
+        import struct
+        ico = (self.ROOT / "deploy" / "answerrank.ico").read_bytes()
+        reserved, kind, count = struct.unpack("<HHH", ico[:6])
+        self.assertEqual((reserved, kind), (0, 1))
+        self.assertGreaterEqual(count, 3)
+        self.assertIn("deploy\\answerrank.ico", self._bat())
+
+    def test_open_starts_a_local_copy_when_there_is_no_server(self):
+        from answerrank import cli
+        d = pathlib.Path(tempfile.mkdtemp())
+        s = Settings()
+        s.database_path = str(d / "a.db")
+        s.website = "http://localhost:8000"
+        self.assertEqual(cli.cmd_open(None, s), 0)
+
+    def test_the_server_link_is_kept_for_the_button(self):
+        from answerrank import cli
+        d = pathlib.Path(tempfile.mkdtemp())
+        s = Settings()
+        s.database_path = str(d / "data" / "a.db")
+        cli._save_console_link(s, "https://x.com/app?t=abc")
+        self.assertEqual(cli._link_file(s).read_text().strip(), "https://x.com/app?t=abc")
+        s.from_email = "hello@getx.com"
+        self.assertEqual(cli._my_domain(s), "getx.com")
+        s.from_email = "hello@answerrank.io"
+        self.assertEqual(cli._my_domain(s), "")
 
 
 class TestTheLiveSiteCheck(unittest.TestCase):

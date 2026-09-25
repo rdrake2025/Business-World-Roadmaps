@@ -78,7 +78,7 @@ def check_address(settings: Settings) -> Check:
         return Check("CAN-SPAM postal address", PASS, addr[:46], blocking=True)
     return Check(
         "CAN-SPAM postal address", FAIL, "not configured",
-        "Double-click KEYS.bat — it asks for it. Legally required in every "
+        "AnswerRank button → Keys and settings asks for it. Legally required in every "
         "commercial email. A USPS PO Box or virtual mailbox address works.",
         blocking=True)
 
@@ -169,7 +169,7 @@ def check_smtp() -> Check:
     if cfg.configured():
         return Check("SMTP", PASS, f"{cfg.host}:{cfg.port} as {cfg.username}")
     return Check("SMTP", WARN, "not configured — drafting only",
-                 "Double-click KEYS.bat (or: python run.py keys) to save your "
+                 "Keys and settings (AnswerRank button, option 2) saves your "
                  "mailbox and app password. It tests them before saving.")
 
 
@@ -182,10 +182,10 @@ def check_inbox(probe: bool = False) -> Check:
     pwd = os.environ.get("IMAP_PASSWORD") or os.environ.get("SMTP_PASSWORD", "")
     if not host:
         return Check("Reading replies", WARN, "off — replies are pasted in by hand",
-                     "Run KEYS.bat and answer yes to reading replies automatically.")
+                     "Run Keys and settings (AnswerRank button, option 2) and answer yes to reading replies automatically.")
     if not (user and pwd):
         return Check("Reading replies", WARN, f"{host} set, but no mailbox login",
-                     "Run KEYS.bat to add the mailbox and app password.")
+                     "Run Keys and settings (AnswerRank button, option 2) to add the mailbox and app password.")
     if not probe:
         return Check("Reading replies", PASS, f"{host} as {user} (not tested)")
     from .keys import test_imap
@@ -209,10 +209,10 @@ def check_payments(settings: Settings) -> Check:
     detail = f"links for {', '.join(sorted(links))}"
     if key.startswith("sk_"):
         return Check("Payments", WARN, detail + "; Stripe key is a full secret key",
-                     "Replace it with a restricted read-only key (rk_...) in KEYS.bat.")
+                     "Replace it with a restricted read-only key (rk_...) in Keys and settings (AnswerRank button, option 2).")
     if not key:
         return Check("Payments", PASS, detail + "; tap Paid when money arrives",
-                     "Optional: add a read-only Stripe key in KEYS.bat and payments are "
+                     "Optional: add a read-only Stripe key in Keys and settings (AnswerRank button, option 2) and payments are "
                      "confirmed automatically.")
     return Check("Payments", PASS, detail + ("; missing " + ", ".join(missing) if missing else "")
                  + "; confirmed automatically")

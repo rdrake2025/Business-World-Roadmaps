@@ -152,7 +152,7 @@ website: "{website}"
 # CAN-SPAM: required in every commercial email. Sending is blocked without it.
 physical_address: "{address}"
 
-# What to sell and where. KEYS.bat can change both. Markets are "City, ST";
+# What to sell and where. Keys and settings can change both. Markets are "City, ST";
 # leave empty to search the default twelve cities.
 trades: ["{vertical}"]
 markets: []
@@ -199,8 +199,8 @@ outreach:
        DMARC  TXT  _dmarc   v=DMARC1; p=quarantine; rua=mailto:{from_email}
        DKIM   (enable in your mail provider, paste the record it gives you)
 
-  2. Save your mailbox password and API keys (double-click KEYS.bat, or):
-       python run.py keys
+  2. Save your mailbox password and API keys:
+       AnswerRank button -> 2  Keys and settings
      It asks for each one in plain words and tests the mailbox.
 
   3. Check what is still blocking you:
