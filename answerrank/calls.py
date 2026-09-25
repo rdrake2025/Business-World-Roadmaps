@@ -118,17 +118,65 @@ def _fallback_local(tz_name: str, now: datetime) -> datetime:
     return local
 
 
-def local_time(state: str, now: datetime | None = None) -> datetime | None:
-    """The wall-clock time where the business is, or None if the state is unknown."""
-    tz_name = STATE_TZ.get((state or "").strip().upper())
-    if not tz_name:
-        return None
+def local_in(tz_name: str, now: datetime | None = None) -> datetime:
+    """Wall-clock time in an IANA zone, with or without a tz database."""
     now = now or datetime.now(timezone.utc)
     try:
         from zoneinfo import ZoneInfo
         return now.astimezone(ZoneInfo(tz_name)).replace(tzinfo=None)
     except Exception:  # noqa: BLE001 - no tz database on this machine
         return _fallback_local(tz_name, now)
+
+
+def local_time(state: str, now: datetime | None = None) -> datetime | None:
+    """The wall-clock time where the business is, or None if the state is unknown."""
+    tz_name = STATE_TZ.get((state or "").strip().upper())
+    if not tz_name:
+        return None
+    return local_in(tz_name, now)
+
+
+def operator_tz(settings) -> str:
+    """Your own time zone: the setting, else your first city's, else Central."""
+    tz = (getattr(settings, "timezone", "") or "").strip()
+    if tz:
+        return tz
+    from .agents.scout import parse_markets
+    markets = parse_markets(getattr(settings, "markets", None))
+    if markets and markets[0][1] in STATE_TZ:
+        return STATE_TZ[markets[0][1]]
+    return "America/Chicago"
+
+
+def parse_when(value: str) -> datetime | None:
+    """An ISO time from the phone (it sends UTC, e.g. 2026-09-29T15:00:00.000Z)."""
+    if not value:
+        return None
+    try:
+        when = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def their_time(state: str, when: datetime) -> str:
+    """'Tuesday 30 September at 10:00 am' in the business's own time zone."""
+    local = local_time(state, when)
+    if local is None:
+        return when.strftime("%A %d %B at %H:%M UTC")
+    return (local.strftime("%A ") + str(local.day) + local.strftime(" %B at ")
+            + local.strftime("%I:%M %p").lstrip("0").lower())
+
+
+def calendar_url(title: str, start: datetime, minutes: int = 30, details: str = "") -> str:
+    """A Google Calendar 'add event' link: one tap puts it in your calendar."""
+    from urllib.parse import urlencode
+    fmt = "%Y%m%dT%H%M%SZ"
+    start = start.astimezone(timezone.utc)
+    end = start + timedelta(minutes=minutes)
+    return "https://calendar.google.com/calendar/render?" + urlencode({
+        "action": "TEMPLATE", "text": title,
+        "dates": f"{start.strftime(fmt)}/{end.strftime(fmt)}", "details": details})
 
 
 def window(local: datetime | None) -> str:
@@ -236,16 +284,25 @@ def script(prospect: Prospect, ev: dict[str, Any], settings) -> dict[str, Any]:
     else:
         found = (f"I check what AI assistants tell people looking for {a_trade} in "
                  f"{city}, and I'd like to show you what they say about {biz.name}.")
+    close = ("Did you know that was happening?" if ev.get("real") and ev.get("asked")
+             else "Have you ever checked what they say about you?")
+    if ev.get("real") and ev.get("asked") and ev.get("named"):
+        standing = (f"right now you come up in {ev['named']} of the {ev['asked']} "
+                    f"answers I checked")
+    elif ev.get("real") and ev.get("asked"):
+        standing = "right now you're not one of them"
+    else:
+        standing = "most local businesses never come up"
         short = f"I check what AI assistants recommend for {trade}s in {city}."
 
     return {
         # Gong: stating the reason for the call early doubles success; asking
         # whether it's a bad time costs 40%. So: who, then why, in one breath.
         "opener": (f"Hi, is this the owner? This is {me} with {brand}. The reason "
-                   f"I'm calling: {found} Did you know that was happening?"),
+                   f"I'm calling: {found} {close}"),
         "if_listening": ("More people are asking ChatGPT and Google's AI for a "
                          "recommendation instead of scrolling through results. It names "
-                         "two or three businesses, and right now you're not one of them. "
+                         f"two or three businesses, and {standing}. "
                          "I've put together a free report: the questions you're missing, "
                          "who gets named instead, and the three fixes that change it."
                          + (f" One thing in it: {ev['listing']}" if ev.get("listing") else "")
@@ -325,28 +382,37 @@ def call_list(store, settings, now: datetime | None = None,
 
     now = now or datetime.now(timezone.utc)
     history = _history(store)
+    # A call back they asked for beats everything else on the list at its
+    # time, and keeps them off it until then.
+    callbacks = {a["prospect_id"]: a for a in store.appointments(kind="callback")}
     rows = []
-    for stage in CALLABLE_STAGES:
+    for stage in CALLABLE_STAGES + ("replied",):
         for p in store.get_prospects(stage, 10_000):
             if not p.business.phone or SIMULATED_MARKER in (p.notes or ""):
                 continue
             if p.business.email and store.is_suppressed(p.business.email):
                 continue
-            if not worth_pitching(p, settings):
-                continue
-            ok, attempts = callable_now(p, history.get(p.id, []), now)
-            if not ok:
-                continue
+            cb = callbacks.get(p.id)
+            if cb:
+                if now < _parse(cb["starts_at"]) - timedelta(minutes=10):
+                    continue
+                attempts = len(history.get(p.id, []))
+            else:
+                if p.stage == "replied" or not worth_pitching(p, settings):
+                    continue
+                ok, attempts = callable_now(p, history.get(p.id, []), now)
+                if not ok:
+                    continue
             local = local_time(p.business.state, now)
-            rows.append((p, attempts, local, window(local)))
+            rows.append((p, attempts, local, "callback" if cb else window(local), cb))
 
-    order = {"good": 0, "open": 1, "unknown": 2, "closed": 3}
+    order = {"callback": -1, "good": 0, "open": 1, "unknown": 2, "closed": 3}
     rows.sort(key=lambda r: (order[r[3]], -qualify.priority(
         r[0].business, r[0].score, r[0].competitor_gap,
         settings.quote_for(r[0].business.vertical))))
 
     items = []
-    for p, attempts, local, when in rows[:limit]:
+    for p, attempts, local, when, cb in rows[:limit]:
         items.append({
             "id": p.id, "name": p.business.name, "market": p.business.market,
             "trade": knowledge.get(p.business.vertical).label,
@@ -355,6 +421,7 @@ def call_list(store, settings, now: datetime | None = None,
             "local": local.strftime("%I:%M %p").lstrip("0").lower() if local else "",
             "about": (p.business.state or "").upper() in SPLIT_STATES,
             "window": when, "attempts": attempts, "score": p.score,
+            "callback_note": (cb or {}).get("note", ""),
         })
     return {"items": items, "count": len(rows), "today": today(store, now)}
 
@@ -383,8 +450,13 @@ def today(store, now: datetime | None = None) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 def log_call(store, settings, prospect: Prospect, outcome: str,
-             email: str = "", note: str = "") -> dict[str, Any]:
-    """Record a call and act on it. Returns what was done, in words."""
+             email: str = "", note: str = "", when: str = "") -> dict[str, Any]:
+    """Record a call and act on it. Returns what was done, in words.
+
+    ``when`` is the time agreed on the call, for a call back or a booked
+    walkthrough, as an ISO timestamp from the phone.
+    """
+    from . import automation
     from .agents.concierge import ConciergeAgent, report_email
     from .models import OutreachMessage
 
@@ -399,9 +471,14 @@ def log_call(store, settings, prospect: Prospect, outcome: str,
         return {"error": "That address asked not to be emailed. Talk to them first."}
     if outcome == "send_report" and not (email or biz.email):
         return {"error": "Ask for their email address first, then tap Send them the report."}
+    agreed = parse_when(when)
+    if outcome == "booked" and agreed is None:
+        return {"error": "Pick the day and time you agreed, then tap Booked a call."}
     if email and email.lower() != (biz.email or "").lower():
         biz.email = email
 
+    # Whatever happened, a call back they asked for has now been made.
+    store.close_appointments(prospect.id, kind="callback")
     store.record_outcome(prospect_id=prospect.id, vertical=biz.vertical,
                          step=prospect.touches, kind=f"call_{outcome}",
                          note=(note or "")[:300])
@@ -417,17 +494,42 @@ def log_call(store, settings, prospect: Prospect, outcome: str,
         subject, body = report_email(
             prospect, audit, settings,
             opening="Thanks for taking my call. Here's the report I mentioned.")
+        auto = automation.enabled(store, "approve_reports")
         message = OutreachMessage(prospect_id=prospect.id, subject=subject, body=body,
-                                  sequence_step=prospect.touches + 1, status="drafted",
+                                  sequence_step=prospect.touches + 1,
+                                  status="approved" if auto else "drafted",
                                   kind="report", scheduled_for=now_iso())
         store.save_message(message)
         message_id = message.id
-        next_step = "The report is drafted. Approve it in the inbox and send it today."
+        next_step = ("The report is on its way." if auto else
+                     "The report is drafted. Approve it in the inbox and it goes out.")
     elif outcome == "booked":
         store.withdraw_cold(prospect.id)
         prospect.stage = "replied"
-        next_step = ("Booked. Put it in your calendar. The report and the sales "
-                     "playbook are what you walk them through.")
+        store.add_appointment(prospect.id, "meeting",
+                              agreed.isoformat(timespec="seconds"), note)
+        label = their_time(biz.state, agreed)
+        calendar = calendar_url(
+            f"Walkthrough: {biz.name}", agreed, 30,
+            f"{biz.name}, {biz.market}. Phone {pretty_number(biz.phone)}. "
+            f"Walk them through the report, then the offer (sales playbook).")
+        if biz.email:
+            audit = ConciergeAgent(store, settings)._report_for(prospect)
+            subject, body = report_email(
+                prospect, audit, settings,
+                opening=(f"Thanks for the chat. Confirming our call on {label} "
+                         f"(your time). Here's the report I'll walk you through, "
+                         f"so you can look before we talk."))
+            message = OutreachMessage(prospect_id=prospect.id, subject=subject, body=body,
+                                      sequence_step=prospect.touches + 1,
+                                      status=("approved" if automation.enabled(
+                                          store, "approve_reports") else "drafted"),
+                                      kind="report", scheduled_for=now_iso())
+            store.save_message(message)
+            message_id = message.id
+        next_step = (f"Booked for {label}. Tap Add to calendar."
+                     + (" A confirmation with their report is drafted." if biz.email else ""))
+        result_extra = {"calendar_url": calendar, "when_label": label}
     elif outcome == "not_interested":
         store.withdraw_cold(prospect.id)
         store.suppress(biz.email, "declined on a call")
@@ -443,6 +545,11 @@ def log_call(store, settings, prospect: Prospect, outcome: str,
     elif outcome == "wrong_number":
         biz.phone = ""
         next_step = "Number removed. Their email sequence carries on."
+    elif outcome == "callback":
+        due = agreed or datetime.now(timezone.utc) + timedelta(days=1)
+        store.add_appointment(prospect.id, "callback", due.isoformat(timespec="seconds"),
+                              note)
+        next_step = f"Back at the top of the list {their_time(biz.state, due)}."
     else:
         next_step = f"On the list again in {result.retry_days} day" \
                     f"{'' if result.retry_days == 1 else 's'}."
@@ -452,8 +559,11 @@ def log_call(store, settings, prospect: Prospect, outcome: str,
     store.upsert_prospect(prospect)
     if outcome == "wrong_number" or email:
         _save_contact(store, prospect)
-    return {"ok": True, "outcome": outcome, "label": result.label,
-            "next": next_step, "message_id": message_id}
+    out = {"ok": True, "outcome": outcome, "label": result.label,
+           "next": next_step, "message_id": message_id}
+    if outcome == "booked":
+        out.update(result_extra)
+    return out
 
 
 def _save_contact(store, prospect: Prospect) -> None:

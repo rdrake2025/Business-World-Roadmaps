@@ -163,19 +163,29 @@ the first email, not after the first client. Every screen is in
 | On a yes | Console → find them → **Sign them up** → pick the plan. The payment link goes out. Approve the welcome email the day they pay. |
 | Day 30 | Console → money view. Fix only the earliest broken step: not delivered → DNS; no replies → subject and targeting; no calls → report; no closes → the call. |
 
-### Every weekday — about 10 minutes, on your phone
+### Every weekday — work down Up next
 
-1. **Needs you now → Review drafts.** Read every one; they go out under your
-   name. Approve or skip, then **Send approved**.
-2. **Replied — waiting on you.** Replies are read from the inbox automatically
-   and an answer is drafted. Read it, send it.
-3. **Said yes — waiting for payment.** Updates itself when Stripe sees the
-   payment. Tap **They paid** if it does not.
-4. **Fleet.** Any agent red twice in a row is today's first job.
+The morning briefing email arrives at 7am with the day's list. Open the
+console: **Up next** has the same list, most urgent first, and tapping an
+item does it:
 
-**Plus calling**, as much as you have: 8–9:30am and 4–6pm in *their* time
-zone. Pipeline → **Call list** → tap a name → dial → tap what happened. The
-cold-call script and its rules are in `02_SALES_PLAYBOOK.md`.
+- **Someone ready to buy** → their drafted answer, with the payment link.
+- **A walkthrough soon** → their report and your notes.
+- **Call back / Call N businesses** → a calling session: dial, talk, tap what
+  happened, and the next business opens. Call backs come back at the time
+  you agreed; a booked walkthrough gives you an *Add to my calendar* button
+  and drafts a confirmation with their report.
+- **Answers to people who asked**, then **first emails and follow-ups** →
+  read, approve. You never tap Send: approved emails go out on their own
+  (answers 7am–9pm, cold emails weekdays 8am–5pm), within every cap.
+- **Someone hasn't paid**, **Save a client** → the Clients tab.
+
+When Up next is empty, you're done. Alerts arrive by email the moment someone
+is ready to buy or pays, so nothing waits for tomorrow.
+
+**Automatic** (Today tab) has two more switches for when you trust the
+drafts: approve follow-ups automatically, and send reports people asked for
+without waiting. Both start off.
 
 ---
 

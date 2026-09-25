@@ -117,6 +117,12 @@ CREATE TABLE IF NOT EXISTS site_checks (
 );
 CREATE INDEX IF NOT EXISTS idx_site_checks ON site_checks(business_id, checked_at);
 
+CREATE TABLE IF NOT EXISTS appointments (
+    id TEXT PRIMARY KEY, prospect_id TEXT, kind TEXT, starts_at TEXT,
+    note TEXT, status TEXT, created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_appointments ON appointments(status, starts_at);
+
 CREATE TABLE IF NOT EXISTS citation_checks (
     id TEXT PRIMARY KEY, business_id TEXT, checked_at TEXT, raw TEXT
 );
@@ -786,6 +792,43 @@ class Store:
                 """SELECT raw FROM site_checks WHERE business_id = ?
                    ORDER BY checked_at DESC LIMIT ?""", (business_id, limit)).fetchall()
         return [json.loads(r["raw"]) for r in rows]
+
+    # ---------------- appointments ----------------
+
+    def add_appointment(self, prospect_id: str, kind: str, starts_at: str,
+                        note: str = "") -> str:
+        """A booked walkthrough ("meeting") or a promised call back ("callback")."""
+        aid = f"apt_{uuid.uuid4().hex[:12]}"
+        with self.conn() as cx:
+            cx.execute(
+                """INSERT INTO appointments (id, prospect_id, kind, starts_at, note,
+                   status, created_at) VALUES (?,?,?,?,?,?,?)""",
+                (aid, prospect_id, kind, starts_at, note, "open",
+                 datetime.now(timezone.utc).isoformat(timespec="seconds")))
+        return aid
+
+    def appointments(self, kind: str | None = None, status: str = "open",
+                     prospect_id: str | None = None) -> list[dict[str, Any]]:
+        q, args = "SELECT * FROM appointments WHERE status = ?", [status]
+        if kind:
+            q += " AND kind = ?"
+            args.append(kind)
+        if prospect_id:
+            q += " AND prospect_id = ?"
+            args.append(prospect_id)
+        with self.conn() as cx:
+            rows = cx.execute(q + " ORDER BY starts_at ASC", tuple(args)).fetchall()
+        return [dict(r) for r in rows]
+
+    def close_appointments(self, prospect_id: str, kind: str | None = None,
+                           status: str = "done") -> int:
+        q, args = "UPDATE appointments SET status = ? WHERE prospect_id = ? AND status = 'open'", \
+            [status, prospect_id]
+        if kind:
+            q += " AND kind = ?"
+            args.append(kind)
+        with self.conn() as cx:
+            return cx.execute(q, tuple(args)).rowcount
 
     def save_citation_check(self, business_id: str, check: dict[str, Any]) -> None:
         with self.conn() as cx:

@@ -342,7 +342,18 @@ class Application:
         d = self._body_json(environ)
         return self._json(start, self.api.log_call(
             str(d.get("id", "")), str(d.get("outcome", "")),
-            str(d.get("email", "")), str(d.get("note", ""))))
+            str(d.get("email", "")), str(d.get("note", "")), str(d.get("when", ""))))
+
+    def api_next(self, environ, start):
+        return self._json(start, self.api.next_up())
+
+    def api_automation(self, environ, start):
+        d = self._body_json(environ) if environ.get("REQUEST_METHOD") == "POST" else {}
+        return self._json(start, self.api.automation(str(d.get("key", "")),
+                                                     bool(d.get("on"))))
+
+    def api_approve_followups(self, environ, start):
+        return self._json(start, self.api.approve_followups())
 
     def api_add(self, environ, start):
         d = self._body_json(environ)
@@ -463,6 +474,9 @@ class Application:
             "/api/calls": self.api_calls,
             "/api/call-sheet": self.api_call_sheet,
             "/api/call": self.api_call,
+            "/api/next": self.api_next,
+            "/api/automation": self.api_automation,
+            "/api/approve-followups": self.api_approve_followups,
             "/api/expense": self.api_expense,
             "/api/markets": self.api_markets,
             "/api/research": self.api_research,
@@ -477,7 +491,7 @@ class Application:
         served from the output directory, whatever the database says.
         """
         parts = environ.get("PATH_INFO", "").strip("/").split("/")
-        if len(parts) != 3 or parts[1] not in {"report", "file", "case"}:
+        if len(parts) != 3 or parts[1] not in {"report", "file", "case", "audit"}:
             return self._ok(start, render("notfound.html"), status="404 Not Found")
         _, kind, ident = parts
         root = Path(self.settings.output_dir).resolve()
@@ -489,6 +503,20 @@ class Application:
             _ev, text = casestudy.write_up(self.store, client)
             body = text.encode("utf-8")
             start("200 OK", [("Content-Type", "text/plain; charset=utf-8"),
+                             ("Content-Length", str(len(body))),
+                             ("Cache-Control", "no-store")])
+            return [body]
+        if kind == "audit":
+            # Any prospect's full report, rendered on the spot, for a
+            # walkthrough call or to forward. Behind the login like the rest.
+            from answerrank.agents.reporter import render_report
+            audit = self.store.get_audit(ident)
+            if not audit:
+                return self._ok(start, render("notfound.html"), status="404 Not Found")
+            history = [a for a in self.store.audit_history(audit.business_id)
+                       if a.is_free_teaser == audit.is_free_teaser]
+            body = render_report(audit, self.settings, history).encode("utf-8")
+            start("200 OK", [("Content-Type", "text/html; charset=utf-8"),
                              ("Content-Length", str(len(body))),
                              ("Cache-Control", "no-store")])
             return [body]

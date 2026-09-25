@@ -58,9 +58,16 @@ bought back.
 ## The cold call (2 minutes)
 
 The phone console's **Call list** (Pipeline tab) shows who to ring, best
-times first, in *their* time zone. Tap a name for the number, the one true
-thing the audit found, the script and the voicemail. The phone dials; nothing
-in the system does.
+times first, in *their* time zone. **Start calling** runs a session: each
+business opens with its number, the one true thing the audit found, the
+script and the voicemail; tap what happened and the next one opens. The
+phone dials; nothing in the system does.
+
+- **Call back later**: put in the time they said. They come back to the top
+  of the list then, and not before.
+- **Booked a call**: put in the time agreed. You get an *Add to my calendar*
+  button, and a confirmation with their report is drafted for them. On the
+  day, Up next puts the walkthrough first, with their full report a tap away.
 
 The only goal of a cold call is **their email address for the free report**,
 or a booked 15-minute walkthrough. Not a sale.

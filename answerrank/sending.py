@@ -66,7 +66,8 @@ def _begin_warmup(store) -> None:
 def send_batch(store, settings, limit: int = 25, dry_run: bool = False,
                throttle_seconds: float | None = None,
                extra_checks: list[str] | None = None,
-               on_event: Callable[[str], None] | None = None) -> dict[str, Any]:
+               on_event: Callable[[str], None] | None = None,
+               only: str | None = None) -> dict[str, Any]:
     """Deliver up to ``limit`` approved messages. Returns what happened.
 
     ``extra_checks`` lets the CLI add its DNS readiness check, which the
@@ -90,7 +91,7 @@ def send_batch(store, settings, limit: int = 25, dry_run: bool = False,
                 "errors": [], "dry_run": dry_run}
     try:
         return _send_batch_locked(store, settings, limit, dry_run,
-                                  throttle_seconds, say)
+                                  throttle_seconds, say, only)
     finally:
         _SEND_LOCK.release()
 
@@ -135,7 +136,8 @@ def bounce_blocker(store, settings, days: int = 14) -> str:
 
 def _send_batch_locked(store, settings, limit: int, dry_run: bool,
                        throttle_seconds: float | None,
-                       say: Callable[[str], None]) -> dict[str, Any]:
+                       say: Callable[[str], None],
+                       only: str | None = None) -> dict[str, Any]:
     pol = settings.outreach
     days_sending = _days_warming(store, settings)
     cap = pol.warmup_cap(days_sending)
@@ -149,7 +151,11 @@ def _send_batch_locked(store, settings, limit: int, dry_run: bool,
     cold_room = cap - store.cold_sends_today()
     cold_block = bounce_blocker(store, settings)
 
-    queue = store.send_queue(limit)
+    queue = store.send_queue(limit if not only else 500)
+    if only == "warm":
+        queue = [m for m in queue if (m.kind or "cold") != "cold"][:limit]
+    elif only == "cold":
+        queue = [m for m in queue if (m.kind or "cold") == "cold"][:limit]
     if not queue:
         return {"sent": 0, "failed": 0, "blocked": False,
                 "reasons": ["No approved messages. Approve some first."],

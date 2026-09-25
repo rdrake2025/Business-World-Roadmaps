@@ -287,6 +287,47 @@ class CitationResearcher(Researcher):
             severity=IMPROVE, confidence=PROVISIONAL)]
 
 
+class SenderResearcher(Researcher):
+    subject = "sender"
+    question = "Do the emails you approve actually leave?"
+
+    def investigate(self) -> list[Finding]:
+        from datetime import datetime, timedelta, timezone
+
+        from . import automation
+        if not automation.enabled(self.store, "auto_send"):
+            return []
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
+        stuck = [m for m in self.store.send_queue(500) if (m.created_at or "") < cutoff]
+        if len(stuck) < 3:
+            return []
+        return [Finding(
+            subject=self.subject,
+            claim=f"{len(stuck)} approved emails are more than a day old and unsent.",
+            evidence=f"Oldest drafted {min(m.created_at for m in stuck)[:10]}.",
+            proposal=("Check the Sender's last run in Fleet: usually the mailbox "
+                      "password, the DNS check, or the daily warm-up cap. Answers "
+                      "to people who wrote in should never wait a day."),
+            severity=IMPROVE, confidence=CONFIDENT)]
+
+
+class BriefingResearcher(Researcher):
+    subject = "briefing"
+    question = "Does your morning briefing reach you?"
+
+    def investigate(self) -> list[Finding]:
+        error = self.store.kv_get("briefing.last_error") or ""
+        if not error:
+            return []
+        return [Finding(
+            subject=self.subject,
+            claim="The last briefing email did not send.",
+            evidence=error[:160],
+            proposal=("Check the mailbox in Keys and settings. Until it sends, "
+                      "Up next in the console has the same list."),
+            severity=NOTE, confidence=CONFIDENT)]
+
+
 class FixerResearcher(Researcher):
     subject = "fixer"
     question = "Does the work we deliver actually move the score?"
@@ -618,9 +659,9 @@ class StrategistResearcher(Researcher):
 RESEARCHERS: list[type[Researcher]] = [
     ConciergeResearcher, OnboarderResearcher, ScoutResearcher,
     ProspectorResearcher, AuditorResearcher, CitationResearcher, FixerResearcher,
-    ReporterResearcher, OutreachResearcher, BookkeeperResearcher,
+    ReporterResearcher, OutreachResearcher, SenderResearcher, BookkeeperResearcher,
     RetentionResearcher, ExplorerResearcher, AnalystResearcher,
-    StrategistResearcher,
+    StrategistResearcher, BriefingResearcher,
 ]
 
 

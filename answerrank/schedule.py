@@ -111,17 +111,16 @@ class Event:
 
 MORNING_OPS = """Your 10 minutes that keep the business moving. All on the phone.
 
-Open the console (the link the server setup gave you, on your home screen).
+The briefing email has the day's list. Open the console and work down
+Up next: it is the same list, most urgent first, and tapping an item
+does it.
 
-1. Needs you now -> Review drafts. READ every one: they go out under
-   your name. Approve or Skip, then tap Send approved.
+- Someone ready to buy: approve the drafted answer with the pay link.
+- Calls: tap to start a session. Log each call and the next one opens.
+- Drafts: read and approve. Approved emails send themselves in sending
+  hours; you never tap Send.
 
-2. Replied - waiting on you. Anything here beats everything else today.
-
-3. Said yes - waiting for payment. Tap They paid when the money lands
-   (it happens by itself if the Stripe key is saved).
-
-4. Fleet. Any agent red twice in a row? That is today's first job.
+When Up next is empty, you're done.
 
 If you only ever do this one block, the business still runs."""
 

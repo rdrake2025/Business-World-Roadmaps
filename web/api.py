@@ -96,8 +96,20 @@ class Api:
             "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
 
+    #: What each kind of draft is, in the words on its badge.
+    KIND_LABEL = {"reply": "answer to their reply", "report": "report they asked for",
+                  "welcome": "welcome", "invoice": "payment link",
+                  "client_report": "monthly report"}
+
     def inbox(self, status: str = "drafted", limit: int = 25) -> dict[str, Any]:
-        msgs = self.store.get_messages(status, limit)
+        """Drafts in the order to read them: answers to people who wrote in,
+        then first emails, then follow-ups."""
+        msgs = self.store.get_messages(status, 1000)
+        msgs.sort(key=lambda m: (0 if (m.kind or "cold") != "cold" else
+                                 1 if m.sequence_step <= 1 else 2, m.created_at))
+        total = len(msgs)
+        followups = sum(1 for m in msgs if (m.kind or "cold") == "cold" and m.sequence_step > 1)
+        msgs = msgs[:limit]
         by_id = {p.id: p for p in self.store.get_prospects(limit=5000)}
         items = []
         for m in msgs:
@@ -113,8 +125,33 @@ class Api:
                 "score": p.score if p else None,
                 "gap": p.competitor_gap if p else None,
                 "evidence": (p.notes or "").split(" | ")[0] if p else "",
+                "kind": m.kind or "cold",
+                "kind_label": self.KIND_LABEL.get(m.kind or "cold",
+                                                  "first email" if m.sequence_step <= 1
+                                                  else f"follow-up {m.sequence_step}"),
             })
-        return {"items": items, "count": len(items), "status": status}
+        return {"items": items, "count": len(items), "total": total,
+                "followups": followups, "status": status}
+
+    def approve_followups(self) -> dict[str, Any]:
+        """Every drafted follow-up at once: same template, same checks."""
+        ids = [m.id for m in self.store.get_messages("drafted", 1000)
+               if (m.kind or "cold") == "cold" and m.sequence_step > 1]
+        return self.approve(ids)
+
+    # ------------------------------------------------------------------ today
+
+    def next_up(self) -> dict[str, Any]:
+        from answerrank import today
+        return today.next_actions(self.store, self.settings)
+
+    def automation(self, key: str = "", on: bool | None = None) -> dict[str, Any]:
+        from answerrank import automation
+        if key:
+            if key not in automation.SWITCHES:
+                return {"error": f"unknown switch {key!r}"}
+            automation.set_switch(self.store, key, bool(on))
+        return {"switches": automation.state(self.store)}
 
     def prospects(self, stage: str | None = None, limit: int = 40,
                   hot: bool = False, q: str = "") -> dict[str, Any]:
@@ -661,18 +698,25 @@ class Api:
             "local": local.strftime("%I:%M %p").lstrip("0").lower() if local else "",
             "window": calls.window(local),
             "evidence": ev, "script": calls.script(prospect, ev, self.settings),
+            "report_url": f"/files/audit/{audit.id}" if audit else "",
+            "meeting": next((calls.their_time(prospect.business.state,
+                                              calls.parse_when(a["starts_at"]))
+                             for a in self.store.appointments(
+                                 kind="meeting", prospect_id=prospect.id)
+                             if calls.parse_when(a["starts_at"])), ""),
             "outcomes": [{"key": o.key, "label": o.label}
                          for o in calls.OUTCOMES.values()],
         }
 
     def log_call(self, prospect_id: str, outcome: str, email: str = "",
-                 note: str = "") -> dict[str, Any]:
+                 note: str = "", when: str = "") -> dict[str, Any]:
         from answerrank import calls
 
         prospect = self._prospect(prospect_id)
         if prospect is None:
             return {"error": "no such prospect"}
-        return calls.log_call(self.store, self.settings, prospect, outcome, email, note)
+        return calls.log_call(self.store, self.settings, prospect, outcome, email,
+                              note, when)
 
     #: Where a prospect already is in the cold sequence. Adding someone you
     #: know by hand takes them out of it.
