@@ -97,7 +97,7 @@ def readiness(store, settings, probe: bool = False) -> dict:
              f"{keys}: your Google Workspace address and an app password."),
         Item("replies", "Replies read automatically",
              ConciergeAgent(store, settings)._imap_config() is not None,
-             "reading your inbox every 20 minutes"
+             "reading your inbox every half hour"
              if ConciergeAgent(store, settings)._imap_config() else "off",
              f"{keys}: answer yes to reading replies automatically."),
         _dns(store, settings, probe),
