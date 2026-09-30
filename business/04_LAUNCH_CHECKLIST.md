@@ -163,6 +163,14 @@ the first email, not after the first client. Every screen is in
 | On a yes | Console → find them → **Sign them up** → pick the plan. The payment link goes out. Approve the welcome email the day they pay. |
 | Day 30 | Console → money view. Fix only the earliest broken step: not delivered → DNS; no replies → subject and targeting; no calls → report; no closes → the call. |
 
+### Or: switch on Autopilot
+
+Everything below can run without you. **[AUTOPILOT.md](../AUTOPILOT.md)**
+lists the one-time setup (mailbox, DNS, Stripe, keys, server), the 20 first
+emails you read yourself, and what still comes to you (only what genuinely
+needs a person, by email). The phone's Today tab has the Autopilot card and
+its checklist; so does the desktop button, option 4.
+
 ### Every weekday — work down Up next
 
 The morning briefing email arrives at 7am with the day's list. Open the

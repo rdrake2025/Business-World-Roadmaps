@@ -10,7 +10,9 @@ being named, and does the work to change it.
 
 - **Target:** $5,000/month profit on ~7 clients
 - **Margin:** ~95% (a client's monthly audit, with live web search, costs about $1.50; the retainer is $997)
-- **Human time:** ~5 hours/week — sales calls and approving outreach
+- **Human time:** ~5 hours/week approving and calling, or about ten minutes a
+  week on **Autopilot**: see **[AUTOPILOT.md](AUTOPILOT.md)** for what runs by
+  itself and the one-time setup only you can do
 
 ---
 
@@ -213,6 +215,7 @@ outreach — treat it like a password; restarting issues a new one.
 | `analyst` | 12h | Reads recorded outcomes and reports what is actually converting |
 | `strategist` | 24h | Reads the evidence and recommends the single next move |
 | `briefing` | 15m | Emails the day's list at 7am, and alerts when someone is ready to buy or pays |
+| `guardian` | 30m | Watches Autopilot; pauses the part that goes wrong (complaints, bounces) and tells you |
 | `researcher` | 6h | Runs a researcher against every agent and reports what holds |
 
 The orchestrator runs them on independent schedules in one process, started
@@ -280,16 +283,17 @@ agent leaves in the database and answers one question about it:
 | analyst | Is the Analyst concluding on enough evidence? |
 | strategist | Is the recommended move ever acted on? |
 | briefing | Does your morning briefing reach you? |
+| guardian | Does anything stay paused without you noticing? |
 
 They are subordinate: they investigate and report, they never act. Acting is
 the operator's decision, or the Strategist's. A single coordinator runs all
-sixteen so the fleet stays legible — twenty-six entries in the agent list
+seventeen so the fleet stays legible — twenty-six entries in the agent list
 would be a worse tool, not a better one — while each researcher remains a
 separate, named, separately tested unit.
 
 **A researcher with insufficient evidence returns nothing.** Silence is the
 correct and common output. Sixteen researchers each inventing a finding every
-cycle would be sixteen things the operator stops reading by the end of the
+cycle would be seventeen things the operator stops reading by the end of the
 first week, and the one real finding would be lost among twelve pieces of
 filler. Every finding carries the arithmetic it rests on, so the reasoning can
 be checked rather than trusted.

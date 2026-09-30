@@ -31,6 +31,7 @@ from .models import AgentRun, now_iso
 from .agents.bookkeeper import BookkeeperAgent
 from .agents.concierge import ConciergeAgent
 from .agents.explorer import ExplorerAgent
+from .agents.guardian import GuardianAgent
 from .agents.fixer import FixerAgent
 from .agents.onboarder import OnboarderAgent
 from .agents.outreach import OutreachAgent
@@ -67,7 +68,7 @@ log = logging.getLogger("answerrank.orchestrator")
 # recommendation is made with the Analyst's findings already written. The
 # Researcher runs last of all: studying a half-finished tick tells you about
 # the tick, not about the agent.
-AGENT_ORDER = [ConciergeAgent, OnboarderAgent, ScoutAgent, ProspectorAgent,
+AGENT_ORDER = [ConciergeAgent, GuardianAgent, OnboarderAgent, ScoutAgent, ProspectorAgent,
                AuditorAgent, CitationAgent,
                FixerAgent, ReporterAgent,
                OutreachAgent, SenderAgent, BookkeeperAgent, RetentionAgent, ExplorerAgent,
@@ -179,6 +180,8 @@ class Orchestrator:
 
     def tick(self, force: bool = False) -> list[str]:
         """Run every due agent once. Returns human-readable lines."""
+        from . import automation
+        automation.sync(self.store, self.settings)
         lines: list[str] = []
         for agent in self.agents:
             if self._stop:

@@ -11,9 +11,11 @@ Two modes:
 * **Manual**: the operator logs a reply from the console, and the same
   classification and drafting runs.
 
-It drafts, it never sends. A prospect who has just engaged is the last place
-to risk an automated misfire, and the reply that closes a $997/mo deal
-deserves ten seconds of human attention.
+It drafts; whether a draft goes without you is Autopilot's call
+(``automation.auto_approve``), and even on Autopilot only answers it is sure
+of go by themselves: the report, the payment link, a question with a written
+answer in ``answers.py``, a client's billing or cancellation. Anything else
+is held for you and you're emailed about it at once ("escalated").
 """
 
 from __future__ import annotations
@@ -101,6 +103,19 @@ def classify(text: str, is_client: bool = False) -> str:
 #: wrap differently.
 _body = playbook.email_body
 
+#: Drafts that are right whoever asked, so Autopilot may send them unread.
+SURE_ACTIONS = {"send_report", "close_sale", "propose_start", "answer_objection",
+                "answer_faq", "forward_to_contact", "client_help"}
+
+
+def start_link(settings, prospect: Prospect) -> str:
+    """Their payment link for the plan they're quoted, carrying who they are,
+    so they can start without another email."""
+    from .. import payments
+    from ..sales import plan_for_prospect
+    return payments.link_for(settings, plan_for_prospect(settings, prospect),
+                             prospect.id, prospect.business.email)
+
 
 def booking_line(settings) -> str:
     """One line offering a 15-minute call, if you have a booking page."""
@@ -169,10 +184,13 @@ def report_email(prospect: Prospect, audit, settings,
     if levers:
         paragraphs.append("The three fixes that move it fastest:\n" + "\n".join(
             f"{i}. {lever.name} — {lever.why}" for i, lever in enumerate(levers, 1)))
+    link = start_link(settings, prospect)
     paragraphs += [
         f"You can take that list and do it yourself; it's yours either way. If "
         f"you'd rather I did it, it's ${price:,.0f}/month, no long contract, "
-        f"cancel any time. Reply \"start\" and I'll send the invoice.",
+        f"cancel any time. "
+        + (f"You can start here, and I begin the week it's set up:\n{link}" if link
+           else "Reply \"start\" and I'll send the invoice."),
         booking_line(settings) if offer_call else "",
         f"{settings.brand}\n{settings.website}",
     ]
@@ -191,14 +209,19 @@ def draft_response(intent: str, prospect: Prospect, settings,
 
     Returns ``("", "")`` where nothing should be sent at all.
     """
+    from .. import answers
+
     biz = prospect.business
     brand = settings.brand
     price = settings.quote_for(biz.vertical)
     payback = knowledge.payback_line(biz.vertical, price)
-    next_step = (f"If you'd like me to do the work, it's ${price:,.0f}/month, no long "
-                 f"contract, cancel any time. Reply \"start\" and I'll send the "
-                 f"invoice." if report_sent else "The first report is free and "
-                 f"there's no call attached. Want it?")
+    link = start_link(settings, prospect)
+    next_step = ((f"If you'd like me to do the work, it's ${price:,.0f}/month, no long "
+                  f"contract, cancel any time. "
+                  + (f"You can start here:\n{link}" if link else
+                     "Reply \"start\" and I'll send the invoice."))
+                 if report_sent else "The first report is free and there's no call "
+                 "attached. Want it?")
 
     if intent == "ready_to_buy":
         # With a payment link configured, the close carries it: the fewer
@@ -250,6 +273,14 @@ def draft_response(intent: str, prospect: Prospect, settings,
                 next_step,
                 booking_line(settings),
                 brand))
+
+        # A written answer to what they actually asked, before the general
+        # explanation: the general one is what a human would send only when
+        # nothing better fits, so on Autopilot it waits for you.
+        faq = answers.for_prospect(text, prospect, settings)
+        if faq:
+            return ("answer_faq", _body("Hi,", *faq, next_step, booking_line(settings),
+                                        brand))
 
         return ("answer_question", _body(
             "Hi,",
@@ -448,8 +479,16 @@ class ConciergeAgent(Agent):
     # ---------------- handling ----------------
 
     def _client_for(self, prospect: Prospect):
-        """The live client record for this business, if it is one."""
-        for client in self.store.get_clients("active"):
+        """The client record for this business, if it is one.
+
+        A client whose card is failing, or who has cancelled, is still a
+        client when they write: answering "I've updated the card" as though
+        it came from a stranger, with the sales pitch, and demoting them in
+        the pipeline, is what happened before. Someone who has said yes but
+        not yet paid is still in the sale, and is answered as a buyer.
+        """
+        for client in (self.store.get_clients("active") + self.store.get_clients("past_due")
+                       + self.store.get_clients("churned")):
             if client.business.id == prospect.business.id or (
                     prospect.business.domain
                     and client.business.domain == prospect.business.domain):
@@ -515,7 +554,7 @@ class ConciergeAgent(Agent):
             self.store.record_outcome(
                 prospect_id=prospect.id, vertical=prospect.business.vertical,
                 kind="lost", sentiment=intent)
-        elif client is None:
+        elif client is None and prospect.stage != "won":
             prospect.stage = "replied"
         # A client stays a client. Their stage is not a reply to be worked.
 
@@ -523,29 +562,36 @@ class ConciergeAgent(Agent):
         prospect.last_touch_at = now_iso()
         self.store.upsert_prospect(prospect)
 
-        # A drafted response, never a sent one. The id comes back with the
-        # decision so the caller shows the reply it just wrote rather than
-        # whichever draft happens to be first in the queue.
+        # The id comes back with the decision so the caller shows the reply it
+        # just wrote rather than whichever draft happens to be first.
+        tell_owner, link = False, ""
         if intent == "interested" and not report_sent and client is None:
             audit = self._report_for(prospect)
             subject, body = report_email(prospect, audit, self.settings)
             action, kind = "send_report", "report"
+        elif intent == "client_message":
+            from .. import answers
+            found, tell_owner = answers.for_client(text, prospect, client, self.settings)
+            if found:
+                action, body = "client_help", _body("Hi,", *found, self.settings.brand)
+            else:
+                action, body = draft_response(intent, prospect, self.settings, text)
+            subject, kind = f"Re: {prospect.business.name}", "reply"
         else:
-            link = ""
             if intent == "ready_to_buy":
-                from .. import payments
-                plan = self.settings.pricing.plan_for(
-                    self.settings.quote_for(prospect.business.vertical)) or "growth"
-                link = payments.link_for(self.settings, plan, prospect.id,
-                                         prospect.business.email)
+                link = start_link(self.settings, prospect)
             action, body = draft_response(intent, prospect, self.settings, text,
                                           report_sent=report_sent, payment_link=link)
             subject, kind = f"Re: {prospect.business.name}", "reply"
 
+        from .. import automation
+        # Only answers that are right whoever asked go without you. The
+        # general explanation, a close with no payment link ("I'll send the
+        # invoice today") and a message nothing matched are yours.
+        sure = action in SURE_ACTIONS and not (action == "close_sale" and not link)
         message_id = ""
         if body:
-            from .. import automation
-            auto = kind == "report" and automation.enabled(self.store, "approve_reports")
+            auto = sure and automation.auto_approve(self.store, kind)
             message = OutreachMessage(
                 prospect_id=prospect.id, subject=subject, body=body,
                 sequence_step=prospect.touches + 1,
@@ -554,6 +600,21 @@ class ConciergeAgent(Agent):
             )
             self.store.save_message(message)
             message_id = message.id
+            if automation.enabled(self.store, "autopilot") and (not sure or tell_owner):
+                self.store.record_outcome(
+                    prospect_id=prospect.id, vertical=prospect.business.vertical,
+                    kind="escalated", sentiment=intent,
+                    note=(("Answered, but you should know: " if sure else
+                           "Needs your answer: ") + text)[:300])
+
+        # "Sign us up" on Autopilot makes the client, as tapping Sign them up
+        # would, so the reminder and the overdue flag apply. The answer just
+        # written already carries the link, so no second payment email.
+        if intent == "ready_to_buy" and client is None and sure \
+                and automation.enabled(self.store, "autopilot"):
+            from ..sales import plan_for_prospect, sign_up
+            sign_up(self.store, self.settings, prospect,
+                    plan_for_prospect(self.settings, prospect), send_link=False)
 
         return {"intent": intent, "action": action, "message_id": message_id}
 

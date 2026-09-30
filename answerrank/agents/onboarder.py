@@ -50,6 +50,40 @@ def welcome_email(client, audit, settings) -> tuple[str, str]:
 
     work = "\n".join(f"  - {lever.name}" for lever in plan["levers"])
     minutes = plan["client_minutes"]
+    portal = (getattr(settings, "billing_portal_link", "") or "").strip()
+    billing = (f"Your invoices, card details and cancellation are here, any time: "
+               f"{portal}" if portal else "")
+
+    if client.plan != "managed":
+        # Done-for-you work needs a person with their logins; everything else
+        # is delivered as files with steps, so the welcome asks for nothing
+        # only a person could act on.
+        body = playbook.email_body(
+            "Hi,",
+            "Thanks for signing up. Here is exactly what happens now, so there are "
+            "no surprises.",
+            standing,
+            f"This month: {plan['title']}. {plan['thesis']}",
+            "Three things:",
+        ) + "\n\n" + work + "\n\n" + playbook.email_body(
+            "Within a week you'll get your first report by email, with the fixes "
+            "as ready-to-paste files and plain steps for your website builder. "
+            "You, or whoever looks after your site, can put them in; nobody needs "
+            "your logins.",
+            "One thing to check now: your business name, address and phone should "
+            "read exactly the same on your Google Business Profile, your website "
+            "and every listing. A mismatch is the most common thing that is "
+            "quietly wrong, and it's yours to fix in two minutes.",
+            f"That is about {minutes} minutes of your time this month.",
+            "Being straight with you about timing: month one is the baseline. "
+            "Structured data shows up when the engines next crawl, which is days "
+            "to weeks, and reviews compound over months. Expect the number to move "
+            "in month two, not next week. You'll see the same measurement every "
+            "month either way, including the months it doesn't move.",
+            billing,
+            "Any questions, just reply.",
+            f"{settings.brand}\n{settings.website}")
+        return "You're in — here's what happens next", body
 
     body = playbook.email_body(
         f"Hi,",
@@ -113,10 +147,12 @@ class OnboarderAgent(Agent):
             subject, body = welcome_email(client, audit, self.settings)
             prospect = self._prospect_for(client)
 
+            from .. import automation
             self.store.save_message(OutreachMessage(
                 prospect_id=prospect.id if prospect else client.id,
                 subject=subject, body=body, sequence_step=0, kind="welcome",
-                status="drafted", scheduled_for=now_iso()))
+                status="approved" if automation.auto_approve(self.store, "welcome")
+                else "drafted", scheduled_for=now_iso()))
             self.store.record_outcome(
                 prospect_id=client.id, vertical=client.business.vertical,
                 kind=ONBOARDED, note=f"welcome drafted for {client.business.name}")

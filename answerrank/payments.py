@@ -107,9 +107,14 @@ def link_already_sent(store, prospect: Prospect, settings, plan: str,
     if not base:
         return False
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
-    return any(base in (m.body or "")
-               for m in store.messages_for(prospect.id)
-               if m.status in {"drafted", "approved", "sent"} and m.created_at >= cutoff)
+    recent = [m for m in store.messages_for(prospect.id)
+              if m.status in {"drafted", "approved", "sent"} and m.created_at >= cutoff]
+    # A payment email, or the last thing they got (the answer to "sign us
+    # up"). A link further back, in the report, doesn't count: someone who
+    # has just said yes should get it in front of them again.
+    if any(m.kind == "invoice" and base in (m.body or "") for m in recent):
+        return True
+    return bool(recent) and base in (recent[-1].body or "")
 
 
 def payment_email(prospect: Prospect, client: Client, settings, reminder: bool = False) -> tuple[str, str]:
@@ -193,7 +198,50 @@ def completed_sessions(key: str, days: int = 60,
     return out
 
 
-def reconcile(store, settings, get: Callable[..., dict] = _stripe_get) -> list[str]:
+def _plan_from_session(settings, session: dict[str, Any]) -> str:
+    """Which plan a checkout was for: the price paid, or the link used."""
+    amount = (session.get("amount_total") or 0) / 100
+    plan = settings.pricing.plan_for(amount) if amount else ""
+    if plan:
+        return plan
+    link = str(session.get("payment_link") or "")
+    for name, url in (getattr(settings, "payment_links", None) or {}).items():
+        if link and link in url:
+            return name
+    return "growth"
+
+
+def _self_serve(store, settings, session: dict[str, Any]) -> str:
+    """Someone paid straight from a link in their report, with nobody having
+    signed them up. Make them a client and mark them paid. Returns their name,
+    or "" if the payment isn't theirs to claim.
+
+    Before this, a payment from anyone not already on the waiting list was
+    ignored: the money arrived and nothing happened, which on Autopilot is
+    the most expensive silence there is.
+    """
+    from .sales import sign_up
+
+    ref = str(session.get("client_reference_id") or "")
+    email = str((session.get("customer_details") or {}).get("email")
+                or session.get("customer_email") or "").lower()
+    prospects = store.get_prospects(limit=10_000)
+    prospect = next((p for p in prospects if ref and p.id == ref), None) or \
+        next((p for p in prospects if email and (p.business.email or "").lower() == email),
+             None)
+    if prospect is None:
+        return ""
+    if prospect.stage == "won":
+        return ""
+    done = sign_up(store, settings, prospect, _plan_from_session(settings, session),
+                   send_link=False)
+    if done.get("error"):
+        return ""
+    mark_paid(store, done["client"], session.get("subscription") or session.get("id", ""))
+    return prospect.business.name
+
+
+def reconcile(store, settings, get: Callable[..., dict] | None = None) -> list[str]:
     """Match Stripe's payments to clients. Returns what changed, in words.
 
     Does nothing without a key. Never raises: an unreachable Stripe is a
@@ -202,21 +250,31 @@ def reconcile(store, settings, get: Callable[..., dict] = _stripe_get) -> list[s
     key = settings.api_key("stripe")
     if not key:
         return []
+    get = get or _stripe_get
     lines: list[str] = []
     try:
-        waiting = store.get_clients("awaiting_payment")
-        if waiting:
-            paid = {}
-            for s in completed_sessions(key, get=get):
-                if s.get("payment_status") in {"paid", "no_payment_required"} \
-                        and s.get("client_reference_id"):
-                    paid.setdefault(s["client_reference_id"], s)
-            for client in waiting:
-                prospect = store.prospect_for_business(client.business)
-                session = paid.get(client.id) or (paid.get(prospect.id) if prospect else None)
-                if session:
-                    mark_paid(store, client, session.get("subscription") or session.get("id", ""))
-                    lines.append(f"{client.business.name} paid")
+        sessions = [s for s in completed_sessions(key, get=get)
+                    if s.get("payment_status") in {"paid", "no_payment_required"}]
+        paid = {}
+        for s in sessions:
+            if s.get("client_reference_id"):
+                paid.setdefault(s["client_reference_id"], s)
+        used: set[str] = set()
+        for client in store.get_clients("awaiting_payment"):
+            prospect = store.prospect_for_business(client.business)
+            session = paid.get(client.id) or (paid.get(prospect.id) if prospect else None)
+            if session:
+                used.add(session.get("id", ""))
+                mark_paid(store, client, session.get("subscription") or session.get("id", ""))
+                lines.append(f"{client.business.name} paid")
+        known = {c.payment_ref for s in ("active", "past_due", "churned")
+                 for c in store.get_clients(s) if c.payment_ref}
+        for s in sessions:
+            if s.get("id", "") in used or (s.get("subscription") or s.get("id")) in known:
+                continue
+            name = _self_serve(store, settings, s)
+            if name:
+                lines.append(f"{name} bought straight from their report")
 
         for client in store.get_clients("active") + store.get_clients("past_due"):
             if not (client.payment_ref or "").startswith("sub_"):
@@ -270,9 +328,12 @@ def chase(store, settings) -> list[str]:
         if waited >= settings.payment_reminder_days and base_link(settings, client.plan) \
                 and not store.has_outcome(client.id, "payment_reminder"):
             subject, body = payment_email(prospect, client, settings, reminder=True)
+            from . import automation
             store.save_message(OutreachMessage(
                 prospect_id=prospect.id, subject=subject, body=body, kind="invoice",
-                sequence_step=0, status="drafted", scheduled_for=now_iso()))
+                sequence_step=0,
+                status="approved" if automation.auto_approve(store, "invoice") else "drafted",
+                scheduled_for=now_iso()))
             store.record_outcome(prospect_id=client.id, vertical=client.business.vertical,
                                  kind="payment_reminder", note=f"day {waited}")
             lines.append(f"reminder drafted for {client.business.name}")

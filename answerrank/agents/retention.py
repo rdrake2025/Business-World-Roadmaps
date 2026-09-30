@@ -37,6 +37,65 @@ REPORT_DUE_DAYS = 32
 REPORT_LATE_DAYS = 45
 
 
+#: At most one care email per client in this many days.
+CARE_GAP_DAYS = 30
+
+
+def care_email(client, health: "Health", check: dict | None, settings) -> tuple[str, str, str] | None:
+    """The email that does what the recommended action says, where an email
+    can: (reason, subject, body), or None if nothing should be sent.
+
+    These were all jobs for the owner ("call them", "offer ten minutes on
+    the phone"). On Autopilot there is no owner at the phone, so the
+    agent sends the version of each that works in writing.
+    """
+    from .. import playbook
+    from ..sitecheck import PLATFORM_LABEL, install_steps
+
+    biz = client.business
+    sign = f"{settings.brand}\n{settings.website}"
+    portal = (getattr(settings, "billing_portal_link", "") or "").strip()
+    signals = " ".join(health.signals)
+    if client.status == "past_due":
+        if not portal:
+            return None
+        return ("card", f"Your card didn't go through — {biz.name[:30]}", playbook.email_body(
+            "Hi,",
+            "Your last payment didn't go through; usually it's just an expired card. "
+            "You can update it here in a minute, and nothing else changes:",
+            portal, sign))
+    if "still not live" in signals:
+        platform = (check or {}).get("platform", "unknown")
+        where = PLATFORM_LABEL.get(platform, "your website")
+        return ("install", f"The one step left for {biz.name[:30]}", playbook.email_body(
+            "Hi,",
+            f"Your fixes are written, but they aren't on your site yet, so the AI "
+            f"assistants can't see them. It's the one step between you and the "
+            f"number moving.",
+            f"On {where} it takes about ten minutes, using the files in your last "
+            f"report email:",
+            install_steps(platform),
+            "Or forward this email to whoever looks after your website; everything "
+            "they need is in the report. Reply if you get stuck and I'll help.",
+            sign))
+    if "silence" in signals or "No contact on record" in signals:
+        return ("check_in", f"Quick question about {biz.name[:30]}", playbook.email_body(
+            "Hi,",
+            "Quick one: is the monthly report useful as it is, or is there something "
+            "you'd rather see in it? One line back is plenty.",
+            sign))
+    if "Visibility up" in signals and "Say this in the next report" in signals:
+        return ("referral", f"{biz.name[:30]} is getting named more", playbook.email_body(
+            "Hi,",
+            "Your AI visibility is up since you started, and it's the kind of "
+            "change that compounds.",
+            "If you know another business owner who'd want the same check, reply "
+            "with their name and email and I'll send them a free report, mentioning "
+            "you only if you'd like me to.",
+            sign))
+    return None
+
+
 def _days_since(iso: str | None) -> int | None:
     if not iso:
         return None
@@ -282,6 +341,8 @@ class RetentionAgent(Agent):
                     prospect_id=h.client_id, kind="at_risk", sentiment=h.band,
                     note=h.action[:300])
 
+        cared = self._care(rows)
+
         at_risk = [h for h in rows if h.band == "act_now"]
         monitor = [h for h in rows if h.band == "monitor"]
         risk_mrr = sum(h.mrr for h in at_risk)
@@ -289,7 +350,44 @@ class RetentionAgent(Agent):
                    f"{len(monitor)} monitor, {len(at_risk)} need action")
         if at_risk:
             summary += (f" | ${risk_mrr:,.0f}/mo at risk — worst: {at_risk[0].line()}")
+        if cared:
+            summary += f" | {cared} care email(s) written"
         return len(rows), summary
+
+    def _care(self, rows: list[Health]) -> int:
+        """Write the email each at-risk client's action calls for."""
+        from datetime import timedelta
+
+        from .. import automation
+        from ..models import OutreachMessage, now_iso
+
+        written = 0
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=CARE_GAP_DAYS)).isoformat(
+            timespec="seconds")
+        for h in rows:
+            if h.band == "healthy" and "Visibility up" not in " ".join(h.signals):
+                continue
+            last = self.store.last_outcome_at(h.client_id, ("client_care",))
+            if last and last >= cutoff:
+                continue
+            client = self.store.get_client(h.client_id)
+            prospect = self.store.prospect_for_business(client.business) if client else None
+            if client is None or prospect is None or not prospect.business.email:
+                continue
+            checks = self.store.site_checks(client.business.id, limit=1)
+            found = care_email(client, h, checks[0] if checks else None, self.settings)
+            if not found:
+                continue
+            reason, subject, body = found
+            self.store.save_message(OutreachMessage(
+                prospect_id=prospect.id, subject=subject, body=body, kind="client_care",
+                sequence_step=0, scheduled_for=now_iso(),
+                status="approved" if automation.auto_approve(self.store, "client_care")
+                else "drafted"))
+            self.store.record_outcome(prospect_id=h.client_id, kind="client_care",
+                                      vertical=client.business.vertical, note=reason)
+            written += 1
+        return written
 
 
 def _days_between(a: str, b: str) -> int:

@@ -143,6 +143,24 @@
   .sess button + button{margin-left:0}
   .sess a{color:var(--mark);font-weight:650;text-decoration:none}
 
+  /* autopilot */
+  .ap{border-radius:13px;padding:15px;margin-bottom:11px;border:1px solid var(--rule);
+    background:var(--card)}
+  .ap.on{border-color:var(--good)}
+  .ap .hd{display:flex;align-items:center;gap:10px}
+  .ap .hd b{font-size:16px;letter-spacing:-.01em;flex:1}
+  .ap .pill{font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 8px;border-radius:99px;
+    background:var(--sunk);color:var(--muted)}
+  .ap.on .pill{background:var(--good);color:#fff}
+  .ap .ck{display:flex;gap:9px;padding:8px 0;border-bottom:1px solid var(--rule);font-size:13.5px}
+  .ap .ck:last-child{border-bottom:0}
+  .ap .ck i{font-style:normal;width:16px;flex:none;font-weight:700}
+  .ap .ck.ok i{color:var(--good)}.ap .ck.no i{color:var(--bad)}.ap .ck.opt i{color:var(--muted)}
+  .ap .ck small{display:block;color:var(--ink2);font-size:12.5px;margin-top:2px}
+  .ap details summary{font-size:13px;color:var(--mark);font-weight:650;cursor:pointer;
+    list-style:none;margin-top:10px}
+  .ap details summary::-webkit-details-marker{display:none}
+
   /* review, one email at a time */
   .sheet.rv{padding-bottom:0}
   .rvsubj{font-weight:650;font-size:15px;margin:12px 0 8px;letter-spacing:-.01em}
@@ -299,6 +317,8 @@
   <!-- ============ TODAY ============ -->
   <section class="pane on" id="pane-today">
     <div id="todayBanner"></div>
+
+    <div class="ap" id="apCard"><div class="barnote">Loading Autopilot…</div></div>
 
     <div class="card">
       <h2>Up next</h2>
@@ -1017,10 +1037,80 @@
     var a = ($("upList")._items || [])[Number(row.dataset.up)].action || {};
     if(a.type === "review") openReview(a.id);
     else if(a.type === "debrief") openDebrief(a.id);
+    else if(a.type === "autopilot") $("apCard").scrollIntoView({behavior: "smooth"});
     else if(a.type === "calls") startCalling();
     else if(a.type === "call") openCall(a.id);
     else if(a.type === "pane") showPane(a.pane);
     else if(a.type === "send") $("btnSend").click();
+  });
+
+  // ---------------------------------------------------------------- autopilot
+  // The one switch that runs the business, what it still needs, and what the
+  // Guardian has paused. Resume is one tap once you've looked.
+  function loadAutopilot(){
+    return api("/api/autopilot").then(renderAutopilot).catch(function(){});
+  }
+  function renderAutopilot(d){
+    var el = $("apCard");
+    el.classList.toggle("on", !!d.on);
+    var paused = Object.keys(d.paused || {});
+    var next = d.next;
+    el.innerHTML = '<div class="hd"><b>Autopilot</b><span class="pill">' +
+        (d.on ? "ON" : "OFF") + '</span></div>' +
+      '<div class="barnote" style="margin-top:6px">' + (d.on
+        ? (d.ready ? "The business is running by itself. You'll be emailed if anything needs you."
+                   : "On, but " + (d.total - d.done) + " piece" + (d.total - d.done === 1 ? " is" : "s are") +
+                     " missing, so those parts wait for you.")
+        : d.done + " of " + d.total + " pieces in place." +
+          (d.ready ? " Ready: switch it on and the business runs by itself." : "")) + '</div>' +
+      paused.map(function(k){
+        return '<div class="finding" style="background:var(--accent-soft);color:var(--ink);margin-top:10px">' +
+          '<b>Paused: ' + esc(d.stages[k]) + '.</b> ' + esc(d.paused[k]) +
+          '<div class="acts" style="margin-top:8px"><button class="act" data-resume="' + esc(k) +
+          '">I\u2019ve looked: resume</button></div></div>';
+      }).join("") +
+      (next && !paused.length ? '<div class="finding" style="margin-top:10px"><b>Next: ' +
+        esc(next.label) + '.</b> ' + esc(next.fix) + '</div>' : '') +
+      '<details><summary>The full checklist</summary>' +
+        d.items.map(function(i){
+          var cls = i.ok ? "ok" : (i.required ? "no" : "opt");
+          return '<div class="ck ' + cls + '"><i>' + (i.ok ? "\u2713" : i.required ? "\u2717" : "\u2013") +
+            '</i><span>' + esc(i.label) + (i.required ? "" : " (optional)") +
+            '<small>' + esc(i.ok ? i.detail : (i.detail + ". " + i.fix)) + '</small></span></div>';
+        }).join("") + '</details>' +
+      '<div class="acts" style="margin-top:12px"><button class="act' + (d.on ? '' : ' primary') +
+        '" id="btnAutopilot">' + (d.on ? "Switch Autopilot off" : "Switch Autopilot on") +
+        '</button></div>';
+    el._data = d;
+  }
+  $("apCard").addEventListener("click", function(e){
+    var r = e.target.closest("[data-resume]");
+    var t = e.target.closest("#btnAutopilot");
+    var d = $("apCard")._data || {};
+    if(!(r || t) || busy) return;
+    var body;
+    if(r){
+      body = { action: "resume", stage: r.dataset.resume };
+    } else if(d.on){
+      if(!confirm("Switch Autopilot off? Drafts will wait for you to approve them again.")) return;
+      body = { action: "off" };
+    } else {
+      var missing = (d.items || []).filter(function(i){ return i.required && !i.ok; })
+        .map(function(i){ return "- " + i.label; });
+      if(!confirm(missing.length
+          ? "Some pieces are missing, so those parts will still wait for you:\n" +
+            missing.join("\n") + "\n\nSwitch Autopilot on anyway?"
+          : "Switch Autopilot on? Everything the fleet writes will go out without you " +
+            "reading it first; anything it can't answer is emailed to you.")) return;
+      body = { action: "on" };
+    }
+    busy = true;
+    api("/api/autopilot", body).then(function(d){
+      renderAutopilot(d);
+      toast(body.action === "resume" ? "Resumed" : "Autopilot " + (d.on ? "on" : "off"));
+      loadAuto(); loadNext();
+    }).catch(function(){ toast("That didn't go through"); })
+      .then(function(){ busy = false; });
   });
 
   function loadAuto(){
@@ -1556,7 +1646,7 @@
     if(on.id === "pane-brain") loadBrain();
   }
 
-  load(); loadAuto();
+  load(); loadAuto(); loadAutopilot();
   setInterval(function(){
     if(document.hidden || busy) return;
     load(true).then(refreshVisible);

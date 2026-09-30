@@ -251,6 +251,17 @@ def _ask_briefing(settings, config_path: Path, ask, say) -> None:
     elif entered and not entered.startswith(("http://", "https://")):
         say("    That isn't a web link (it should start with https://). Skipped.")
 
+    say("\n  Stripe's customer portal lets clients update their card, get invoices "
+        "and cancel by themselves. Stripe > Settings > Billing > Customer portal > "
+        "Activate, then copy the login link.")
+    portal = getattr(settings, "billing_portal_link", "") or ""
+    entered = ask(f"  Customer portal link [{portal or 'none yet'}]: ").strip()
+    if entered and entered.startswith("https://") and entered != portal:
+        set_setting("billing_portal_link", entered, config_path)
+        settings.billing_portal_link = entered
+    elif entered and not entered.startswith("https://"):
+        say("    That isn't a web link (it should start with https://). Skipped.")
+
 
 def _ask_targets(settings, config_path: Path, ask, say) -> None:
     """The trade and cities the finder searches, and so the call list."""

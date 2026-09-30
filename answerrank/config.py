@@ -151,6 +151,18 @@ class Settings:
     #: booking page or Calendly). Answers to interested people offer it, so
     #: nobody trades three emails to find a time.
     booking_link: str = ""
+    #: Stripe's customer portal link (Settings > Billing > Customer portal).
+    #: Clients update their card, get invoices and cancel there themselves,
+    #: so none of that needs you.
+    billing_portal_link: str = ""
+    #: What the AI answer engines may cost in a month before the Guardian
+    #: tells you. Teaser audits are the bulk of it (see teaser_audits_per_day).
+    api_budget_monthly: float = 150.0
+    #: Whether the done-for-you Managed plan is offered. It means installing
+    #: fixes on the client's site by hand, which only a person can do, so
+    #: Autopilot turns it off and sells up to Growth (set from the switch on
+    #: every cycle; see ``automation.sync``).
+    sell_managed: bool = True
     #: What to sell and where. Empty means every trade the price supports,
     #: across the Scout's default cities. Markets are "City, ST".
     trades: list[str] = field(default_factory=list)
@@ -215,8 +227,10 @@ class Settings:
         from . import knowledge
 
         recommended = knowledge.recommended_price(vertical, self.pricing.ladder())
-        price = recommended.get("price")
-        return float(price) if price else self.pricing.growth_monthly
+        price = float(recommended.get("price") or self.pricing.growth_monthly)
+        if not self.sell_managed:
+            price = min(price, self.pricing.growth_monthly)
+        return price
 
     def available_engines(self) -> list[str]:
         """Engines we actually hold credentials for, else the mock engine."""

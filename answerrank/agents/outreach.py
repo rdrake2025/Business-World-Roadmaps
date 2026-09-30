@@ -31,6 +31,9 @@ from ..models import OutreachMessage, Prospect, now_iso
 from .base import Agent
 from .scout import SIMULATED_MARKER
 
+#: Stamped on a prospect who asked for their check on the website.
+INBOUND = "INBOUND"
+
 
 def _compliance_block(settings) -> str:
     """CAN-SPAM + 2026 bulk-sender footer. Appended to every message."""
@@ -290,6 +293,26 @@ class OutreachAgent(Agent):
             return False
         return True
 
+    def _inbound_report(self, prospect, now) -> None:
+        from .. import automation
+        from .concierge import ConciergeAgent, report_email
+
+        audit = ConciergeAgent(self.store, self.settings)._report_for(prospect)
+        subject, body = report_email(
+            prospect, audit, self.settings,
+            opening="Thanks for asking for your check on our website. Here it is.")
+        self.store.save_message(OutreachMessage(
+            prospect_id=prospect.id, subject=subject, body=body,
+            sequence_step=1, kind="report",
+            status="approved" if automation.auto_approve(self.store, "report")
+            else "drafted", scheduled_for=now.isoformat(timespec="seconds")))
+        prospect.stage = "replied"
+        prospect.notes = (prospect.notes or "") + " | report sent (asked on the website)"
+        self.store.upsert_prospect(prospect)
+        self.store.record_outcome(prospect_id=prospect.id,
+                                  vertical=prospect.business.vertical,
+                                  kind="inbound", note="asked for the report on the website")
+
     def execute(self) -> tuple[int, str]:
         pol = self.settings.outreach
         drafted = skipped = 0
@@ -303,6 +326,12 @@ class OutreachAgent(Agent):
                 self.settings.quote_for(p.business.vertical)),
         )[: self.draft_budget]
         for prospect in candidates:
+            if INBOUND in (prospect.notes or "") and prospect.business.email:
+                # They asked for it on the website. The answer is the report
+                # itself, not a cold email offering it.
+                self._inbound_report(prospect, now)
+                drafted += 1
+                continue
             if not self._eligible(prospect) and self._phone_only(prospect):
                 # Kept for the call list; looked at again in a week in case
                 # an address has turned up.
@@ -325,9 +354,12 @@ class OutreachAgent(Agent):
             if not self._passes_discipline(1, body, prospect):
                 skipped += 1
                 continue
+            from .. import automation
             self.store.save_message(OutreachMessage(
                 prospect_id=prospect.id, subject=subject, body=body,
-                sequence_step=1, status="drafted",
+                sequence_step=1,
+                status="approved" if automation.auto_approve(self.store, "cold", 1)
+                else "drafted",
                 scheduled_for=now.isoformat(timespec="seconds"),
             ))
             prospect.stage = "queued"
@@ -356,7 +388,7 @@ class OutreachAgent(Agent):
             self.store.save_message(OutreachMessage(
                 prospect_id=prospect.id, subject=subject, body=body,
                 sequence_step=step,
-                status=("approved" if automation.enabled(self.store, "approve_followups")
+                status=("approved" if automation.auto_approve(self.store, "cold", step)
                         else "drafted"),
                 scheduled_for=now.isoformat(timespec="seconds"),
             ))

@@ -56,7 +56,7 @@ def status(store, settings, now: datetime | None = None) -> str:
     from ..mailer import SMTPConfig
 
     queue = store.send_queue(500)
-    if not automation.enabled(store, "auto_send"):
+    if not automation.sending_on(store):
         return (f"{len(queue)} approved. Automatic sending is off, so they wait for "
                 f"you to tap Send." if queue else "Automatic sending is off.")
     if not queue:
@@ -112,7 +112,7 @@ class SenderAgent(Agent):
 
         if getattr(self.settings, "demo_mode", False):
             return 0, "demo mode: sending stays manual"
-        if not automation.enabled(self.store, "auto_send"):
+        if not automation.sending_on(self.store):
             return 0, "automatic sending is off; approved emails wait for you to tap Send"
         from ..sending import HOLD_SECONDS, held
 
@@ -124,7 +124,10 @@ class SenderAgent(Agent):
 
         local = calls.local_in(calls.operator_tz(self.settings))
         warm_ok = WARM_HOURS[0] <= local.hour < WARM_HOURS[1]
-        cold_ok = local.weekday() < 5 and COLD_HOURS[0] <= local.hour < COLD_HOURS[1]
+        # The Guardian's pause on prospecting holds back cold email already
+        # approved, not just new drafts: the problem is in what's queued.
+        cold_ok = local.weekday() < 5 and COLD_HOURS[0] <= local.hour < COLD_HOURS[1] \
+            and not automation.paused(self.store, "prospecting")
         warm = sum(1 for m in queue if (m.kind or "cold") != "cold")
         cold = len(queue) - warm
         want = (warm if warm_ok else 0) + (cold if cold_ok else 0)

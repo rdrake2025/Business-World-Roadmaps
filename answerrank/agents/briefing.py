@@ -122,6 +122,19 @@ class BriefingAgent(Agent):
                         f"They wrote: \"{(row.get('note') or '')[:280]}\"\n\n"
                         f"The answer is drafted and waiting for you to approve:\n"
                         f"{self.console()}"))
+        for row in self.store.outcomes_with_prefix("escalated", days=2):
+            if row["occurred_at"] < since or row["id"] in done:
+                continue
+            fresh.append(row["id"])
+            p = prospects.get(row["prospect_id"])
+            name = p.business.name if p else "Someone"
+            note = row.get("note") or ""
+            needs = note.startswith("Needs your answer")
+            out.append((f"{name} {'needs your answer' if needs else 'wrote in'}",
+                        f"{note}\n\n" + ("Autopilot didn't have a written answer for "
+                                          "this, so it's held for you in the inbox:"
+                                          if needs else "Autopilot answered it; this is "
+                                          "so you know:") + f"\n{self.console()}"))
         for row in self.store.outcomes_with_prefix("paid", days=2):
             if row["occurred_at"] < since or row["id"] in done:
                 continue

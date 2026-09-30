@@ -716,6 +716,43 @@ def cmd_doctor(args, settings: Settings) -> int:
     return 1 if blockers else 0
 
 
+def cmd_autopilot(args, settings: Settings) -> int:
+    """What's in place for the business to run by itself, and what isn't."""
+    from . import autopilot, automation
+    from .store import Store
+
+    store = Store(settings.database_path)
+    if args.on or args.off:
+        automation.set_switch(store, "autopilot", bool(args.on))
+        print(f"\n  Autopilot is {'ON' if args.on else 'OFF'}.")
+    r = autopilot.readiness(store, settings, probe=not args.quick)
+    _hr("AUTOPILOT: CAN THE BUSINESS RUN BY ITSELF?")
+    for i in r["items"]:
+        mark = "\033[32m✓\033[0m" if i["ok"] else ("\033[31m✗\033[0m" if i["required"]
+                                                  else "\033[33m-\033[0m")
+        print(f"  [{mark}] {i['label']:<44} {i['detail'][:40]}")
+    print(f"\n  {r['done']} of {r['total']} in place.")
+    todo = [i for i in r["items"] if not i["ok"] and i["fix"]]
+    if todo:
+        _hr("DO THESE, IN THIS ORDER")
+        for n, i in enumerate(todo, 1):
+            opt = "" if i["required"] else " (optional)"
+            print(f"\n  {n}. {i['label']}{opt}\n     → {i['fix']}")
+    for stage, why in r["paused"].items():
+        print(f"\n  PAUSED by the Guardian: {automation.STAGES[stage]}\n     {why}")
+    _hr("STATUS")
+    if r["on"]:
+        print("  Autopilot is ON." + ("" if r["ready"] else
+                                      " Some pieces are missing, so parts will wait for you."))
+    elif r["ready"]:
+        print("  Everything is in place. Switch Autopilot on from the phone's Today tab,")
+        print("  or run:  python run.py autopilot --on")
+    else:
+        print("  Not ready yet. Work down the list above; this check re-runs any time")
+        print("  from the desktop button, option 4.")
+    return 0
+
+
 def cmd_setup(args, settings: Settings) -> int:
     return wizard.run(settings, args.path or "answerrank.yml")
 
@@ -1400,6 +1437,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also probe the live unsubscribe endpoint over the network")
     s.set_defaults(func=cmd_doctor)
 
+    s = sub.add_parser("autopilot", help="can the business run by itself? (and switch it)")
+    s.add_argument("--on", action="store_true", help="switch Autopilot on")
+    s.add_argument("--off", action="store_true", help="switch Autopilot off")
+    s.add_argument("--quick", action="store_true", help="skip the network checks")
+    s.set_defaults(func=cmd_autopilot)
+
     s = sub.add_parser("domain", help="set up the sending domain and check its DNS")
     s.add_argument("domain", nargs="?", default="",
                    help="the domain you bought (default: the one you send from)")
@@ -1449,6 +1492,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("simulate", help="run made-up sales through the real agents")
     s.add_argument("--sales", type=int, default=30, help="buyers to simulate (default 30)")
+    s.add_argument("--autopilot", action="store_true",
+                   help="nobody at the console: Autopilot runs everything")
     s.add_argument("--days", type=int, default=100, help="days to run (default 100)")
     s.add_argument("--seed", type=int, default=7, help="change for a different market")
     s.add_argument("--keep", action="store_true", help="keep the scratch database")
@@ -1504,7 +1549,7 @@ def cmd_simulate(args, settings: Settings) -> int:
           f"touched: no email is sent, no AI service is called, and your own "
           f"database is not opened.\nThis takes a few minutes.\n")
     card = simulate.run(sales=args.sales, days=args.days, seed=args.seed,
-                        say=print, keep=args.keep)
+                        say=print, keep=args.keep, autopilot=args.autopilot)
     print(simulate.render(card))
     return 0 if simulate.passed(card) else 1
 

@@ -1,6 +1,6 @@
-"""Researcher — runs the sixteen researchers and files what they found.
+"""Researcher — runs the seventeen researchers and files what they found.
 
-One slot in the tick order rather than sixteen. The researchers are
+One slot in the tick order rather than seventeen. The researchers are
 subordinate by design: they read what their agent produced, report on it, and
 never act. Putting them behind a single coordinator keeps the fleet legible —
 twenty-six entries in the agent list would be a worse tool, not a better one —
@@ -50,8 +50,8 @@ class ResearcherAgent(Agent):
         total = len(research.RESEARCHERS)
         if not findings:
             # The common and correct outcome. Saying so plainly is the point:
-            # sixteen researchers inventing something every cycle would be
-            # sixteen things the operator stops reading.
+            # seventeen researchers inventing something every cycle would be
+            # seventeen things the operator stops reading.
             return 0, (f"{total} researchers ran, none found anything that the "
                        f"evidence supports saying")
 

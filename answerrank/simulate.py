@@ -179,6 +179,11 @@ REPLIES: dict[str, list[str]] = {
         "You'd want to talk to my office manager about this.",
         "Forward it to my marketing guy, he handles this stuff.",
     ],
+    "cancel": [
+        "Please cancel our subscription, it's not for us right now.",
+        "We'd like to cancel at the end of this month.",
+        "How do I cancel?",
+    ],
 }
 
 #: What each true intent may acceptably be read as.
@@ -192,6 +197,7 @@ ACCEPTABLE_READING: dict[str, set[str]] = {
     "unsubscribe": {"unsubscribe", "hostile"},
     "hostile": {"hostile", "unsubscribe"},
     "referral": {"referral"},
+    "cancel": {"client_message"},
 }
 
 STEMS = ["Apex", "Summit", "Ironclad", "BlueRidge", "Cornerstone", "Vanguard",
@@ -536,6 +542,212 @@ class _SimMailer:
 
 
 # ---------------------------------------------------------------------------
+# Autopilot: nobody at the console
+# ---------------------------------------------------------------------------
+
+_LINK = re.compile(r"https://buy\.stripe\.com/\S+")
+
+
+class AutopilotWorld(World):
+    """The same people, with nobody reading their mail but the fleet.
+
+    Replies reach the Concierge through the mailbox, as they do once replies
+    are read automatically. Money reaches the Bookkeeper through Stripe, as
+    it does once the read-only key is saved. Some buyers never write back to
+    buy: they pay straight from the link in their report. Some clients
+    cancel. Nothing is done on anyone's behalf.
+    """
+
+    def __init__(self, clock, start, rng):
+        super().__init__(clock, start, rng)
+        self.store = None
+        self.settings = None
+        self.sessions: list[dict[str, Any]] = []
+        self.subscriptions: dict[str, str] = {}
+        self.read_as: list[tuple[Person, str, str, str]] = []
+        self.cancel_asked: list[str] = []
+        self.cancel_answered: list[str] = []
+
+    # ---- who has become a client, as the books say ----
+    def clients_by_email(self) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        if self.store is not None:
+            for status in ("awaiting_payment", "active", "past_due", "churned"):
+                for c in self.store.get_clients(status):
+                    out.setdefault((c.business.email or "").lower(), c)
+        return out
+
+    def sync(self, p: Person, clients: dict[str, Any] | None = None) -> None:
+        c = (clients if clients is not None else self.clients_by_email()).get(p.email)
+        if c is None:
+            return
+        if not p.won_at:
+            p.won_at = self.clock.now
+            p.client_id = c.id  # type: ignore[attr-defined]
+            self.won.append(p)
+        if p.stage == "buying_waiting":
+            p.stage = "signed"   # the sale is closed; paying is up to them now
+        if p.paid_at and c.status == "active" and p.stage not in {"client", "client_engaged"}:
+            p.stage = "client"
+
+    def _react(self, p: Person, subject: str, body: str, kind: str) -> None:
+        self.sync(p)
+        link = next(iter(_LINK.findall(body or "")), "")
+        if p.persona == "buyer" and link and not p.paid_at:
+            p.pay_link = link  # type: ignore[attr-defined]
+            # Bought straight from the report, without writing back.
+            if getattr(p, "self_serve", False) and kind == "report" \
+                    and p.stage in {"asked_for_report", "nudged"} and not p.paid_due:
+                p.stage = "paying"
+                p.paid_due = self.clock.now + timedelta(hours=self.rng.randint(2, 30))
+        if getattr(p, "cancels", False) and kind == "client_report" and p.paid_at \
+                and p.email not in self.cancel_asked:
+            self.cancel_asked.append(p.email)
+            self._schedule(p, "cancel", (1, 3))
+        portal = (getattr(self.settings, "billing_portal_link", "") or "") if self.settings else ""
+        if getattr(p, "cancel_sent", False) and kind == "reply" and portal \
+                and portal in (body or "") and p.email not in self.cancel_answered:
+            self.cancel_answered.append(p.email)
+            p.cancel_due = self.clock.now + timedelta(days=1)  # type: ignore[attr-defined]
+        super()._react(p, subject, body, kind)
+        if p.persona == "buyer" and not hasattr(p, "self_serve"):
+            # Only someone who pays promptly buys without being asked twice.
+            p.self_serve = p.pays == "prompt" and self.rng.random() < 0.3  # type: ignore[attr-defined]
+            # One buyer in five cancels after their first report, so the
+            # way out is exercised every run.
+            self.buyers_seen = getattr(self, "buyers_seen", 0) + 1
+            p.cancels = p.pays == "prompt" and self.buyers_seen % 5 == 2  # type: ignore[attr-defined]
+
+    def people_act(self) -> None:
+        before = {p.email for p in self.people.values() if p.paid_at}
+        super().people_act()
+        for p in self.people.values():
+            if p.paid_at and p.email not in before:
+                self._pay(p)
+            due = getattr(p, "cancel_due", None)
+            if due and due <= self.clock.now and getattr(p, "sub_id", ""):
+                self.subscriptions[p.sub_id] = "canceled"  # type: ignore[attr-defined]
+                p.cancel_due = None  # type: ignore[attr-defined]
+                p.cancelled_at = self.clock.now  # type: ignore[attr-defined]
+
+    def _pay(self, p: Person) -> None:
+        """A checkout completes in Stripe, through the link they were sent."""
+        from urllib.parse import parse_qs, urlparse
+        link = getattr(p, "pay_link", "")
+        if not link:
+            self.issue("paid_without_link", p.business, "paid, but no link ever reached them")
+            return
+        plan = urlparse(link).path.rsplit("_", 1)[-1]
+        p.plan = plan
+        ref = parse_qs(urlparse(link).query).get("client_reference_id", [""])[0]
+        n = len(self.sessions) + 1
+        p.sub_id = f"sub_sim{n}"  # type: ignore[attr-defined]
+        self.subscriptions[p.sub_id] = "active"
+        price = self.settings.pricing.plan_price(plan) if self.settings else 0
+        self.sessions.insert(0, {
+            "id": f"cs_sim{n}", "client_reference_id": ref, "payment_status": "paid",
+            "amount_total": int(price * 100), "subscription": p.sub_id,
+            "customer_details": {"email": p.email}})
+
+    # ---- the mailbox, as the Concierge reads it ----
+    def mailbox(self) -> list[dict[str, str]]:
+        import uuid
+        out = []
+        for person, text, intent, written_at in self.replies_due():
+            if person.received and self.rng.random() < 0.5:
+                last = person.received[-1]
+                text = (f"{text}\n\nOn {last.at:%a, %b %d, %Y at %I:%M %p} AnswerRank "
+                        f"<hello@answerrank.example> wrote:\n"
+                        + "\n".join("> " + line for line in last.body.splitlines()))
+            out.append({"kind": "reply", "id": f"<{uuid.uuid4().hex}@sim>",
+                        "sender": person.email, "subject": "Re: your email",
+                        "body": text, "failed": ""})
+            person.replies_sent += 1
+            person.last_reply_at = self.clock.now
+            self.read_as.append((person, intent, text, str(written_at)))
+            if intent in {"interested", "nudge", "objection", "buy", "client_update",
+                          "referral", "cancel"}:
+                self.awaiting_response.setdefault(person.email, written_at)
+            opted_out = {"unsubscribe": "unsubscribed", "hostile": "hostile",
+                         "not_interested": "declined", "referral": "referred"}
+            if intent in opted_out:
+                person.stage = opted_out[intent]
+            elif intent == "interested":
+                person.asked_report_at = person.asked_report_at or self.clock.now
+            elif intent == "objection":
+                person.stage = "objected_waiting"
+            elif intent == "buy":
+                person.stage = "buying_waiting"
+            elif intent == "cancel":
+                person.cancel_sent = True  # type: ignore[attr-defined]
+        return out
+
+    def check_readings(self) -> None:
+        """How the Concierge read each reply, against what the person meant."""
+        if self.store is None:
+            return
+        for person, intent, text, _at in self.read_as:
+            rows = self.store.outcomes_for(person.prospect_id, 50) if person.prospect_id else []
+            client_id = getattr(person, "client_id", "")
+            if client_id:
+                rows += self.store.outcomes_for(client_id, 50)
+            first = text.split("\n\nOn ")[0][:280]
+            read = next((r.get("sentiment") or "" for r in rows
+                         if r.get("kind") in {"replied", "client_message"}
+                         and (r.get("note") or "").startswith(first[:60])), None)
+            if read is None:
+                self.issue("reply_not_read", person.business, f"“{first}” was never read")
+            elif read not in ACCEPTABLE_READING.get(intent, {intent}):
+                self.misreads.append((person.business, intent, read, first))
+        self.read_as = []
+
+    def stripe(self, key: str, path: str, params: dict | None = None,
+               timeout: int = 20) -> dict[str, Any]:
+        if path == "checkout/sessions":
+            return {"data": list(self.sessions), "has_more": False}
+        if path.startswith("subscriptions/"):
+            return {"status": self.subscriptions.get(path.split("/", 1)[1], "active")}
+        return {}
+
+
+def _autopilot_card(world: AutopilotWorld, store, settings) -> dict[str, Any]:
+    from .sales import plan_for_prospect
+
+    needs = [r for r in store.outcomes_with_prefix("escalated", days=400)
+             if (r.get("note") or "").startswith("Needs your answer")]
+    fyi = [r for r in store.outcomes_with_prefix("escalated", days=400)
+           if not (r.get("note") or "").startswith("Needs your answer")]
+    waiting = [m for m in store.get_messages("drafted", 1000) if (m.kind or "cold") != "cold"]
+    cold_waiting = [m for m in store.get_messages("drafted", 1000) if (m.kind or "cold") == "cold"]
+    paid = [p for p in world.won if p.paid_at]
+    churned_books = {c.business.email.lower() for c in store.get_clients("churned")}
+    cancelled = [p for p in paid if getattr(p, "cancelled_at", None)]
+    by_email = {pr.business.email.lower(): pr for pr in store.get_prospects(limit=10_000)}
+    expected = sum(settings.pricing.plan_price(p.plan) for p in paid
+                   if not getattr(p, "cancelled_at", None))
+    return {
+        "owner_taps": 0,
+        "needs_owner": [(r.get("note") or "")[19:140] for r in needs],
+        "fyi_to_owner": len(fyi),
+        "answers_waiting": [f"{m.subject}: {m.body[:80]}" for m in waiting],
+        "cold_waiting": len(cold_waiting),
+        "self_serve_sales": sum(1 for p in paid if getattr(p, "self_serve", False)),
+        "cancel_asked": len(world.cancel_asked),
+        "cancel_answered": len(world.cancel_answered),
+        "cancelled": len(cancelled),
+        "cancel_not_on_books": [p.business for p in cancelled
+                                if p.email not in churned_books],
+        "mrr_expected": round(expected, 2),
+        "plans_as_quoted": all(
+            p.plan == plan_for_prospect(settings, by_email[p.email])
+            for p in paid if p.email in by_email),
+        "guardian_pauses": {k: automation_paused for k, automation_paused in (
+            (stage, store.kv_get(f"guardian.pause.{stage}") or "")
+            for stage in ("prospecting", "answers", "clients")) if automation_paused},
+    }
+
+
+# ---------------------------------------------------------------------------
 # Running it
 # ---------------------------------------------------------------------------
 
@@ -581,11 +793,15 @@ def _persona_bag(rng: random.Random, sales: int) -> list[str]:
 
 def run(sales: int = 30, days: int = 100, seed: int = 7,
         tick_hours: int = 2, say: Callable[[str], None] | None = None,
-        keep: bool = False) -> dict[str, Any]:
+        keep: bool = False, autopilot: bool = False) -> dict[str, Any]:
     """Run the simulation and return the scorecard.
 
     ``keep`` leaves the throwaway database and rendered reports on disk to
     be inspected; otherwise they are removed when the run ends.
+
+    ``autopilot`` runs it with nobody at the console at all: Autopilot on,
+    replies read from the mailbox, payments confirmed by Stripe. The
+    scorecard then also says what, if anything, still needed the owner.
     """
     say = say or (lambda _line: None)
 
@@ -601,7 +817,7 @@ def run(sales: int = 30, days: int = 100, seed: int = 7,
     work = Path(tempfile.mkdtemp(prefix="answerrank-sim-"))
     start = _REAL_DATETIME(2026, 10, 5, 8, 0, tzinfo=timezone.utc)
     clock = SimClock(start)
-    world = World(clock, start, rng)
+    world = AutopilotWorld(clock, start, rng) if autopilot else World(clock, start, rng)
 
     settings = Settings()
     settings.demo_mode = True                   # mock answer engines, no API calls
@@ -640,6 +856,34 @@ def run(sales: int = 30, days: int = 100, seed: int = 7,
     patches = [(crawlers, "check_access", _no_network_access),
                (sending, "Mailer", _SimMailer),
                (sitecheck, "fetch", _site_fetch)]
+    old_stripe = os.environ.get("STRIPE_API_KEY")
+    if autopilot:
+        from . import mailer, payments
+        from .agents.concierge import ConciergeAgent
+        from .agents.sender import SenderAgent
+
+        real_sender = SenderAgent.execute
+
+        def _sender(self):
+            # Demo mode keeps the answer engines simulated; the Sender itself
+            # runs for real, into the simulated mailbox, on its own hours.
+            self.background = False
+            self.settings.demo_mode = False
+            try:
+                return real_sender(self)
+            finally:
+                self.settings.demo_mode = True
+
+        settings.billing_portal_link = "https://billing.stripe.com/p/login/sim"
+        os.environ["STRIPE_API_KEY"] = "rk_sim"
+        patches += [(ConciergeAgent, "_fetch_replies", lambda self, days=4: world.mailbox()),
+                    (ConciergeAgent, "_imap_config",
+                     lambda self: {"host": "sim", "user": "sim", "password": "sim",
+                                   "folder": "INBOX"}),
+                    (payments, "_stripe_get", world.stripe),
+                    (SenderAgent, "execute", _sender),
+                    (SenderAgent, "_dns_blockers", lambda self: []),
+                    (mailer.SMTPConfig, "configured", lambda self: True)]
     originals = [(obj, name, getattr(obj, name)) for obj, name, _ in patches]
     for obj, name, value in patches:
         setattr(obj, name, value)
@@ -652,6 +896,11 @@ def run(sales: int = 30, days: int = 100, seed: int = 7,
             store = Store(settings.database_path)
             api = Api(store, settings)
             orch = Orchestrator(store, settings)
+            if autopilot:
+                from . import automation
+                automation.set_switch(store, "autopilot", True)
+                automation.note_supervised(store, automation.SUPERVISED_FIRST_EMAILS)
+                world.store, world.settings = store, settings
             by_prospect: dict[str, Person] = {}
 
             def link_people() -> None:
@@ -669,17 +918,28 @@ def run(sales: int = 30, days: int = 100, seed: int = 7,
                 link_people()
 
                 # The operator's session: once a day, first thing, phone in hand.
+                # On Autopilot there is no session: nobody opens the console.
                 world.people_act()
+                if autopilot:
+                    books = world.clients_by_email()
+                    for person in list(world.people.values()):
+                        world.sync(person, books)
+                    world.check_readings()
                 if clock.now.hour >= 9 and last_session != clock.now.date():
                     last_session = clock.now.date()
                     world.daily_checks()
-                    _operator_session(world, api, store, by_prospect, say)
+                    if not autopilot:
+                        _operator_session(world, api, store, by_prospect, say)
 
                 if t % (24 // tick_hours * 10) == 0:
                     say(f"  day {world.day():>3}: {len(world.won)} sales, "
                         f"{sum(world.sent_by_day.values())} emails sent")
 
             card = _scorecard(world, store, settings, sales, days, work)
+            if autopilot:
+                extra = _autopilot_card(world, store, settings)
+                card["mrr_expected"] = extra.pop("mrr_expected")
+                card["autopilot"] = extra
             if not keep:
                 card["work_dir"] = ""
             return card
@@ -694,6 +954,11 @@ def run(sales: int = 30, days: int = 100, seed: int = 7,
             os.environ.pop("ANSWERRANK_SEED_FILE", None)
         else:
             os.environ["ANSWERRANK_SEED_FILE"] = old_seed
+        if autopilot:
+            if old_stripe is None:
+                os.environ.pop("STRIPE_API_KEY", None)
+            else:
+                os.environ["STRIPE_API_KEY"] = old_stripe
 
 
 def _operator_session(world: World, api, store, by_prospect: dict[str, Person],
@@ -833,9 +1098,11 @@ def _scorecard(world: World, store, settings, sales: int, days: int,
         >= settings.payment_overdue_days + 1
         and not store.has_outcome(client_of[p.email].id, "payment_overdue")]
 
-    # What reached paying clients each month.
+    # What reached paying clients each month. Someone who cancelled is owed
+    # nothing after they left.
+    staying = [p for p in paid if not getattr(p, "cancelled_at", None)]
     report_gaps = []
-    for p in paid:
+    for p in staying:
         live_days = (world.clock.now - p.paid_at).days
         expected = 0 if live_days < 7 else (1 if live_days < 40 else 2)
         if p.reports_received < expected:
@@ -846,7 +1113,7 @@ def _scorecard(world: World, store, settings, sales: int, days: int,
     from .agents.retention import RetentionAgent
     health_by_name = {h.name: h for h in RetentionAgent(store, settings).portfolio()}
     fixes_live = fixes_unseen = stuck_unflagged = 0
-    for p in paid:
+    for p in staying:
         client = client_of.get(p.email)
         checks = store.site_checks(client.business.id, limit=1) if client else []
         seen_live = bool(checks) and checks[0].get("local_business") \
@@ -1034,6 +1301,28 @@ def render(card: dict[str, Any]) -> str:
     for kind, rows in brakes.items():
         add(f"\n  SAFETY BRAKE \u2014 {SAFETY_BRAKES[kind]}")
         add(f"      fired on day {rows[0][0]} for {len(rows)} day(s): {rows[0][2][:120]}")
+    ap = card.get("autopilot")
+    if ap:
+        add("\n  AUTOPILOT — nobody opened the console")
+        add(f"  {ok(ap['owner_taps'] == 0)} Owner taps: {ap['owner_taps']}")
+        add(f"  {ok(not ap['needs_owner'])} Replies Autopilot couldn't answer (emailed to "
+            f"the owner): {len(ap['needs_owner'])}")
+        for line in ap["needs_owner"][:6]:
+            add(f"      “{line}”")
+        add(f"  {ok(not ap['answers_waiting'])} Answers still waiting at the end: "
+            f"{len(ap['answers_waiting'])}")
+        for line in ap["answers_waiting"][:4]:
+            add(f"      {line}")
+        add(f"    Bought straight from their report, no reply needed: "
+            f"{ap['self_serve_sales']}")
+        add(f"  {ok(ap['cancel_answered'] == ap['cancel_asked'] and not ap['cancel_not_on_books'])} "
+            f"Cancellations: {ap['cancel_asked']} asked, {ap['cancel_answered']} sent the "
+            f"billing link, {ap['cancelled']} cancelled, "
+            f"{len(ap['cancel_not_on_books'])} still counted as paying")
+        add(f"  {ok(ap['plans_as_quoted'])} Every client on the plan their trade was quoted")
+        add(f"    Owner told about (answered already): {ap['fyi_to_owner']}")
+        for stage, why in ap["guardian_pauses"].items():
+            add(f"    Guardian paused {stage}: {why[:100]}")
     add(f"\n  {card['emails_sent']} emails sent · ${card['api_spend']:.2f} simulated API spend")
     if card.get("work_dir"):
         add(f"  Scratch files: {card['work_dir']}")
@@ -1054,6 +1343,10 @@ SAFETY_BRAKES = {
 def passed(card: dict[str, Any]) -> bool:
     """Whether the software handled every sale it was given."""
     tolerated = set(SAFETY_BRAKES)
+    ap = card.get("autopilot")
+    if ap and (ap["needs_owner"] or ap["answers_waiting"] or ap["cancel_not_on_books"]
+               or ap["cancel_answered"] != ap["cancel_asked"] or not ap["plans_as_quoted"]):
+        return False
     return (card["sales_closed"] == card["target_sales"]
             and card["mrr"] == card["mrr_expected"]
             and not card["double_billed"] and not card["unbilled_clients"]
