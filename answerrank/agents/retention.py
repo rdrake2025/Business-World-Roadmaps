@@ -263,12 +263,14 @@ class RetentionAgent(Agent):
         score = round(max(0.0, min(100.0, points)), 1)
         band = "healthy" if score >= 80 else "monitor" if score >= 60 else "act_now"
 
-        # "Act now" needs a concrete risk, not just a low total. In the
-        # simulation a points total alone put 22 of 28 clients in the red,
-        # mostly for being quiet while their reports went out on time; a red
-        # band that size is ignored, and the ones that matter get lost in it
-        # (evidence.py: health_score_calibration). Quiet on its own is how a
-        # client who installs their own fixes behaves.
+        # "Act now" needs a concrete risk, not just a low total. In a 70-day
+        # simulation the points total alone put all 8 clients in the red;
+        # with this rule 2 were, both with fixes still not live, and the 6
+        # who were only quiet while their reports went out were monitored.
+        # A red band that includes everyone is ignored, and the ones that
+        # matter get lost in it (evidence.py: health_score_calibration).
+        # Quiet on its own is how a client who installs their own fixes
+        # behaves; quiet for two months with a measured flat score is not.
         falling = len(scores) >= 2 and scores[-1] - scores[0] <= -3
         # Flat means measured flat: two or more audits with no rise. "Not
         # enough audits yet" is not evidence of anything.
