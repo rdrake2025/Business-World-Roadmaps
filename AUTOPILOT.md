@@ -118,7 +118,8 @@ Box or a virtual mailbox (for example iPostal1 or Anytime Mailbox) is fine.
 
 ### Step 5: The AI and finder keys, about 15 minutes
 - **OpenAI** (platform.openai.com → API keys), about $30-60 a month. This runs
-  the real checks of what ChatGPT says. Add $20 of credit to start.
+  the real checks of what ChatGPT says. Add $35 of credit to start (about a
+  month of checks at the default 20 a day).
 - **Serper** (serper.dev), 2,500 free searches, then $50 for 50,000. This
   finds the businesses.
 
@@ -165,7 +166,7 @@ simply wait for you.
 | Postal address (optional) | $10-20 |
 | OpenAI | ~$30-60 (the Guardian tells you if it passes $150; change `api_budget_monthly`) |
 | Serper | $0 at first, then ~$50 per 50,000 searches |
-| Stripe | 2.9% + 30¢ per payment |
+| Stripe | about 3.6% of each payment (card fee plus subscriptions), ~$36 of a $997 month |
 | **Total before the first client** | **about $55-135** |
 
 One Growth client ($997) pays for all of it many times over. The $5,000/month
