@@ -189,7 +189,26 @@ class Orchestrator:
             if not force and not self.is_due(agent):
                 continue
             lines.append(self._run_guarded(agent))
+        self._heartbeat()
         return lines
+
+    #: At most one ping this often; the monitor's period should be longer.
+    HEARTBEAT_SECONDS = 300
+
+    def _heartbeat(self) -> None:
+        """Tell the outside monitor the fleet is alive (see heartbeat_url)."""
+        url = (getattr(self.settings, "heartbeat_url", "") or "").strip()
+        if not url or getattr(self.settings, "demo_mode", False):
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_last_beat", -1e9) < self.HEARTBEAT_SECONDS:
+            return
+        self._last_beat = now
+        try:
+            import requests
+            requests.get(url, timeout=10)
+        except Exception as exc:  # noqa: BLE001 - a missed beat is the monitor's job to notice
+            log.warning("heartbeat ping failed: %s", exc)
 
     def stop(self) -> None:
         """Ask the loop to finish the current agent and exit."""

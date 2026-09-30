@@ -263,6 +263,28 @@ class RetentionAgent(Agent):
         score = round(max(0.0, min(100.0, points)), 1)
         band = "healthy" if score >= 80 else "monitor" if score >= 60 else "act_now"
 
+        # "Act now" needs a concrete risk, not just a low total. In a 70-day
+        # simulation the points total alone put all 8 clients in the red;
+        # with this rule 2 were, both with fixes still not live, and the 6
+        # who were only quiet while their reports went out were monitored.
+        # A red band that includes everyone is ignored, and the ones that
+        # matter get lost in it (evidence.py: health_score_calibration).
+        # Quiet on its own is how a client who installs their own fixes
+        # behaves; quiet for two months with a measured flat score is not.
+        falling = len(scores) >= 2 and scores[-1] - scores[0] <= -3
+        # Flat means measured flat: two or more audits with no rise. "Not
+        # enough audits yet" is not evidence of anything.
+        not_moving = len(scores) >= 2 and scores[-1] - scores[0] < 3
+        report_missing = (since_report is None and tenure > REPORT_DUE_DAYS) or \
+            (since_report is not None and since_report > REPORT_LATE_DAYS)
+        long_silence = (quiet is not None and quiet > SILENCE_CRITICAL) or \
+            (quiet is None and tenure > SILENCE_CRITICAL)
+        risks = [r for r, on in (("report", report_missing), ("not_live", not_live),
+                                 ("falling", falling),
+                                 ("silent_and_flat", long_silence and not_moving)) if on]
+        if band == "act_now" and not risks:
+            band = "monitor"
+
         # --- the single action ---------------------------------------------
         if since_report is not None and since_report > REPORT_LATE_DAYS:
             action = "Send this month's report today. Nothing else matters until they see one."
@@ -365,7 +387,10 @@ class RetentionAgent(Agent):
         cutoff = (datetime.now(timezone.utc) - timedelta(days=CARE_GAP_DAYS)).isoformat(
             timespec="seconds")
         for h in rows:
-            if h.band == "healthy" and "Visibility up" not in " ".join(h.signals):
+            # Only a real risk, or a client whose number is rising (the
+            # referral ask), gets an email. A quiet client whose reports
+            # arrive on time is left in peace.
+            if h.band != "act_now" and "Visibility up" not in " ".join(h.signals):
                 continue
             last = self.store.last_outcome_at(h.client_id, ("client_care",))
             if last and last >= cutoff:

@@ -152,13 +152,16 @@ def _quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def set_setting(name: str, value: str | list[str], config_path: Path | str) -> Path:
-    """Set one top-level ``name: "value"`` (or ``name: ["a", "b"]``) line in
-    answerrank.yml, keeping every other line exactly as it was (same
-    reasoning as above)."""
+def set_setting(name: str, value: str | list[str] | int | float,
+                config_path: Path | str) -> Path:
+    """Set one top-level ``name: "value"`` (or ``name: ["a", "b"]``, or a
+    bare number) line in answerrank.yml, keeping every other line exactly as
+    it was (same reasoning as above)."""
     path = Path(config_path)
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    if isinstance(value, list):
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        line = f"{name}: {value}"
+    elif isinstance(value, list):
         line = f"{name}: [{', '.join(_quote(v) for v in value)}]"
     else:
         line = f"{name}: {_quote(value)}"
@@ -259,6 +262,50 @@ def _ask_briefing(settings, config_path: Path, ask, say) -> None:
     if entered and entered.startswith("https://") and entered != portal:
         set_setting("billing_portal_link", entered, config_path)
         settings.billing_portal_link = entered
+    elif entered and not entered.startswith("https://"):
+        say("    That isn't a web link (it should start with https://). Skipped.")
+
+
+def _ask_budget(settings, config_path: Path, ask, say) -> None:
+    """Where the server runs, and how much to spend checking businesses."""
+    from . import costs
+
+    say("\n  Where does (or will) the server run?  1 DigitalOcean, $6 a month  "
+        "2 Google Cloud's free tier (see deploy/SERVER.md)")
+    hosts = {"1": "digitalocean", "2": "gcp_free"}
+    now = getattr(settings, "server_host", "digitalocean")
+    entered = ask(f"  Server [{'2' if now == 'gcp_free' else '1'}]: ").strip()
+    if entered in hosts and hosts[entered] != now:
+        set_setting("server_host", hosts[entered], config_path)
+        settings.server_host = hosts[entered]
+
+    say("\n  How much to spend finding clients. Everything else is fixed; this is "
+        "how many new businesses are checked a day. Monthly totals, before clients:")
+    rows = costs.table(settings)
+    for n, r in enumerate(rows, 1):
+        say(f"    {n}  {r['label']:<9} about ${r['total']:,.0f} a month. {r['explain']}")
+    current = costs.preset_for(settings)
+    default = next((str(n) for n, r in enumerate(rows, 1) if r["key"] == current), "")
+    entered = ask(f"  Budget [{default or 'custom'}]: ").strip()
+    if entered.isdigit() and 1 <= int(entered) <= len(rows):
+        chosen = costs.PRESETS[rows[int(entered) - 1]["key"]]
+        for name in ("teaser_audits_per_day", "api_budget_monthly"):
+            set_setting(name, chosen[name], config_path)
+            setattr(settings, name, chosen[name])
+        say(f"    {chosen['label']}: {chosen['teaser_audits_per_day']} businesses a day. "
+            f"Change it any time here.")
+
+
+def _ask_heartbeat(settings, config_path: Path, ask, say) -> None:
+    """The outside monitor that emails you if the server stops."""
+    say("\n  A free warning if the server ever stops: sign up at healthchecks.io, "
+        "Add Check, set Period 30 minutes and Grace 30 minutes, and copy its ping URL "
+        "(it starts https://hc-ping.com/). Press Enter to skip.")
+    now = getattr(settings, "heartbeat_url", "") or ""
+    entered = ask(f"  Ping URL [{now or 'none'}]: ").strip()
+    if entered and entered.startswith("https://") and entered != now:
+        set_setting("heartbeat_url", entered, config_path)
+        settings.heartbeat_url = entered
     elif entered and not entered.startswith("https://"):
         say("    That isn't a web link (it should start with https://). Skipped.")
 
@@ -376,6 +423,8 @@ def interactive(settings, path: Path | str = KEYS_FILE,
 
     _ask_briefing(settings, config_path, ask, say)
     _ask_targets(settings, config_path, ask, say)
+    _ask_budget(settings, config_path, ask, say)
+    _ask_heartbeat(settings, config_path, ask, say)
 
     current_links = dict(getattr(settings, "payment_links", None) or {})
     say("\n  Stripe payment links (Stripe > Payment Links > New, with a recurring "

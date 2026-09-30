@@ -49,6 +49,31 @@ once the server is running.
 **Hetzner** works the same way and is a little cheaper: when creating a
 server, paste the file into the **Cloud config** box.
 
+**Free option: Google Cloud's free tier** ($0 a month, a card is needed to
+sign up). Google gives one small server free every month, in three US
+regions only. It is the same size as the $6 DigitalOcean one (1 GB of
+memory), and Google's price list says the free tier doesn't charge for the
+server's public address.
+
+1. Sign up at cloud.google.com and create a project. It asks for a card; the
+   free tier is not charged to it.
+2. **Compute Engine → VM instances → Create instance.**
+3. Region: **us-central1 (Iowa)**, **us-east1 (South Carolina)** or
+   **us-west1 (Oregon)**. Any other region is charged.
+4. Machine type: **e2-micro**. Boot disk: **Ubuntu 24.04 LTS**, **Standard
+   persistent disk**, 30 GB or less. Tick **Allow HTTP** and **Allow HTTPS
+   traffic**.
+5. **Advanced → Management → Metadata → Add item.** Key: `user-data`. Value:
+   paste everything from your `server-setup-….sh` file.
+6. Create it, then **VPC network → IP addresses**: find the server's address
+   and click **Promote to static**, so it doesn't change on a restart.
+7. Carry on at step 3 below with that address.
+
+Check your Google bill after a few days: it should read $0. We have tested the
+setup file on DigitalOcean; if the console link isn't working 20 minutes after
+the DNS record is in, delete the Google server and use DigitalOcean. (Oracle's
+free tier is not recommended: it was cut in half in June 2026 without notice.)
+
 ## 3. Point your domain at the server (5 minutes)
 
 At your registrar's DNS settings, add (or change) one record:
@@ -77,7 +102,21 @@ live. Then open your console link on your phone and add it to your home screen.
 - **Updates are automatic.** Every night at 4:30 the server pulls the latest
   version, the same way the AnswerRank button does on the laptop.
 - **Backups are automatic.** The database is backed up every night at 3:00 and
-  kept for 30 days, on the server.
+  kept for 30 days, on the server. Every Sunday night a compressed copy is
+  also emailed to you, so losing the server never means losing the business.
+- **A warning if it stops.** Add a free healthchecks.io ping URL in Keys and
+  settings (Add Check, period 30 minutes, grace 30 minutes). The server checks
+  in every five minutes; if it stops, you get an email.
+
+## Restoring from a backup email
+
+1. Make a new server exactly as above (steps 1-4).
+2. Download the attachment from the most recent "AnswerRank backup" email and
+   unzip it (7-Zip on Windows) to get `answerrank.db`.
+3. Copy the file to the server as `/opt/answerrank/data/answerrank.db`,
+   replacing the empty one. This takes one command (`scp`), and it is the
+   one step in this guide worth asking someone to help with.
+4. Restart the server. Everything carries on from when the copy was taken.
 - **Keys:** to change one, use Keys and settings on the laptop, make a new setup file,
   and ask for help applying it — or change it on the server with the
   provider's web console.

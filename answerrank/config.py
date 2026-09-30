@@ -158,6 +158,13 @@ class Settings:
     #: What the AI answer engines may cost in a month before the Guardian
     #: tells you. Teaser audits are the bulk of it (see teaser_audits_per_day).
     api_budget_monthly: float = 150.0
+    #: Where the server runs: "digitalocean" ($6) or "gcp_free" (Google
+    #: Cloud's free e2-micro). Only the cost estimate reads it.
+    server_host: str = "digitalocean"
+    #: A dead man's switch (healthchecks.io ping URL). The fleet pings it
+    #: while it runs; if the pings stop, the service emails you. The Guardian
+    #: can't do this: if the server dies, the Guardian dies with it.
+    heartbeat_url: str = ""
     #: Whether the done-for-you Managed plan is offered. It means installing
     #: fixes on the client's site by hand, which only a person can do, so
     #: Autopilot turns it off and sells up to Growth (set from the switch on
@@ -185,10 +192,10 @@ class Settings:
     #: audits, where their cost is trivial next to the fee.
     teaser_engines: list[str] = field(
         default_factory=lambda: ["openai", "google_aio"])
-    #: Prospects checked per day. A live-search teaser costs about five and a
-    #: half cents, so this is the one dial on API spend: 20 a day (about $33 a
-    #: month) keeps ten emails and a morning of calls supplied, since each
-    #: business is called up to four times. Each extra 10 a day is ~$17/month.
+    #: Prospects checked per day. A live-search teaser costs about six cents
+    #: (costs.check_costs works it out from the engine prices), so this is the
+    #: one dial on API spend: 20 a day is about $36 a month, 5 (Lean) about $9.
+    #: Chosen as a budget in Keys and settings; see costs.PRESETS.
     teaser_audits_per_day: int = 20
     request_timeout: int = 60
     max_retries: int = 3

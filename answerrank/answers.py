@@ -13,6 +13,11 @@ they can go out without you: they say only what is true of every client.
 Anything that matches none of them is **not** answered with a guess. It is
 held for you and you're emailed at once. An honest "I'll come back to you"
 from a person beats a confident wrong answer from a template.
+
+When you answer one of those yourself, you can save your answer under the
+words that should trigger it. After that it's used like the ones here, but
+only when none of these match, and never for a cancellation or a refund:
+those always get the written answer above (evidence.py: saved_replies).
 """
 
 from __future__ import annotations
@@ -170,15 +175,40 @@ def _match(bank: tuple[Answer, ...], text: str, limit: int) -> list[Answer]:
     return [a for a in bank if re.search(a.pattern, low)][:limit]
 
 
-def for_prospect(text: str, prospect, settings) -> list[str]:
+def saved_matches(store, text: str) -> list[dict]:
+    """Answers you saved whose trigger words appear in what they wrote."""
+    if store is None:
+        return []
+    low = (text or "").lower()
+    out = []
+    for a in store.saved_answers():
+        triggers = [t.strip().lower() for t in (a.get("triggers") or "").split(",")
+                    if len(t.strip()) >= 3]
+        if any(re.search(r"\b" + re.escape(t) + r"\b", low) for t in triggers):
+            out.append(a)
+    return out[:1]
+
+
+def _use_saved(store, text: str) -> list[str]:
+    found = saved_matches(store, text)
+    for a in found:
+        store.note_answer_used(a["id"])
+    return [a["text"] for a in found]
+
+
+def for_prospect(text: str, prospect, settings, store=None) -> list[str]:
     """Answers to what a prospect asked, at most two. Empty means: a person."""
     values = _values(prospect, settings)
-    return [_fill(a.text, values) for a in _match(PROSPECT, text, 2)]
+    found = [_fill(a.text, values) for a in _match(PROSPECT, text, 2)]
+    return found or _use_saved(store, text)
 
 
-def for_client(text: str, prospect, client, settings) -> tuple[list[str], bool]:
+def for_client(text: str, prospect, client, settings,
+               store=None) -> tuple[list[str], bool]:
     """(answers, whether the owner should see it too). No answers: a person."""
     found = _match(CLIENT, text, 2)
+    if not found:
+        return _use_saved(store, text), False
     if any(a.key == "thanks" for a in found) and len(found) > 1:
         found = [a for a in found if a.key != "thanks"]
     values = _values(prospect, settings, client)

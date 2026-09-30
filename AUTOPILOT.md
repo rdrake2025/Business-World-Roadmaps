@@ -117,16 +117,17 @@ Box or a virtual mailbox (for example iPostal1 or Anytime Mailbox) is fine.
    payments are confirmed without you. It can't move money.
 
 ### Step 5: The AI and finder keys, about 15 minutes
-- **OpenAI** (platform.openai.com → API keys), about $30-60 a month. This runs
-  the real checks of what ChatGPT says. Add $35 of credit to start (about a
-  month of checks at the default 20 a day).
+- **OpenAI** (platform.openai.com → API keys). This runs the real checks of
+  what ChatGPT says, about 6 cents per business. Add $10 of credit for the
+  Lean budget or $35 for Standard (see Costs).
 - **Serper** (serper.dev), 2,500 free searches, then $50 for 50,000. This
   finds the businesses.
 
-### Step 6: The server, about 30 minutes, $6/month
+### Step 6: The server, about 30 minutes, $6/month or free
 Follow `deploy/SERVER.md`:
 1. Desktop button → **5 Make the server setup file**.
-2. Create a DigitalOcean droplet with the file pasted in.
+2. Create a DigitalOcean droplet ($6) with the file pasted in, or use Google
+   Cloud's free server (the guide has both; DigitalOcean is the one tested).
 3. Add one **A record** at your registrar pointing your domain at the server.
 
 From then on the business runs there, all day, every day, whether your PC is
@@ -138,19 +139,29 @@ then:
 - Pick your **trade and up to 3 cities**.
 - Give your **time zone** and where alerts go.
 - Paste the **Stripe payment links** and the **customer portal link**.
-- Optionally, add a **booking link**.
+- Choose a **budget**: Lean, Standard or Growth (see Costs).
+- Optionally, a **booking link**, and a free **healthchecks.io** ping URL so
+  you're emailed if the server ever stops.
 
 It tests the mailbox before saving. Then make the server setup file again
 (step 6) so the server has the same keys.
 
-### Step 8: The supervised start, about 10 minutes over 2 days
+### Step 8: The live test, 2 minutes
+Desktop button → **7 Test everything with my real accounts** (or **Run the
+live test** on the phone's Autopilot card). It sends one email to you and
+reads it back, runs one real AI check (about 2 cents) and one search, reads
+Stripe, and opens your links and your server's pages. Every other test in
+this project uses fake accounts; this is the one that uses yours. It says
+exactly what to fix.
+
+### Step 9: The supervised start, about 10 minutes over 2 days
 Open the phone console. The first emails appear in **Review drafts one by
 one**: read each, then **Approve**, **Edit** or **Skip**. After 20, Autopilot
 writes them alone. This is the one step that stays human on purpose. It's
 the only email that goes to a stranger, so a person checks the drafts on
 real businesses first.
 
-### Step 9: Switch it on
+### Step 10: Switch it on
 Phone → Today → **Autopilot** card → **Switch Autopilot on**. The card shows
 anything still missing. You can switch it on early, and the missing parts
 simply wait for you.
@@ -159,18 +170,28 @@ simply wait for you.
 
 ## Costs
 
-| | Monthly |
-| --- | --- |
-| Google Workspace | ~$7-8.40 |
-| Server | $6 |
-| Postal address (optional) | $10-20 |
-| OpenAI | ~$30-60 (the Guardian tells you if it passes $150; change `api_budget_monthly`) |
-| Serper | $0 at first, then ~$50 per 50,000 searches |
-| Stripe | about 3.6% of each payment (card fee plus subscriptions), ~$36 of a $997 month |
-| **Total before the first client** | **about $55-135** |
+The one choice is how many new businesses are checked a day (Keys and
+settings asks). `python run.py costs` prints your own numbers.
 
-One Growth client ($997) pays for all of it many times over. The $5,000/month
-profit target is about six Growth clients after costs.
+| Budget | Checked a day | With the $6 server | With Google's free server |
+| --- | --- | --- | --- |
+| **Lean** | 5 | about $25 a month | **about $19 a month** |
+| **Standard** | 20 | about $54 | about $48 |
+| **Growth** | 40 | about $93 | about $87 |
+
+Those totals include the mailbox ($8.40), the AI checks (about 6 cents a
+business), the business finder (free for the first 2,500 searches, then
+about $1 per 1,000) and the domain (about $1). On top:
+
+- A postal address, $0-20: only if you'd rather not use your home address.
+- Stripe: about 3.6% of each payment, about $36 of a $997 month.
+- Each client's monthly audit: about $1.60.
+
+Lean finds clients more slowly: a few first emails a day instead of the
+full warm-up. It is the cheapest way to start, and one answer in Keys and
+settings moves you up when the first client pays. One Growth client ($997)
+pays for any of these many times over. The $5,000/month profit target is
+about six Growth clients after costs.
 
 ## What to expect, and what not to
 
@@ -187,6 +208,24 @@ profit target is about six Growth clients after costs.
 - **You stay responsible** for the business itself. Register it as you would
   any business (an LLC is optional, an EIN is free), keep the money for taxes
   (the Bookkeeper tracks income), and read the Friday email.
+
+## Safety nets
+
+- **Backups off the server.** Every Sunday night you're emailed a compressed
+  copy of the whole business, with the steps to restore it. The server's own
+  nightly copies can't help if the server itself is lost; this one can.
+- **A warning if the server stops.** With a free healthchecks.io ping URL in
+  Keys and settings, the fleet checks in every five minutes; if it goes
+  quiet, healthchecks.io emails you. (The Guardian can't: it stops with the
+  server.)
+- **Send checks the world first.** Nothing is sent, from the phone or by
+  itself, unless your email domain passes Gmail's and Outlook's checks and
+  the unsubscribe link answers from the internet.
+- **Your answers become written answers.** When Autopilot hands you a
+  question and you answer it, tick "Use my answer next time" and give the
+  words that should trigger it. It's used next time, never for a
+  cancellation or refund, and the list is on the Brain tab to review or
+  delete.
 
 ## Switching off, pausing, stopping
 

@@ -364,6 +364,16 @@ class Application:
         return self._json(start, self.api.autopilot(str(d.get("action", "")),
                                                     str(d.get("stage", ""))))
 
+    def api_answers(self, environ, start):
+        d = self._body_json(environ) if environ.get("REQUEST_METHOD") == "POST" else {}
+        return self._json(start, self.api.answers(
+            str(d.get("action", "")), str(d.get("id", "")), str(d.get("triggers", "")),
+            str(d.get("answer_id", ""))))
+
+    def api_selftest(self, environ, start):
+        run = environ.get("REQUEST_METHOD") == "POST"
+        return self._json(start, self.api.selftest(run))
+
     def api_week(self, environ, start):
         return self._json(start, self.api.week())
 
@@ -501,6 +511,8 @@ class Application:
             "/api/call": self.api_call,
             "/api/next": self.api_next,
             "/api/week": self.api_week,
+            "/api/selftest": self.api_selftest,
+            "/api/answers": self.api_answers,
             "/api/autopilot": self.api_autopilot,
             "/api/debrief": self.api_debrief,
             "/api/automation": self.api_automation,

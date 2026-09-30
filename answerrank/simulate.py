@@ -883,6 +883,7 @@ def run(sales: int = 30, days: int = 100, seed: int = 7,
                     (payments, "_stripe_get", world.stripe),
                     (SenderAgent, "execute", _sender),
                     (SenderAgent, "_dns_blockers", lambda self: []),
+                    (SenderAgent, "_unsub_blockers", lambda self: []),
                     (mailer.SMTPConfig, "configured", lambda self: True)]
     originals = [(obj, name, getattr(obj, name)) for obj, name, _ in patches]
     for obj, name, value in patches:

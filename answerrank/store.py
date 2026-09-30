@@ -123,6 +123,11 @@ CREATE TABLE IF NOT EXISTS appointments (
 );
 CREATE INDEX IF NOT EXISTS idx_appointments ON appointments(status, starts_at);
 
+CREATE TABLE IF NOT EXISTS saved_answers (
+    id TEXT PRIMARY KEY, triggers TEXT, text TEXT, asked TEXT,
+    uses INTEGER DEFAULT 0, created_at TEXT, last_used_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS citation_checks (
     id TEXT PRIMARY KEY, business_id TEXT, checked_at TEXT, raw TEXT
 );
@@ -807,6 +812,32 @@ class Store:
         return [json.loads(r["raw"]) for r in rows]
 
     # ---------------- appointments ----------------
+
+    # ------------------------------------------------ answers you wrote
+    def save_answer(self, triggers: list[str], text: str, asked: str = "") -> str:
+        aid = f"ans_{uuid.uuid4().hex[:12]}"
+        with self.conn() as cx:
+            cx.execute("INSERT INTO saved_answers (id, triggers, text, asked, uses, "
+                       "created_at, last_used_at) VALUES (?,?,?,?,?,?,?)",
+                       (aid, ", ".join(triggers), text, asked[:300], 0,
+                        datetime.now(timezone.utc).isoformat(timespec="seconds"), ""))
+        return aid
+
+    def saved_answers(self) -> list[dict[str, Any]]:
+        with self.conn() as cx:
+            rows = cx.execute("SELECT * FROM saved_answers ORDER BY created_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_answer(self, answer_id: str) -> bool:
+        with self.conn() as cx:
+            return cx.execute("DELETE FROM saved_answers WHERE id = ?",
+                              (answer_id,)).rowcount > 0
+
+    def note_answer_used(self, answer_id: str) -> None:
+        with self.conn() as cx:
+            cx.execute("UPDATE saved_answers SET uses = uses + 1, last_used_at = ? "
+                       "WHERE id = ?",
+                       (datetime.now(timezone.utc).isoformat(timespec="seconds"), answer_id))
 
     def add_appointment(self, prospect_id: str, kind: str, starts_at: str,
                         note: str = "") -> str:

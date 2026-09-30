@@ -124,6 +124,12 @@ class Api:
         for m in msgs:
             p = by_id.get(m.prospect_id)
             core, footer = drafts.split(m.body)
+            asked = ""
+            if (m.kind or "cold") != "cold":
+                row = next((r for r in self.store.outcomes_for(m.prospect_id, 20)
+                            if r.get("kind") == "escalated"
+                            and (r.get("note") or "").startswith("Needs your answer")), None)
+                asked = (row.get("note") or "")[len("Needs your answer: "):] if row else ""
             items.append({
                 "id": m.id,
                 "step": m.sequence_step,
@@ -131,6 +137,7 @@ class Api:
                 "body": m.body,
                 "text": drafts.unwrap(core),
                 "footer": footer.strip(),
+                "asked": asked,
                 "business": p.business.name if p else "(unknown)",
                 "market": p.business.market if p else "",
                 "email": p.business.email if p else "",
@@ -168,6 +175,61 @@ class Api:
             automation.set_switch(self.store, "autopilot", action == "on")
             automation.sync(self.store, self.settings)
         return autopilot.cached(self.store, self.settings)
+
+    def answers(self, action: str = "", message_id: str = "", triggers: str = "",
+                answer_id: str = "") -> dict[str, Any]:
+        """Answers you wrote, saved for next time: list, save, delete."""
+        import re
+
+        from answerrank import drafts
+        if action == "save":
+            m = self.store.get_message(message_id)
+            words = [w.strip() for w in re.split(r"[,\n]", triggers or "") if len(w.strip()) >= 3]
+            if m is None:
+                return {"error": "That email isn't here any more."}
+            if not words:
+                return {"error": "Give at least one word or phrase that should trigger it."}
+            paragraphs = [p for p in drafts.editable(m.body).split("\n\n") if p.strip()]
+            brand = (self.settings.brand or "").lower()
+            site = (self.settings.website or "").lower()
+            keep = [p for p in paragraphs
+                    if not re.match(r"^\s*(hi|hello|hey|dear)\b[^\n]{0,30}$", p, re.I)
+                    and not (brand and p.strip().lower().startswith(brand))
+                    and not (site and site in p.lower())
+                    and "buy.stripe.com" not in p
+                    and "pick 15 minutes" not in p.lower()]
+            if not keep:
+                return {"error": "There's no answer in that email to save."}
+            asked = next((r.get("note", "")[len("Needs your answer: "):]
+                          for r in self.store.outcomes_for(m.prospect_id, 20)
+                          if r.get("kind") == "escalated"), "")
+            aid = self.store.save_answer(words, "\n\n".join(keep), asked)
+            return {"ok": True, "id": aid, "triggers": words}
+        if action == "delete":
+            return {"ok": self.store.delete_answer(answer_id)}
+        return {"items": [{"id": a["id"], "triggers": a["triggers"], "text": a["text"],
+                           "asked": a.get("asked") or "", "uses": a.get("uses") or 0}
+                          for a in self.store.saved_answers()]}
+
+    _SELFTEST = {"running": False}
+
+    def selftest(self, run: bool = False) -> dict[str, Any]:
+        """Start the live test on the server, or say how the last one went.
+        It takes a minute or two (it waits for its own email), so it runs in
+        the background and the phone asks again."""
+        import threading
+
+        from answerrank import selftest
+        if run and not Api._SELFTEST["running"]:
+            Api._SELFTEST["running"] = True
+
+            def go() -> None:
+                try:
+                    selftest.run(self.store, self.settings)
+                finally:
+                    Api._SELFTEST["running"] = False
+            threading.Thread(target=go, daemon=True, name="answerrank-selftest").start()
+        return {"running": Api._SELFTEST["running"], "last": selftest.last(self.store)}
 
     def week(self) -> dict[str, Any]:
         from answerrank import weekly
@@ -444,6 +506,18 @@ class Api:
 
         from answerrank.agents.outreach import OutreachAgent
         from answerrank.sending import send_batch
+
+        # The same world checks the automatic sender makes. The phone's Send
+        # used to skip them, so a tap could send from a domain Gmail and
+        # Outlook didn't trust yet, or with an unsubscribe link that led
+        # nowhere.
+        live: list[str] = []
+        if not dry_run and not getattr(self.settings, "demo_mode", False):
+            from answerrank.agents.sender import SenderAgent
+            live = SenderAgent(self.store, self.settings).live_blockers()
+            if live:
+                return {"sent": 0, "blocked": True, "reasons": live,
+                        "background": background}
 
         if not background or dry_run:
             return send_batch(self.store, self.settings, limit=limit, dry_run=dry_run)

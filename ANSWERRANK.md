@@ -21,7 +21,8 @@ being named, and does the work to change it.
 **Windows** — double-click **`start.bat`** in the project folder once. It sets
 everything up and puts an **AnswerRank** button on the desktop; after that the
 button opens a menu for everything (open, keys and settings, email domain,
-what still needs doing, server setup, practice run). No terminal needed.
+what still needs doing, server setup, practice run, live test with your
+real accounts). No terminal needed.
 
 **Mac / Linux** — one command:
 

@@ -9,6 +9,8 @@ Knowing what needed doing meant opening the console. Now it comes to you:
   for tomorrow's briefing.
 * **Friday afternoon**: the week reviewed, and the one step of the funnel
   to fix (see ``weekly.py``). That was 45 minutes of the playbook's Friday.
+* **Sunday night**: a compressed copy of the whole business (``backup.py``),
+  so losing the server never means losing the business.
 
 It goes to the briefing address (Keys and settings), or the mailbox you
 send from. The reply reader ignores mail from your own address, so a
@@ -17,6 +19,7 @@ briefing never looks like a customer reply.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from .. import calls
@@ -187,6 +190,16 @@ class BriefingAgent(Agent):
 
         year, week, _ = local.isocalendar()
         stamp = f"{year}-W{week:02d}"
+        if local.weekday() == 6 and local.hour >= 22 \
+                and self.store.kv_get("briefing.backup") != stamp:
+            from ..backup import email_backup
+            ok, detail = email_backup(self.store, self.settings, self.mailer(),
+                                      self.recipient())
+            self.store.kv_set("briefing.backup_last", json.dumps(
+                {"at": now.isoformat(timespec="seconds"), "ok": ok, "detail": detail}))
+            if ok:
+                self.store.kv_set("briefing.backup", stamp)
+                sent += 1
         if local.weekday() == 4 and local.hour >= 15 \
                 and self.store.kv_get("briefing.weekly") != stamp:
             from .. import weekly
