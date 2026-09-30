@@ -167,7 +167,7 @@ echo.
 echo    1  Open AnswerRank                  (or just press Enter)
 echo    2  Keys and settings
 echo    3  Email domain: set up and check
-echo    4  What still needs doing
+echo    4  What still needs doing (Autopilot checklist)
 echo    5  Make the server setup file
 echo    6  Practice run - nothing real is sent
 echo    7  Close
@@ -256,6 +256,7 @@ goto menu
 :doctor
 echo.
 "%VPY%" run.py doctor
+"%VPY%" run.py autopilot
 echo.
 pause
 goto menu

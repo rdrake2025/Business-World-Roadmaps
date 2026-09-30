@@ -41,6 +41,13 @@ class Api:
     def __init__(self, store, settings):
         self.store = store
         self.settings = settings
+        # The web server and the fleet can be separate processes on the
+        # server; each carries the Autopilot switch into what it offers.
+        from answerrank import automation
+        try:
+            automation.sync(store, settings)
+        except Exception:  # noqa: BLE001 - a fresh database has no kv table yet
+            pass
 
     # ------------------------------------------------------------ reads
 
@@ -99,7 +106,7 @@ class Api:
     #: What each kind of draft is, in the words on its badge.
     KIND_LABEL = {"reply": "answer to their reply", "report": "report they asked for",
                   "welcome": "welcome", "invoice": "payment link",
-                  "client_report": "monthly report"}
+                  "client_report": "monthly report", "client_care": "check-in"}
 
     def inbox(self, status: str = "drafted", limit: int = 25) -> dict[str, Any]:
         """Drafts in the order to read them: answers to people who wrote in,
@@ -146,6 +153,22 @@ class Api:
 
     # ------------------------------------------------------------------ today
 
+    def autopilot(self, action: str = "", stage: str = "") -> dict[str, Any]:
+        """Readiness, what's paused, and the switch. Resume is one tap."""
+        from answerrank import automation, autopilot
+        if action == "resume" and stage in automation.STAGES:
+            automation.resume(self.store, stage)
+            from datetime import datetime, timedelta, timezone
+            from answerrank.agents.guardian import GRACE_DAYS
+            self.store.kv_set("guardian.kind." + stage, "")
+            self.store.kv_set("guardian.grace." + stage, (
+                datetime.now(timezone.utc) + timedelta(days=GRACE_DAYS)).isoformat(
+                    timespec="seconds"))
+        elif action in {"on", "off"}:
+            automation.set_switch(self.store, "autopilot", action == "on")
+            automation.sync(self.store, self.settings)
+        return autopilot.cached(self.store, self.settings)
+
     def week(self) -> dict[str, Any]:
         from answerrank import weekly
         return weekly.review(self.store, self.settings)
@@ -161,6 +184,7 @@ class Api:
             if key not in automation.SWITCHES:
                 return {"error": f"unknown switch {key!r}"}
             automation.set_switch(self.store, key, bool(on))
+            automation.sync(self.store, self.settings)
         return {"switches": automation.state(self.store),
                 "status": sender.status(self.store, self.settings)}
 
@@ -304,13 +328,18 @@ class Api:
         from answerrank import sending
         from answerrank.models import now_iso
 
-        wanted, n, warm = set(ids), 0, False
+        from answerrank import automation
+
+        wanted, n, warm, first = set(ids), 0, False, 0
         for m in self.store.get_messages("drafted", 1000):
             if m.id in wanted:
                 m.status, m.approved_at = "approved", now_iso()
                 self.store.save_message(m)
                 n += 1
                 warm = warm or (m.kind or "cold") != "cold"
+                first += (m.kind or "cold") == "cold" and m.sequence_step <= 1
+        # Each first email you read yourself counts toward Autopilot's start.
+        automation.note_supervised(self.store, first)
         soon = sending.kick(self.store, self.settings) if warm else False
         return {"approved": n, "sending_soon": soon}
 
@@ -640,53 +669,17 @@ class Api:
         build, Won made a client active on the spot and the P&L counted
         money nobody had sent. A pilot is free and starts immediately.
         """
-        from answerrank import payments
-        from answerrank.models import Client, OutreachMessage, now_iso
+        from answerrank import sales
 
-        prospect = next((p for p in self.store.get_prospects(limit=10_000)
-                         if p.id == prospect_id), None)
+        prospect = self._prospect(prospect_id)
         if not prospect:
             return {"error": "no such prospect"}
-        if prospect.stage == "won":
-            return {"error": f"{prospect.business.name} is already a client"}
-
-        plan = (plan or "growth").lower()
-        if plan not in self.settings.pricing.PLANS:
-            return {"error": f"unknown plan {plan!r}"}
-        price = self.settings.pricing.plan_price(plan)
-        pilot = plan == "pilot"
-
-        client = Client(business=prospect.business, plan=plan, mrr=price,
-                        status="active" if pilot else "awaiting_payment")
-        client_id, created = self.store.start_client(client)
-        if not created:
-            return {"error": f"{prospect.business.name} is already on the books"}
-        client.id = client_id
-
-        prospect.stage = "won"
-        prospect.notes = (prospect.notes or "") + f" | won on {plan} at ${price:,.0f}"
-        self.store.upsert_prospect(prospect)
-        self.store.withdraw_cold(prospect.id)
-        self.store.record_outcome(
-            prospect_id=prospect.id, vertical=prospect.business.vertical,
-            step=prospect.touches, kind="won", note=f"{plan} ${price:,.0f}")
-
-        link = "" if pilot else payments.link_for(
-            self.settings, plan, payments.reference_for(prospect, client),
-            prospect.business.email)
-        email = prospect.business.email
-        # You just heard them say yes: the link goes now, not after another
-        # visit to the inbox. It is the same fixed email every time.
-        if link and not payments.link_already_sent(self.store, prospect,
-                                                   self.settings, plan):
-            subject, body = payments.payment_email(prospect, client, self.settings)
-            self.store.save_message(OutreachMessage(
-                prospect_id=prospect.id, subject=subject, body=body, kind="invoice",
-                sequence_step=0, status="approved" if email else "drafted",
-                scheduled_for=now_iso()))
-            if email:
-                from answerrank import sending
-                sending.kick(self.store, self.settings, delay=5)
+        done = sales.sign_up(self.store, self.settings, prospect, plan)
+        if done.get("error"):
+            return done
+        client, client_id, plan, price = done["client"], done["client_id"], done["plan"], \
+            done["mrr"]
+        link, email, pilot = done["payment_link"], done["email"], done["pilot"]
 
         from answerrank import automation
         if pilot:
@@ -695,7 +688,7 @@ class Api:
         elif link and not email:
             nxt = ("There's no email for them yet: copy the payment link from "
                    "Clients and text it. They go live the moment it's paid.")
-        elif link and automation.enabled(self.store, "auto_send"):
+        elif link and automation.sending_on(self.store):
             nxt = (f"The payment link goes to {email} in a minute (answers go out "
                    f"7am-9pm). They go live the moment it's paid.")
         elif link:

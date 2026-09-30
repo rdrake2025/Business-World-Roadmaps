@@ -72,7 +72,7 @@ def kick(store, settings, delay: float = HOLD_SECONDS + 5) -> bool:
     from . import automation
     from .mailer import SMTPConfig
 
-    if getattr(settings, "demo_mode", False) or not automation.enabled(store, "auto_send") \
+    if getattr(settings, "demo_mode", False) or not automation.sending_on(store) \
             or not SMTPConfig.from_env().configured():
         return False
     pending = _KICK.get("timer")
@@ -316,7 +316,13 @@ def _send_batch_locked(store, settings, limit: int, dry_run: bool,
             say(f"  sent to {email}")
         else:
             bounced = "bounce" in detail.lower()
-            m.status = "bounced" if bounced else "drafted"
+            # A mailbox hiccup is retried next run on Autopilot, where nobody
+            # would re-approve it; otherwise it goes back to you as before.
+            from . import automation
+            m.status = "bounced" if bounced else (
+                "approved" if automation.enabled(store, "autopilot") else "drafted")
+            if not bounced:
+                store.kv_set("sending.last_error", f"{now_iso()}|{detail[:200]}")
             if bounced:
                 store.suppress(email, detail)
                 store.record_outcome(

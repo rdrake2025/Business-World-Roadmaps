@@ -243,7 +243,9 @@ def monthly_email(client, audit: Audit, previous: Audit | None, deliverables,
                           "short files at the bottom of this email, added to your "
                           "homepage. " + sitecheck.install_steps(platform))
 
+    portal = (getattr(settings, "billing_portal_link", "") or "").strip()
     paragraphs += ["Questions about any of it? Just reply.",
+                   f"Invoices, card details and cancellation: {portal}" if portal else "",
                    f"{settings.brand}\n{settings.website}"]
     subject = f"{when} report — {biz.name[:30]}: named in {shown} of {n}"
     body = playbook.email_body(*paragraphs)
@@ -300,9 +302,12 @@ class ReporterAgent(Agent):
                 subject, body = monthly_email(
                     client, audit, previous, deliverables,
                     checks[0] if checks else None, month, self.settings)
+                from .. import automation
                 self.store.save_message(OutreachMessage(
                     prospect_id=prospect.id, subject=subject, body=body,
-                    kind="client_report", sequence_step=0, status="drafted",
+                    kind="client_report", sequence_step=0,
+                    status="approved" if automation.auto_approve(
+                        self.store, "client_report") else "drafted",
                     scheduled_for=now_iso()))
                 emailed += 1
             client.last_report_at = now_iso()

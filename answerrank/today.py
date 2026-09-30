@@ -28,7 +28,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-WARM = {"reply", "report", "welcome", "invoice", "client_report"}
+WARM = {"reply", "report", "welcome", "invoice", "client_report", "client_care"}
 HOT_INTENTS = {"ready_to_buy", "interested"}
 
 
@@ -54,11 +54,24 @@ def next_actions(store, settings, now: datetime | None = None) -> dict[str, Any]
     items: list[dict[str, Any]] = []
     prospects = {p.id: p for p in store.get_prospects(limit=10_000)}
 
-    # 1. Blocked sending
+    # 1. Blocked sending, and anything the Guardian paused
     blockers = OutreachAgent(store, settings).preflight()
     if blockers:
         items.append(_item("blocked", "warn", "Sending is blocked", blockers[0],
                            {"type": "none"}))
+    for stage, label in automation.STAGES.items():
+        why = automation.paused(store, stage)
+        if why:
+            items.append(_item(f"paused:{stage}", "warn",
+                               f"Autopilot paused: {label[0].lower() + label[1:]}", why,
+                               {"type": "autopilot"}))
+    if automation.enabled(store, "autopilot") \
+            and automation.supervised(store) < automation.SUPERVISED_FIRST_EMAILS:
+        left = automation.SUPERVISED_FIRST_EMAILS - automation.supervised(store)
+        items.append(_item("supervised", "todo",
+                           f"Read {left} more first email{'s' if left != 1 else ''}, "
+                           f"then Autopilot writes them alone",
+                           "Everything else already runs by itself.", {"type": "review"}))
 
     # 2 and 11. Walkthroughs: about to start, just finished, later today
     later_today, finished = [], []
@@ -151,7 +164,7 @@ def next_actions(store, settings, now: datetime | None = None) -> dict[str, Any]
 
     # 9. Approved, and nothing sending them
     approved = len(store.send_queue(500))
-    if approved and not blockers and not automation.enabled(store, "auto_send"):
+    if approved and not blockers and not automation.sending_on(store):
         items.append(_item("send", "todo", f"Send {approved} approved",
                            "Or switch on 'Send approved emails for me' below.",
                            {"type": "send"}, approved))

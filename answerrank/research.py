@@ -295,7 +295,7 @@ class SenderResearcher(Researcher):
         from datetime import datetime, timedelta, timezone
 
         from . import automation
-        if not automation.enabled(self.store, "auto_send"):
+        if not automation.sending_on(self.store):
             return []
         cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
         stuck = [m for m in self.store.send_queue(500) if (m.created_at or "") < cutoff]
@@ -309,6 +309,36 @@ class SenderResearcher(Researcher):
                       "password, the DNS check, or the daily warm-up cap. Answers "
                       "to people who wrote in should never wait a day."),
             severity=IMPROVE, confidence=CONFIDENT)]
+
+
+class GuardianResearcher(Researcher):
+    subject = "guardian"
+    question = "Does anything stay paused without you noticing?"
+
+    def investigate(self) -> list[Finding]:
+        from datetime import datetime, timedelta, timezone
+
+        from . import automation
+        out = []
+        for stage, label in automation.STAGES.items():
+            reason = automation.paused(self.store, stage)
+            if not reason:
+                continue
+            with self.store.conn() as cx:
+                row = cx.execute("SELECT created_at FROM kv WHERE key = ?",
+                                 (f"guardian.pause.{stage}",)).fetchone()
+            since = row["created_at"] if row else ""
+            old = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(timespec="seconds")
+            if since and since < old:
+                out.append(Finding(
+                    subject=self.subject,
+                    claim=f"{label} has been paused since {since[:10]}.",
+                    evidence=reason,
+                    proposal=("Nothing in that part of the business is going out. Fix "
+                              "the cause the pause names, then tap Resume on the "
+                              "phone's Autopilot card."),
+                    severity=IMPROVE, confidence=CONFIDENT))
+        return out
 
 
 class BriefingResearcher(Researcher):
@@ -661,7 +691,7 @@ RESEARCHERS: list[type[Researcher]] = [
     ProspectorResearcher, AuditorResearcher, CitationResearcher, FixerResearcher,
     ReporterResearcher, OutreachResearcher, SenderResearcher, BookkeeperResearcher,
     RetentionResearcher, ExplorerResearcher, AnalystResearcher,
-    StrategistResearcher, BriefingResearcher,
+    StrategistResearcher, BriefingResearcher, GuardianResearcher,
 ]
 
 

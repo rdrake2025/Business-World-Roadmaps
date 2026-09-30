@@ -9,6 +9,7 @@ Run with: python3 -m unittest discover -s tests -v
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -16,6 +17,7 @@ import pathlib
 import sys
 import tempfile
 import time
+import types
 import unittest
 import unittest.mock
 from datetime import datetime, timedelta, timezone
@@ -5255,6 +5257,317 @@ class TestTheFastestDay(_Biz):
         self.assertEqual(len(json.loads(out)["steps"]), 4)
         _st, out = call("/api/automation")
         self.assertIn("status", json.loads(out))
+
+
+class TestAutopilot(_Biz):
+    """The business runs without anyone at the console: every email the
+    fleet writes goes, questions are answered or handed to the owner at
+    once, money is matched however it arrives, and the Guardian stops the
+    part that goes wrong."""
+
+    NOW = TestTheDailyLoop.NOW
+    _audited = TestTheDailyLoop._audited
+
+    def _on(self, supervised=True):
+        from answerrank import automation
+        automation.set_switch(self.store, "autopilot", True)
+        automation.sync(self.store, self.settings)
+        if supervised:
+            automation.note_supervised(self.store, automation.SUPERVISED_FIRST_EMAILS)
+
+    def _concierge(self):
+        from answerrank.agents.concierge import ConciergeAgent
+        return ConciergeAgent(self.store, self.settings)
+
+    # ---------------------------------------------------------- the rules
+    def test_what_goes_without_you(self):
+        from answerrank import automation as a
+        self.assertFalse(a.auto_approve(self.store, "reply"), "off: everything waits")
+        self.assertFalse(a.auto_approve(self.store, "cold", 1))
+        self._on(supervised=False)
+        self.assertTrue(a.sending_on(self.store))
+        for kind in ("reply", "report", "invoice", "welcome", "client_report", "client_care"):
+            self.assertTrue(a.auto_approve(self.store, kind), kind)
+        self.assertTrue(a.auto_approve(self.store, "cold", 2), "follow-ups")
+        self.assertFalse(a.auto_approve(self.store, "cold", 1),
+                         "first emails wait until you've read 20")
+        a.note_supervised(self.store, a.SUPERVISED_FIRST_EMAILS)
+        self.assertTrue(a.auto_approve(self.store, "cold", 1))
+        a.pause(self.store, "prospecting", "test")
+        self.assertFalse(a.auto_approve(self.store, "cold", 2), "a paused stage waits")
+        self.assertTrue(a.auto_approve(self.store, "reply"), "other stages carry on")
+
+    def test_reading_first_emails_counts_toward_the_start(self):
+        from answerrank import automation
+        p = self._audited(email="hi@ridgeelectric.com")
+        m = OutreachMessage(prospect_id=p.id, subject="Hi", body="x", kind="cold",
+                            sequence_step=1)
+        self.store.save_message(m)
+        self._api().approve([m.id])
+        self.assertEqual(automation.supervised(self.store), 1)
+
+    def test_autopilot_sells_up_to_growth(self):
+        self.assertEqual(self.settings.quote_for("hvac"), 1997.0)
+        self._on()
+        self.assertEqual(self.settings.quote_for("hvac"), 997.0,
+                         "Managed is hands-on work; nobody's there to do it")
+
+    # ---------------------------------------------------------- answers
+    def test_every_scripted_question_has_a_written_answer(self):
+        from answerrank import answers
+        from answerrank.simulate import REPLIES
+        p = self._audited()
+        for q in REPLIES["objection"]:
+            got = answers.for_prospect(q, p, self.settings) or \
+                __import__("answerrank.playbook", fromlist=["x"]).rebuttal(q)
+            self.assertTrue(got, q)
+        self.assertEqual(answers.for_prospect("Do you work with dentists in Ohio?", p,
+                                              self.settings), [])
+        for text in ("guarantee", "contract", "how much"):
+            body = " ".join(answers.for_prospect(text, p, self.settings)).lower()
+            self.assertNotIn("rank #1", body)
+            self.assertNotIn("first page", body)
+
+    def test_a_question_is_answered_or_handed_to_you(self):
+        self._on()
+        p = self._prospect(stage="contacted")
+        r = self._concierge().handle_reply(p, "Is there a contract?")
+        self.assertEqual(r["action"], "answer_faq")
+        self.assertEqual(self.store.get_message(r["message_id"]).status, "approved")
+        r = self._concierge().handle_reply(p, "Do you also do Facebook ads for us?")
+        self.assertEqual(self.store.get_message(r["message_id"]).status, "drafted")
+        esc = self.store.outcomes_with_prefix("escalated", days=1)
+        self.assertTrue(esc and esc[0]["note"].startswith("Needs your answer"))
+
+    def test_the_owner_is_emailed_when_autopilot_needs_them(self):
+        from answerrank.agents.briefing import BriefingAgent
+        self._on()
+
+        class Mail:
+            sent = []
+
+            def send(self, to, subject, body):
+                self.sent.append(subject)
+                return True, "sent"
+        self.settings.demo_mode = False
+        agent = BriefingAgent(self.store, self.settings, mailer=Mail())
+        with unittest.mock.patch("answerrank.agents.briefing.calls.local_in",
+                                 lambda tz, now=None: datetime(2026, 9, 27, 5, 0)):
+            agent.execute()
+            p = self._prospect(stage="contacted")
+            self._concierge().handle_reply(p, "Do you also do Facebook ads for us?")
+            agent.execute()
+        self.assertTrue(any("needs your answer" in s for s in Mail.sent), Mail.sent)
+
+    def test_yes_on_autopilot_signs_them_up_with_one_link(self):
+        self._on()
+        p = self._prospect(stage="replied")
+        r = self._concierge().handle_reply(p, "Alright, sign us up.")
+        msg = self.store.get_message(r["message_id"])
+        self.assertEqual(msg.status, "approved")
+        self.assertIn("buy.stripe.com", msg.body)
+        self.assertIn(p.id, msg.body, "the link says who is paying")
+        waiting = self.store.get_clients("awaiting_payment")
+        self.assertEqual([c.business.name for c in waiting], ["Ridge Electric"])
+        invoices = [m for m in self.store.messages_for(p.id) if m.kind == "invoice"]
+        self.assertEqual(invoices, [], "the answer already carries the link")
+
+    def test_no_link_means_a_yes_waits_for_you(self):
+        self._on()
+        self.settings.payment_links = {}
+        p = self._prospect(stage="replied")
+        r = self._concierge().handle_reply(p, "Alright, sign us up.")
+        self.assertEqual(self.store.get_message(r["message_id"]).status, "drafted",
+                         "\"I'll send the invoice today\" is a promise only you can keep")
+
+    def test_clients_get_answers_and_the_billing_link(self):
+        from answerrank.models import Client
+        self._on()
+        self.settings.billing_portal_link = "https://billing.stripe.com/p/login/x"
+        p = self._prospect(stage="won")
+        c = Client(business=p.business, plan="growth", mrr=997.0, status="active")
+        self.store.start_client(c)
+        r = self._concierge().handle_reply(p, "How do I cancel?")
+        msg = self.store.get_message(r["message_id"])
+        self.assertEqual((r["intent"], msg.status), ("client_message", "approved"))
+        self.assertIn("billing.stripe.com", msg.body)
+        self.assertTrue(self.store.outcomes_with_prefix("escalated", days=1),
+                        "a cancellation is something you should know about")
+        c.status = "churned"
+        self.store.upsert_client(c)
+        r = self._concierge().handle_reply(p, "Who do I send the website login to?")
+        self.assertEqual(r["intent"], "client_message", "a former client is still a client")
+        self.assertEqual(self._api()._prospect(p.id).stage, "won", "never demoted")
+
+    # ---------------------------------------------------------- money
+    def test_a_payment_from_the_report_link_makes_a_client(self):
+        from answerrank import payments
+        p = self._audited(email="owner@ridgeelectric.com")
+        session = {"id": "cs_1", "client_reference_id": p.id, "payment_status": "paid",
+                   "amount_total": 99700, "subscription": "sub_1",
+                   "customer_details": {"email": "owner@ridgeelectric.com"}}
+
+        def stripe(key, path, params=None, timeout=20):
+            if path == "checkout/sessions":
+                return {"data": [session], "has_more": False}
+            return {"status": "active"}
+        with unittest.mock.patch.dict(os.environ, {"STRIPE_API_KEY": "rk_test"}):
+            lines = payments.reconcile(self.store, self.settings, get=stripe)
+            again = payments.reconcile(self.store, self.settings, get=stripe)
+        self.assertIn("bought straight from their report", lines[0])
+        self.assertFalse(any("bought" in line for line in again), "counted once")
+        clients = self.store.get_clients("active")
+        self.assertEqual([(c.plan, c.mrr) for c in clients], [("growth", 997.0)])
+        self.assertEqual(self._api()._prospect(p.id).stage, "won")
+
+    def test_a_link_in_the_report_does_not_stop_the_payment_email(self):
+        from answerrank import payments
+        p = self._prospect(stage="replied")
+        link = payments.base_link(self.settings, "growth")
+        self.store.save_message(OutreachMessage(prospect_id=p.id, subject="Report",
+                                                body=f"start {link}", kind="report",
+                                                status="sent"))
+        self.store.save_message(OutreachMessage(prospect_id=p.id, subject="Re", body="ok",
+                                                kind="reply", status="sent"))
+        self.assertFalse(payments.link_already_sent(self.store, p, self.settings, "growth"))
+
+    def test_a_website_request_gets_the_report_not_a_cold_email(self):
+        self._on()
+        p = self._audited(email="owner@ridgeelectric.com")
+        p.notes = "INBOUND — requested audit from website"
+        p.next_action_at = ""
+        self.store.upsert_prospect(p)
+        OutreachAgent(self.store, self.settings).execute()
+        msgs = self.store.messages_for(p.id)
+        self.assertEqual([(m.kind, m.status) for m in msgs], [("report", "approved")])
+        self.assertIn("asking for your check", msgs[0].body)
+
+    # ---------------------------------------------------------- clients
+    def test_the_welcome_asks_for_nothing_only_a_person_could_act_on(self):
+        from answerrank.agents.onboarder import welcome_email
+        from answerrank.models import Client
+        self.settings.billing_portal_link = "https://billing.stripe.com/p/login/x"
+        p = self._prospect(stage="won")
+        _s, body = welcome_email(Client(business=p.business, plan="growth"), None,
+                                 self.settings)
+        self.assertNotIn("add me to your Google Business Profile", body)
+        self.assertIn("billing.stripe.com", body)
+        _s, body = welcome_email(Client(business=p.business, plan="managed"), None,
+                                 self.settings)
+        self.assertIn("add me to your Google Business Profile", body)
+
+    def test_retention_writes_the_install_email_itself(self):
+        from answerrank.agents.retention import RetentionAgent
+        from answerrank.models import Client
+        self._on()
+        p = self._prospect(stage="won")
+        c = Client(business=p.business, plan="growth", mrr=997.0, status="active",
+                   started_at=(datetime.now(timezone.utc) - timedelta(days=30)).isoformat())
+        self.store.start_client(c)
+        self.store.save_site_check(p.business.id, {"platform": "wix", "local_business": False,
+                                                   "checked_at": datetime.now(timezone.utc).isoformat()})
+        RetentionAgent(self.store, self.settings).execute()
+        RetentionAgent(self.store, self.settings).execute()
+        care = [m for m in self.store.messages_for(p.id) if m.kind == "client_care"]
+        self.assertEqual(len(care), 1, "once a month at most")
+        self.assertEqual(care[0].status, "approved")
+        self.assertIn("Wix", care[0].body)
+
+    # ---------------------------------------------------------- guardian
+    def test_the_guardian_pauses_first_emails_on_complaints(self):
+        from answerrank import automation
+        from answerrank.agents.guardian import GuardianAgent
+        self._on()
+        for _ in range(3):
+            self.store.record_outcome(prospect_id="p", kind="replied", sentiment="hostile")
+        GuardianAgent(self.store, self.settings).execute()
+        self.assertIn("spam", automation.paused(self.store, "prospecting"))
+        self.assertFalse(automation.auto_approve(self.store, "cold", 2))
+        up = [i["key"] for i in TestTheDailyLoop._next(self)["items"]]
+        self.assertIn("paused:prospecting", up)
+        self._api().autopilot("resume", "prospecting")
+        GuardianAgent(self.store, self.settings).execute()
+        self.assertEqual(automation.paused(self.store, "prospecting"), "",
+                         "resuming gives a grace period over the same week")
+
+    def test_the_guardian_lifts_a_bounce_pause_by_itself(self):
+        from answerrank import automation
+        from answerrank.agents.guardian import GuardianAgent
+        g = GuardianAgent(self.store, self.settings)
+        with unittest.mock.patch("answerrank.sending.bounce_blocker",
+                                 return_value="4% bounced"):
+            g.execute()
+        self.assertTrue(automation.paused(self.store, "prospecting"))
+        with unittest.mock.patch("answerrank.sending.bounce_blocker", return_value=""):
+            g.execute()
+        self.assertFalse(automation.paused(self.store, "prospecting"))
+
+    def test_the_guardian_says_what_is_waiting_and_emails_once_a_day(self):
+        from answerrank.agents.guardian import GuardianAgent
+        self._on()
+
+        class Mail:
+            sent = []
+
+            def send(self, to, subject, body):
+                self.sent.append(body)
+                return True, "sent"
+        p = self._prospect(stage="replied")
+        old = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        self.store.save_message(OutreachMessage(prospect_id=p.id, subject="Re", body="x",
+                                                kind="reply", created_at=old))
+        g = GuardianAgent(self.store, self.settings, mailer=Mail())
+        g.execute()
+        g.execute()
+        self.assertEqual(len(Mail.sent), 1)
+        self.assertIn("waited over a day", Mail.sent[0])
+
+    def test_a_mailbox_hiccup_is_retried_on_autopilot(self):
+        from answerrank import sending
+        self._on()
+        p = self._prospect(stage="replied")
+        m = OutreachMessage(prospect_id=p.id, subject="Re", body="x", kind="reply",
+                            status="approved")
+        self.store.save_message(m)
+
+        class Down:
+            def __init__(self, settings):
+                pass
+
+            def send(self, *a):
+                return False, "network error: timed out"
+        with unittest.mock.patch.object(sending, "Mailer", Down):
+            sending.send_batch(self.store, self.settings)
+        self.assertEqual(self.store.get_message(m.id).status, "approved")
+        self.assertIn("timed out", self.store.kv_get("sending.last_error"))
+
+    # ---------------------------------------------------------- readiness
+    def test_the_checklist_says_what_to_do_next(self):
+        from answerrank import autopilot
+        r = autopilot.readiness(self.store, self.settings)
+        self.assertFalse(r["ready"])
+        self.assertEqual(r["next"]["key"], "demo", "the first missing piece, in order")
+        keys = [i["key"] for i in r["items"]]
+        for k in ("server", "mailbox", "replies", "dns", "links", "stripe", "supervised"):
+            self.assertIn(k, keys)
+        self.assertTrue(all(i["fix"] for i in r["items"] if not i["ok"]))
+        out = io.StringIO()
+        from answerrank import cli
+        with contextlib.redirect_stdout(out):
+            cli.cmd_autopilot(types.SimpleNamespace(on=False, off=False, quick=True),
+                              self.settings)
+        self.assertIn("DO THESE, IN THIS ORDER", out.getvalue())
+
+    def test_a_business_runs_with_nobody_at_the_console(self):
+        from answerrank import simulate
+        logging.getLogger("answerrank").setLevel(logging.WARNING)
+        try:
+            card = simulate.run(sales=5, days=45, tick_hours=4, autopilot=True)
+        finally:
+            logging.getLogger("answerrank").setLevel(logging.NOTSET)
+        self.assertTrue(simulate.passed(card), simulate.render(card))
+        self.assertEqual(card["autopilot"]["owner_taps"], 0)
+        self.assertEqual(card["sales_closed"], 5)
 
 class TestTheResearchIsReal(unittest.TestCase):
     """Every rule that cites research points at an entry that exists, and
