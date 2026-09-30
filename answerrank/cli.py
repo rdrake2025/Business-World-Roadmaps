@@ -388,6 +388,9 @@ def cmd_send(args, settings: Settings) -> int:
     extra = []
     if not args.skip_dns:
         extra = check_dns_readiness(settings.from_email.split("@")[-1])
+        if not args.dry_run and not settings.demo_mode:
+            from .agents.sender import SenderAgent
+            extra += SenderAgent(store, settings)._unsub_blockers()
 
     result = send_batch(
         store, settings, limit=args.limit, dry_run=args.dry_run,
@@ -714,6 +717,50 @@ def cmd_doctor(args, settings: Settings) -> int:
     else:
         print("  YES — all blocking checks pass. Warm the domain, then start small.")
     return 1 if blockers else 0
+
+
+def cmd_selftest(args, settings: Settings) -> int:
+    """Every outside service, once, with your real keys."""
+    from . import selftest
+    from .store import Store
+
+    _hr("LIVE TEST: YOUR REAL ACCOUNTS")
+    print("  One email to you, one real AI check (about 2 cents), one search.\n"
+          "  Nothing is sent to anyone else.\n")
+    r = selftest.run(Store(settings.database_path), settings, say=print,
+                     wait_seconds=args.wait)
+    print()
+    for row in r["results"]:
+        mark = {True: "\033[32m✓\033[0m", False: "\033[31m✗\033[0m",
+                None: "\033[33m-\033[0m"}[row["ok"]]
+        print(f"  [{mark}] {row['name']:<44} {row['detail'][:60]}")
+    todo = [row for row in r["results"] if row["ok"] is not True and row["fix"]]
+    if todo:
+        _hr("TO FIX")
+        for row in todo:
+            print(f"\n  {row['name']}\n     → {row['fix']}")
+    _hr("RESULT")
+    print("  Everything works with your real accounts." if r["passed"] else
+          "  Not yet: fix the items above and run this again (desktop button, 7).")
+    return 0 if r["passed"] else 1
+
+
+def cmd_costs(args, settings: Settings) -> int:
+    """What the business costs a month, line by line."""
+    from . import costs
+
+    e = costs.estimate(settings, clients=args.clients)
+    _hr("WHAT IT COSTS A MONTH")
+    for line in e["lines"]:
+        print(f"  ${line['monthly']:>7,.2f}  {line['label']:<32} {line['note']}")
+    print(f"  {'-' * 9}\n  ${e['total']:>7,.2f}  total"
+          + (f" with {args.clients} clients" if args.clients else " before any clients"))
+    _hr("THE BUDGET CHOICES (Keys and settings)")
+    for r in costs.table(settings):
+        mark = "  <- now" if r["key"] == e["preset"] else ""
+        print(f"  {r['label']:<9} {r['per_day']:>3} a day   about ${r['total']:,.0f}/month{mark}")
+    print("\n  Stripe keeps about 3.6% of each payment on top (about $36 of $997).")
+    return 0
 
 
 def cmd_autopilot(args, settings: Settings) -> int:
@@ -1436,6 +1483,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--probe", action="store_true",
                    help="also probe the live unsubscribe endpoint over the network")
     s.set_defaults(func=cmd_doctor)
+
+    s = sub.add_parser("selftest", help="test every outside service with your real keys")
+    s.add_argument("--wait", type=int, default=90,
+                   help="seconds to wait for the test email to arrive")
+    s.set_defaults(func=cmd_selftest)
+
+    s = sub.add_parser("costs", help="what the business costs a month, and the budget choices")
+    s.add_argument("--clients", type=int, default=0, help="include this many clients")
+    s.set_defaults(func=cmd_costs)
 
     s = sub.add_parser("autopilot", help="can the business run by itself? (and switch it)")
     s.add_argument("--on", action="store_true", help="switch Autopilot on")

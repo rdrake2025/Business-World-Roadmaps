@@ -106,6 +106,41 @@ class SenderAgent(Agent):
             {"at": now.isoformat(timespec="seconds"), "blockers": blockers}))
         return blockers
 
+    def _unsub_blockers(self) -> list[str]:
+        """Whether the unsubscribe link in every email answers from the
+        internet (CAN-SPAM: an opt-out must work for 30 days after sending).
+        Cached for an hour when it works, checked again each run when not."""
+        raw = self.store.kv_get("sender.unsub")
+        now = datetime.now(timezone.utc)
+        if raw:
+            try:
+                cached = json.loads(raw)
+                if not cached["blockers"] and \
+                        now - datetime.fromisoformat(cached["at"]) < timedelta(hours=1):
+                    return []
+            except (ValueError, KeyError, TypeError):
+                pass
+        site = (self.settings.website or "").rstrip("/")
+        blockers: list[str] = []
+        try:
+            import requests
+            code = requests.get(f"{site}/unsubscribe", timeout=10).status_code
+            if code != 200:
+                blockers = [f"The unsubscribe link ({site}/unsubscribe) returns {code}. "
+                            f"The law needs it working before anything is sent."]
+        except Exception as exc:  # noqa: BLE001 - any failure means it doesn't answer
+            blockers = [f"The unsubscribe link ({site}/unsubscribe) doesn't answer from "
+                        f"the internet ({type(exc).__name__}). Is the server up? "
+                        f"See deploy/SERVER.md."]
+        self.store.kv_set("sender.unsub", json.dumps(
+            {"at": now.isoformat(timespec="seconds"), "blockers": blockers}))
+        return blockers
+
+    def live_blockers(self) -> list[str]:
+        """What must be true out in the world before any email leaves: the
+        domain passes Gmail's and Outlook's checks, and the opt-out works."""
+        return self._dns_blockers() + self._unsub_blockers()
+
     def execute(self) -> tuple[int, str]:
         from ..mailer import SMTPConfig
         from ..sending import send_batch
@@ -134,7 +169,7 @@ class SenderAgent(Agent):
         if not want:
             return 0, f"{len(queue)} approved, waiting for sending hours"
 
-        blockers = self._dns_blockers()
+        blockers = self.live_blockers()
         if blockers:
             return 0, f"not sending yet: {blockers[0]}"
 

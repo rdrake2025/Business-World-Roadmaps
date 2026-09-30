@@ -158,3 +158,103 @@ Source: <https://developers.openai.com/api/docs/guides/tools-web-search>
 **So we:** The Claude check searches from the business's city, capped at two searches per question, and only runs in client audits where its cost is trivial next to the fee.
 
 Source: <https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool>
+
+## OpenAI, API pricing
+
+*2026 · last read 2026-09 · re-check every 6 months · used by Auditor, costs*
+
+**Found:** Web search on reasoning models such as gpt-5-mini costs $10 per 1,000 calls plus the search content tokens at the model's rates; gpt-5-mini is $0.25 per million input tokens and $2.00 per million output.
+
+**So we:** A cold prospect's check costs about 6 cents (four questions at about 1.5 cents), so the daily number of checks is the budget dial: Lean runs 5 a day (about $9 a month), Standard 20 (about $36), Growth 40 (about $72). costs.py works every figure out from the prices.
+
+Source: <https://developers.openai.com/api/docs/pricing>
+
+## Google Cloud, Free Tier
+
+*2026 · last read 2026-09 · re-check every 6 months · used by server*
+
+**Found:** One e2-micro VM a month is free in us-west1, us-central1 or us-east1, with 30 GB of standard disk and 1 GB of outbound data. An e2-micro has 2 shared vCPUs and 1 GB of memory. Ubuntu images read cloud-init user-data from instance metadata, and Google's network pricing says the free tier doesn't charge for an in-use external IP address.
+
+**So we:** The server guide offers it as the free option: the same setup file, pasted as the user-data metadata key, in one of those three regions. Oracle's free tier was halved without notice in June 2026, so it is not recommended.
+
+Source: <https://cloud.google.com/free>
+
+## Google Workspace, Pricing
+
+*2026 · last read 2026-09 · re-check every 12 months · used by keys, selftest*
+
+**Found:** Business Starter is $8.40 per user a month on the flexible plan and $7 on annual billing. App passwords still work for IMAP and SMTP with 2-Step Verification; plain passwords stopped working for Workspace on 14 March 2025.
+
+**So we:** The mailbox is the one fixed cost that can't be avoided: the fleet sends over SMTP and reads replies over IMAP with an app password.
+
+Source: <https://workspace.google.com/pricing>
+
+## Serper, Pricing
+
+*2026 · last read 2026-09 · re-check every 12 months · used by scout, costs*
+
+**Found:** 2,500 free queries with no card, then $50 for 50,000 credits, about $1 per 1,000, with paid credits valid for six months.
+
+**So we:** The finder costs nothing to start; one places search finds up to 10 businesses.
+
+Source: <https://serper.dev>
+
+## FTC, CAN-SPAM Act: A Compliance Guide for Business
+
+*2009 · last read 2026-09 · re-check every 24 months · used by Sending, Doctor*
+
+**Found:** Any opt-out mechanism must process requests for at least 30 days after the message is sent, and opt-outs must be honoured within 10 business days. The postal address may be a street address, a USPS PO Box or a private mailbox at a registered commercial mail receiving agency.
+
+**So we:** No email is sent, by the fleet or from the phone, unless the unsubscribe link answers from the internet, and the server that answers it runs all the time.
+
+Source: <https://www.ftc.gov/business-guidance/resources/can-spam-act-compliance-guide-business>
+
+## Healthchecks.io, Pinging API and pricing
+
+*2026 · last read 2026-09 · re-check every 12 months · used by guardian, server*
+
+**Found:** A running process signals it is alive with a GET or HEAD to https://hc-ping.com/<uuid>; when the signals stop, Healthchecks emails you. The free Hobbyist plan monitors up to 20 checks, with email alerts included.
+
+**So we:** The fleet pings your check every cycle. If the server dies, the Guardian dies with it and can't warn you; Healthchecks can.
+
+Source: <https://healthchecks.io/docs/http_api/>
+
+## SQLite, Online Backup API; Python sqlite3 Connection.backup
+
+*2026 · last read 2026-09 · re-check every 24 months · used by backup*
+
+**Found:** The online backup API copies a database that is in use into a consistent snapshot; copying the file directly can capture a half-written state.
+
+**So we:** Backups use Connection.backup, never a file copy, and are compressed before they leave the server.
+
+Source: <https://www.sqlite.org/c3ref/backup_finish.html>
+
+## Google, Send attachments with your Gmail message
+
+*2026 · last read 2026-09 · re-check every 12 months · used by backup*
+
+**Found:** Gmail and standard Workspace plans send attachments up to 25 MB and receive up to 50 MB; attachments are base64-encoded, which adds about a third, so the largest file that fits is under about 18 MB.
+
+**So we:** The weekly off-server backup is emailed to you when it's under 15 MB compressed; above that, the email says so and how to fetch it.
+
+Source: <https://support.google.com/mail/answer/6584>
+
+## Help-desk practice on saved replies (Zendesk, Intercom, HelpDesk)
+
+*2026 · last read 2026-09 · re-check every 12 months · used by concierge*
+
+**Found:** Saved replies suit simple, repetitive, informational questions and should not be used for sensitive cases such as cancellations or bad news. They need clear names, an owner, and regular review to stay accurate.
+
+**So we:** Only answers you wrote yourself are saved for reuse, each under the words that trigger it, listed in one place to review or delete. Cancellations and refunds are never answered from a saved reply.
+
+Source: <https://www.helpdesk.com/blog/canned-responses/>
+
+## Customer health scoring practice (Gainsight, HubSpot, Planhat)
+
+*2026 · last read 2026-09 · re-check every 12 months · used by Retention*
+
+**Found:** The red band should be small enough to act on; scores built on weak signals give false confidence and false alarms. Thresholds should be tested against outcomes and adjusted.
+
+**So we:** 'Act now' needs a concrete risk: a failing card, no report delivered, fixes still not live after three weeks, a falling score, or long silence with nothing moving. A quiet client whose report arrives on time is monitored, not flagged.
+
+Source: <https://www.gainsight.com/blog/customer-health-scores/>

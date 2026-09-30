@@ -4861,6 +4861,7 @@ class TestTheDailyLoop(_Biz):
                     unittest.mock.patch("answerrank.agents.sender.calls.local_in",
                                         lambda tz, now=None: local), \
                     unittest.mock.patch.object(SenderAgent, "_dns_blockers", lambda self: []), \
+                    unittest.mock.patch.object(SenderAgent, "_unsub_blockers", lambda self: []), \
                     unittest.mock.patch("answerrank.sending.send_batch",
                                         lambda *a, **k: calls_made.append(k.get("only")) or {}):
                 return SenderAgent(self.store, self.settings, background=False).execute()
@@ -5568,6 +5569,247 @@ class TestAutopilot(_Biz):
         self.assertTrue(simulate.passed(card), simulate.render(card))
         self.assertEqual(card["autopilot"]["owner_taps"], 0)
         self.assertEqual(card["sales_closed"], 5)
+
+
+class TestReadyForTheRealWorld(_Biz):
+    """The seven improvements from the finish review: a cheaper start, a live
+    test with real accounts, a Send button that checks the world, backups
+    off the server, a warning when the server stops, answers you save, and a
+    client health score that only cries wolf when there's a wolf."""
+
+    # ---------------------------------------------------------- 1. costs
+    def test_the_lean_budget_and_the_free_server(self):
+        from answerrank import costs
+        ai_each, serper_each = costs.check_costs(self.settings)
+        self.assertAlmostEqual(ai_each, 0.06)
+        rows = {r["key"]: r for r in costs.table(self.settings, server="gcp_free")}
+        self.assertLess(rows["lean"]["total"], 20, "about $19 a month, all in")
+        self.assertLess(rows["lean"]["total"], rows["standard"]["total"])
+        with_clients = costs.estimate(self.settings, clients=6)
+        self.assertTrue(any("Client audits" in l["label"] for l in with_clients["lines"]))
+
+    def test_choosing_lean_in_keys_writes_numbers(self):
+        from answerrank import keys
+        from answerrank.config import load_settings
+        d = pathlib.Path(tempfile.mkdtemp())
+        cfg = d / "answerrank.yml"
+        cfg.write_text("brand: AnswerRank\n", encoding="utf-8")
+        answers = iter(["2", "1"])      # Google's free server, then Lean
+        keys._ask_budget(self.settings, cfg, lambda _q: next(answers), lambda _l: None)
+        text = cfg.read_text(encoding="utf-8")
+        self.assertIn("teaser_audits_per_day: 5\n", text, "a number, not a string")
+        self.assertIn('server_host: "gcp_free"', text)
+        loaded = load_settings(cfg)
+        self.assertEqual(loaded.teaser_audits_per_day, 5)
+        self.assertEqual(self.settings.api_budget_monthly, 20.0)
+
+    # ---------------------------------------------------------- 2. live test
+    def test_the_live_test_says_what_is_missing(self):
+        from answerrank import autopilot, selftest
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            for k in ("SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD", "OPENAI_API_KEY",
+                      "SERPER_API_KEY", "STRIPE_API_KEY"):
+                os.environ.pop(k, None)
+            with unittest.mock.patch.object(selftest, "_get",
+                                            side_effect=OSError("no network")), \
+                    unittest.mock.patch("answerrank.mailer.check_dns_readiness",
+                                        return_value=["DKIM not found"]):
+                r = selftest.run(self.store, self.settings, wait_seconds=0)
+        self.assertFalse(r["passed"])
+        names = {x["key"]: x for x in r["results"]}
+        self.assertIsNone(names["send"]["ok"])
+        self.assertIsNone(names["ai"]["ok"])
+        self.assertFalse(names["dns"]["ok"])
+        self.assertTrue(all(x["fix"] for x in r["results"] if x["ok"] is not True))
+        live = next(i for i in autopilot.readiness(self.store, self.settings)["items"]
+                    if i["key"] == "live")
+        self.assertFalse(live["ok"])
+
+    def test_the_mail_round_trip(self):
+        from answerrank import selftest
+        sent = {}
+
+        class Mail:
+            def __init__(self, settings, config=None):
+                pass
+
+            def send(self, to, subject, body):
+                sent["subject"] = subject
+                return True, "sent"
+
+        class Box:
+            def __init__(self, host):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def login(self, u, p):
+                pass
+
+            def select(self, folder, readonly=True):
+                pass
+
+            def search(self, charset, query):
+                token = sent["subject"].split()[-1]
+                return "OK", [b"1" if token in query else b""]
+        env = {"SMTP_HOST": "smtp.gmail.com", "SMTP_USERNAME": "me@x.com",
+               "SMTP_PASSWORD": "pw", "IMAP_HOST": "imap.gmail.com"}
+        with unittest.mock.patch.dict(os.environ, env), \
+                unittest.mock.patch("answerrank.mailer.Mailer", Mail), \
+                unittest.mock.patch("imaplib.IMAP4_SSL", Box):
+            got = selftest.check_mail_round_trip(self.settings, wait_seconds=0,
+                                                 sleep=lambda s: None)
+        self.assertEqual([(r.key, r.ok) for r in got], [("send", True), ("read", True)])
+
+    def test_a_full_stripe_key_is_refused(self):
+        from answerrank import selftest
+        with unittest.mock.patch.dict(os.environ, {"STRIPE_API_KEY": "sk_live_x"}), \
+                unittest.mock.patch.object(selftest, "_get", side_effect=OSError("x")):
+            got = selftest.check_stripe(self.settings)
+        self.assertFalse(got[0].ok)
+        self.assertIn("restricted", got[0].fix)
+
+    # ---------------------------------------------------------- 3. Send
+    def test_the_phone_send_checks_the_world(self):
+        from answerrank.agents.sender import SenderAgent
+        self.settings.demo_mode = False
+        p = self._prospect(stage="replied")
+        self.store.save_message(OutreachMessage(prospect_id=p.id, subject="Re", body="x",
+                                                kind="reply", status="approved"))
+        with unittest.mock.patch.object(SenderAgent, "_dns_blockers",
+                                        lambda self: ["DKIM isn't set up yet"]), \
+                unittest.mock.patch.object(SenderAgent, "_unsub_blockers", lambda self: []):
+            r = self._api().send(10, background=True)
+        self.assertTrue(r["blocked"])
+        self.assertIn("DKIM", r["reasons"][0])
+        with unittest.mock.patch("requests.get", side_effect=OSError("down")):
+            reasons = SenderAgent(self.store, self.settings)._unsub_blockers()
+        self.assertIn("unsubscribe link", reasons[0])
+
+    # ---------------------------------------------------------- 4. backups
+    def test_a_backup_is_a_real_copy(self):
+        import gzip
+        import sqlite3
+        from answerrank import backup
+        p = self._prospect(stage="replied")
+        gz = backup.snapshot(self.store.path)
+        raw = gz.with_suffix("")
+        raw.write_bytes(gzip.decompress(gz.read_bytes()))
+        rows = sqlite3.connect(str(raw)).execute("SELECT id FROM prospects").fetchall()
+        self.assertIn((p.id,), rows)
+
+    def test_the_backup_is_emailed_on_sunday_night(self):
+        from answerrank.agents.briefing import BriefingAgent
+
+        class Mail:
+            files = []
+
+            def send(self, to, subject, body):
+                return True, "sent"
+
+            def send_file(self, to, subject, body, name, data, mime):
+                self.files.append((name, len(data), mime))
+                return True, "sent"
+        self.settings.demo_mode = False
+        agent = BriefingAgent(self.store, self.settings, mailer=Mail())
+        sunday = datetime(2026, 10, 4, 22, 30)
+        with unittest.mock.patch("answerrank.agents.briefing.calls.local_in",
+                                 lambda tz, now=None: sunday):
+            agent.execute()
+            agent.execute()
+        self.assertEqual(len(Mail.files), 1, "once a week")
+        self.assertTrue(Mail.files[0][0].endswith(".db.gz"))
+
+    # ---------------------------------------------------------- 5. heartbeat
+    def test_the_fleet_pings_its_heartbeat(self):
+        self.settings.demo_mode = False
+        self.settings.heartbeat_url = "https://hc-ping.com/abc"
+        orch = Orchestrator(self.store, self.settings)
+        with unittest.mock.patch("requests.get") as get:
+            orch._heartbeat()
+            orch._heartbeat()
+        get.assert_called_once()
+        self.assertEqual(get.call_args[0][0], "https://hc-ping.com/abc")
+
+    # ---------------------------------------------------------- 6. answers
+    def test_an_answer_you_write_is_used_next_time(self):
+        from answerrank import automation
+        from answerrank.agents.concierge import ConciergeAgent
+        automation.set_switch(self.store, "autopilot", True)
+        p = self._prospect(stage="contacted")
+        r = ConciergeAgent(self.store, self.settings).handle_reply(
+            p, "Do you also do Facebook ads for us?")
+        item = next(i for i in self._api().inbox()["items"] if i["id"] == r["message_id"])
+        self.assertEqual(item["asked"], "Do you also do Facebook ads for us?")
+        self._api().edit(r["message_id"], "", "Hi,\n\nNo, we don't run ads. We work on "
+                         "how AI assistants describe you, which ads don't touch.\n\nAnswerRank")
+        saved = self._api().answers("save", r["message_id"], "facebook, ads")
+        self.assertTrue(saved["ok"], saved)
+        text = self.store.saved_answers()[0]["text"]
+        self.assertNotIn("Hi,", text)
+        self.assertNotIn("AnswerRank", text)
+        q = self._prospect(stage="contacted", email="owner@other.com")
+        r2 = ConciergeAgent(self.store, self.settings).handle_reply(
+            q, "What about Facebook ads, can you run those?")
+        msg = self.store.get_message(r2["message_id"])
+        self.assertEqual(r2["action"], "answer_faq")
+        self.assertEqual(msg.status, "approved")
+        self.assertIn("don't run ads", msg.body)
+        self.assertEqual(self.store.saved_answers()[0]["uses"], 1)
+
+    def test_a_saved_answer_never_answers_a_cancellation(self):
+        from answerrank import answers
+        from answerrank.models import Client
+        self.store.save_answer(["cancel", "subscription"], "Sure thing, bye.")
+        p = self._prospect(stage="won")
+        c = Client(business=p.business, plan="growth", mrr=997.0)
+        found, tell = answers.for_client("Please cancel our subscription", p, c,
+                                         self.settings, self.store)
+        self.assertNotIn("Sure thing, bye.", found)
+        self.assertTrue(tell)
+        self.assertEqual(self._api().answers("delete",
+                                             answer_id=self.store.saved_answers()[0]["id"]),
+                         {"ok": True})
+
+    # ---------------------------------------------------------- 7. health
+    def _client(self, days_in=75, quiet_days=None, reported_days_ago=10):
+        from answerrank.models import Client
+        p = self._prospect(stage="won")
+        now = datetime.now(timezone.utc)
+        c = Client(business=p.business, plan="growth", mrr=997.0,
+                   started_at=(now - timedelta(days=days_in)).isoformat(),
+                   last_report_at=(now - timedelta(days=reported_days_ago)).isoformat())
+        self.store.start_client(c)
+        return p, c
+
+    def test_a_quiet_client_with_reports_on_time_is_not_act_now(self):
+        from answerrank.agents.retention import RetentionAgent
+        p, c = self._client()
+        self.store.save_site_check(p.business.id, {"platform": "wix", "local_business": True,
+                                                   "checked_at": datetime.now(timezone.utc).isoformat()})
+        h = RetentionAgent(self.store, self.settings).score_client(c)
+        self.assertNotEqual(h.band, "act_now", h.signals)
+        RetentionAgent(self.store, self.settings).execute()
+        self.assertFalse([m for m in self.store.messages_for(p.id) if m.kind == "client_care"],
+                         "left in peace")
+
+    def test_fixes_not_live_is_still_act_now(self):
+        from answerrank.agents.retention import RetentionAgent
+        p, c = self._client(days_in=30)
+        self.store.save_site_check(p.business.id, {"platform": "wix", "local_business": False,
+                                                   "checked_at": datetime.now(timezone.utc).isoformat()})
+        self.assertEqual(RetentionAgent(self.store, self.settings).score_client(c).band,
+                         "act_now")
+
+    def test_the_checklist_shows_the_new_pieces(self):
+        from answerrank import autopilot
+        keys = [i["key"] for i in autopilot.readiness(self.store, self.settings)["items"]]
+        for k in ("live", "heartbeat", "backup", "budget"):
+            self.assertIn(k, keys)
 
 class TestTheResearchIsReal(unittest.TestCase):
     """Every rule that cites research points at an entry that exists, and

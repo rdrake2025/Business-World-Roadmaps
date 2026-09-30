@@ -170,7 +170,8 @@ echo    3  Email domain: set up and check
 echo    4  What still needs doing (Autopilot checklist)
 echo    5  Make the server setup file
 echo    6  Practice run - nothing real is sent
-echo    7  Close
+echo    7  Test everything with my real accounts
+echo    8  Close
 echo.
 set "CHOICE="
 set /p "CHOICE=   Type a number and press Enter: "
@@ -181,7 +182,8 @@ if "!CHOICE!"=="3" goto domain
 if "!CHOICE!"=="4" goto doctor
 if "!CHOICE!"=="5" goto server
 if "!CHOICE!"=="6" goto practice
-if "!CHOICE!"=="7" exit /b 0
+if "!CHOICE!"=="7" goto selftest
+if "!CHOICE!"=="8" exit /b 0
 echo.
 echo    That isn't one of the numbers.
 goto menu
@@ -280,6 +282,16 @@ if defined SETUPFILE (
     echo    and paste it into the server's User data box.
     start "" notepad "!SETUPFILE!"
 )
+echo.
+pause
+goto menu
+
+:selftest
+echo.
+echo    This sends ONE email to you and runs one real AI check (about 2 cents).
+echo    Nothing goes to anyone else.
+echo.
+"%VPY%" run.py selftest
 echo.
 pause
 goto menu

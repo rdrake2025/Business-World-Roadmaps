@@ -177,7 +177,9 @@
   .trio button:active{opacity:.75}
   .kb{text-align:center;margin:-4px 0 10px;font-size:11.5px}
   @media (hover:none){.kb{display:none}}
-  .sheet textarea.big{min-height:46vh;font-size:15px}
+  .sheet textarea.big{min-height:34vh;font-size:15px;font-weight:400}
+  .sheet .sw input{width:22px;height:22px;padding:0;margin:1px 0 0;flex:none}
+  .sheet .sw{margin-top:10px}
 
   /* calls */
   .badge.good{background:var(--good);color:#fff}
@@ -434,6 +436,10 @@
     <div class="card">
       <h2>This week</h2>
       <div id="weekBox"><div class="barnote">Loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>Answers you saved</h2>
+      <div id="savedList"><div class="barnote">Loading…</div></div>
     </div>
     <div class="card">
       <h2>The next move</h2>
@@ -1080,9 +1086,37 @@
         }).join("") + '</details>' +
       '<div class="acts" style="margin-top:12px"><button class="act' + (d.on ? '' : ' primary') +
         '" id="btnAutopilot">' + (d.on ? "Switch Autopilot off" : "Switch Autopilot on") +
-        '</button></div>';
+        '</button>' +
+        '<button class="act" id="btnSelftest"' + (SELFTEST ? ' disabled' : '') + '>' +
+          (SELFTEST ? "Live test running\u2026" : "Run the live test") + '</button>' +
+        '<div class="barnote" style="text-align:center">One email to you and one real AI ' +
+          'check, about 2 cents. Nothing goes to anyone else.</div></div>';
     el._data = d;
   }
+
+  // The live test waits for its own email to arrive, so it runs on the
+  // server and the card asks again every few seconds until it's done.
+  var SELFTEST = false;
+  function pollSelftest(){
+    api("/api/selftest").then(function(r){
+      SELFTEST = r.running;
+      if(r.running){ setTimeout(pollSelftest, 6000); return; }
+      var last = r.last || {};
+      toast(last.passed ? "Live test passed: everything works with your real accounts"
+        : "Live test: " + ((last.failed || []).concat(last.missing || []).slice(0, 2).join(", ") ||
+          "see the checklist") + " to fix", 7000);
+      loadAutopilot();
+    }).catch(function(){ SELFTEST = false; loadAutopilot(); });
+  }
+  $("apCard").addEventListener("click", function(e){
+    if(!e.target.closest("#btnSelftest") || SELFTEST) return;
+    SELFTEST = true;
+    api("/api/selftest", {}).then(function(){
+      toast("Live test started. It takes a minute or two.", 5000);
+      loadAutopilot();
+      setTimeout(pollSelftest, 6000);
+    }).catch(function(){ SELFTEST = false; toast("That didn't start"); });
+  });
   $("apCard").addEventListener("click", function(e){
     var r = e.target.closest("[data-resume]");
     var t = e.target.closest("#btnAutopilot");
@@ -1223,7 +1257,10 @@
     reviewSheet(reviewHead() +
       '<h3>' + esc(m.business) + '<span class="badge">' + esc(m.kind_label) + '</span></h3>' +
       '<div class="who">' + esc(m.market) + (m.email ? ' · ' + esc(m.email) : '') + '</div>' +
-      (m.evidence ? '<div class="finding">' + esc(m.evidence) + '</div>' : '') +
+      (m.asked ? '<div class="finding" style="background:var(--accent-soft);color:var(--ink)">' +
+        '<b>They asked:</b> \u201c' + esc(m.asked) + '\u201d. Autopilot had no written ' +
+        'answer, so this one is yours: tap Edit.</div>'
+        : (m.evidence ? '<div class="finding">' + esc(m.evidence) + '</div>' : '')) +
       '<div class="rvsubj">' + esc(m.subject) + '</div>' +
       '<div class="rvbody">' + esc(m.text) + '</div>' +
       (m.footer ? '<div class="rvfoot">' + esc(m.footer) + '</div>' : '') +
@@ -1236,7 +1273,14 @@
     var m = R.items[R.i];
     reviewSheet(reviewHead() + '<h3>Edit: ' + esc(m.business) + '</h3>' +
       '<input id="rvSubj" autocomplete="off" value="' + esc(m.subject) + '">' +
+      (m.asked ? '<div class="barnote" style="margin-bottom:6px">They asked: \u201c' +
+        esc(m.asked) + '\u201d</div>' : '') +
       '<textarea id="rvText" class="big">' + esc(m.text) + '</textarea>' +
+      (m.asked ? '<label class="sw" style="border:0;padding-bottom:0"><input type="checkbox" ' +
+        'id="rvSave" checked><span><div class="t">Use my answer next time</div>' +
+        '<div class="d">When someone\u2019s email mentions any of these words:</div>' +
+        '</span></label><input id="rvTriggers" autocomplete="off" value="' +
+        esc(suggestTriggers(m.asked)) + '">' : '') +
       (m.footer ? '<div class="barnote" style="margin-top:8px">Kept at the end, as the ' +
         'law requires:</div><div class="rvfoot">' + esc(m.footer) + '</div>' : '') +
       '<div class="trio two"><button data-rv="cancel">Cancel</button>' +
@@ -1254,7 +1298,15 @@
         .then(function(r){
           if(r.error){ toast(r.error, 6000); throw new Error("kept"); }
           m.subject = r.subject; m.text = r.text; m.body = r.body;
-          return api("/api/approve", { ids: [m.id] });
+          var save = $("rvSave") && $("rvSave").checked;
+          var words = ($("rvTriggers") && $("rvTriggers").value) || "";
+          return api("/api/approve", { ids: [m.id] }).then(function(){
+            if(!save) return;
+            return api("/api/answers", { action: "save", id: m.id, triggers: words })
+              .then(function(r){
+                toast(r.error ? r.error : "Saved. Autopilot uses it next time someone asks.", 5000);
+              });
+          });
         });
       act = "approve";
     } else {
@@ -1376,6 +1428,40 @@
       .then(function(){ busy = false; btn.disabled = false; });
   });
 
+  // The words most likely to recur in the next person's question: the
+  // longest few that aren't filler. The owner edits them before saving.
+  var STOP = ("about also and are can could did does for from have how into just like " +
+    "much need our should that the their them then there they this was what when where " +
+    "which will with would you your yours we us it its do if of on or to be in is at as " +
+    "an a by so any".split(" "));
+  function suggestTriggers(text){
+    var words = String(text || "").toLowerCase().replace(/[^a-z0-9\s'-]/g, " ").split(/\s+/)
+      .filter(function(w){ return w.length > 3 && STOP.indexOf(w) < 0; });
+    var seen = {};
+    words = words.filter(function(w){ if(seen[w]) return false; seen[w] = 1; return true; });
+    words.sort(function(a, b){ return b.length - a.length; });
+    return words.slice(0, 3).join(", ");
+  }
+  function loadSaved(){
+    return api("/api/answers").then(function(d){
+      $("savedList").innerHTML = d.items.length ? d.items.map(function(a){
+        return '<div class="finding"><b>' + esc(a.triggers) + '</b> \u2014 used ' + a.uses +
+          ' time' + (a.uses === 1 ? '' : 's') + '<br>' + esc(a.text.slice(0, 160)) +
+          (a.text.length > 160 ? '\u2026' : '') +
+          '<div style="margin-top:6px"><button class="opslink" data-delans="' + esc(a.id) +
+          '">Delete</button></div></div>';
+      }).join("") : '<div class="barnote">None yet. When Autopilot hands you a question ' +
+        'and you answer it, you can save the answer for next time.</div>';
+    }).catch(function(){});
+  }
+  $("savedList").addEventListener("click", function(e){
+    var b = e.target.closest("[data-delans]");
+    if(!b) return;
+    api("/api/answers", { action: "delete", answer_id: b.dataset.delans })
+      .then(function(){ toast("Deleted"); loadSaved(); })
+      .catch(function(){ toast("That didn't go through"); });
+  });
+
   function loadWeek(){
     return api("/api/week").then(function(d){
       var w = d.week;
@@ -1413,7 +1499,7 @@
     if(p === "inbox") loadInbox();
     if(p === "money") loadReports();
     if(p === "clients") loadClients();
-    if(p === "brain"){ loadBrain(); loadWeek(); }
+    if(p === "brain"){ loadBrain(); loadWeek(); loadSaved(); }
   }
 
   Array.prototype.forEach.call(document.querySelectorAll("nav button"), function(b){

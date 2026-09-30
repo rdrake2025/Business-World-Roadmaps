@@ -67,6 +67,47 @@ def _dns(store, settings, probe: bool) -> Item:
     return Item("dns", label, True, "passes the checks Gmail and Outlook apply")
 
 
+def _live(store) -> Item:
+    from . import selftest
+    r = selftest.last(store)
+    fix = ("Desktop button > 7, or Run the live test on this card. It sends one email "
+           "to you and runs one real AI check, about 2 cents.")
+    if not r:
+        return Item("live", "Tested with your real accounts", False, "not run yet", fix)
+    when = r.get("at", "")[:10]
+    if r.get("passed"):
+        return Item("live", "Tested with your real accounts", True, f"all working ({when})")
+    first = (r.get("failed") or r.get("missing") or ["something"])[0]
+    return Item("live", "Tested with your real accounts", False,
+                f"{first} didn't pass ({when})", fix)
+
+
+def _backup(store) -> Item:
+    try:
+        last = json.loads(store.kv_get("briefing.backup_last") or "{}")
+    except ValueError:
+        last = {}
+    if not last:
+        return Item("backup", "Weekly backup emailed to you", False,
+                    "the first one goes out Sunday night",
+                    "Nothing to do: it needs the mailbox, and arrives each Sunday.",
+                    required=False)
+    return Item("backup", "Weekly backup emailed to you", bool(last.get("ok")),
+                f"{last.get('detail', '')} ({last.get('at', '')[:10]})",
+                "" if last.get("ok") else "Check the mailbox works (desktop button, 7).",
+                required=False)
+
+
+def _budget(settings) -> Item:
+    from . import costs
+    e = costs.estimate(settings)
+    label = costs.PRESETS.get(e["preset"], {}).get("label", "Custom")
+    return Item("budget", "Budget chosen", True,
+                f"{label}: {e['checks_per_day']} businesses a day, about "
+                f"${e['total']:,.0f} a month before clients",
+                "Keys and settings asks: Lean, Standard or Growth.", required=False)
+
+
 def readiness(store, settings, probe: bool = False) -> dict:
     """Every piece Autopilot needs, and whether it's in place."""
     import os
@@ -131,6 +172,15 @@ def readiness(store, settings, probe: bool = False) -> dict:
              "saved" if getattr(settings, "booking_link", "") else "none",
              "Optional: Google Calendar > Create > Appointment schedule, then paste "
              "the link in Keys and settings.", required=False),
+        _live(store),
+        Item("heartbeat", "Warning if the server stops",
+             bool((getattr(settings, "heartbeat_url", "") or "").strip()),
+             "healthchecks.io is watching" if getattr(settings, "heartbeat_url", "")
+             else "not set up",
+             "Free: healthchecks.io > Add Check (period 30 min, grace 30 min), then "
+             "paste its ping URL in Keys and settings.", required=False),
+        _backup(store),
+        _budget(settings),
         Item("supervised", f"You've read the first {need} first emails",
              supervised >= need, f"{min(supervised, need)} of {need}",
              "Approve first emails in the phone's review screen as they arrive; "

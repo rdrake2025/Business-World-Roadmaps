@@ -200,7 +200,7 @@ def report_email(prospect: Prospect, audit, settings,
 
 def draft_response(intent: str, prospect: Prospect, settings,
                    text: str = "", report_sent: bool = False,
-                   payment_link: str = "") -> tuple[str, str]:
+                   payment_link: str = "", store=None) -> tuple[str, str]:
     """A reply the operator can send as-is or edit in ten seconds.
 
     ``report_sent`` matters because the right answer to most messages
@@ -277,7 +277,7 @@ def draft_response(intent: str, prospect: Prospect, settings,
         # A written answer to what they actually asked, before the general
         # explanation: the general one is what a human would send only when
         # nothing better fits, so on Autopilot it waits for you.
-        faq = answers.for_prospect(text, prospect, settings)
+        faq = answers.for_prospect(text, prospect, settings, store)
         if faq:
             return ("answer_faq", _body("Hi,", *faq, next_step, booking_line(settings),
                                         brand))
@@ -571,7 +571,8 @@ class ConciergeAgent(Agent):
             action, kind = "send_report", "report"
         elif intent == "client_message":
             from .. import answers
-            found, tell_owner = answers.for_client(text, prospect, client, self.settings)
+            found, tell_owner = answers.for_client(text, prospect, client, self.settings,
+                                                   self.store)
             if found:
                 action, body = "client_help", _body("Hi,", *found, self.settings.brand)
             else:
@@ -581,7 +582,8 @@ class ConciergeAgent(Agent):
             if intent == "ready_to_buy":
                 link = start_link(self.settings, prospect)
             action, body = draft_response(intent, prospect, self.settings, text,
-                                          report_sent=report_sent, payment_link=link)
+                                          report_sent=report_sent, payment_link=link,
+                                          store=self.store)
             subject, kind = f"Re: {prospect.business.name}", "reply"
 
         from .. import automation

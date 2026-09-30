@@ -121,7 +121,20 @@ class Mailer:
     def send(self, to_email: str, subject: str, body: str) -> tuple[bool, str]:
         if not self.config.configured():
             return False, "SMTP not configured (set SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD)"
+        return self._deliver(build_message(to_email, subject, body, self.settings))
+
+    def send_file(self, to_email: str, subject: str, body: str, filename: str,
+                  data: bytes, mime: str = "application/octet-stream") -> tuple[bool, str]:
+        """An email with one attachment. Only ever to the owner (backups)."""
+        if not self.config.configured():
+            return False, "SMTP not configured (set SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD)"
         msg = build_message(to_email, subject, body, self.settings)
+        maintype, _, subtype = mime.partition("/")
+        msg.add_attachment(data, maintype=maintype, subtype=subtype or "octet-stream",
+                           filename=filename)
+        return self._deliver(msg)
+
+    def _deliver(self, msg) -> tuple[bool, str]:
         try:
             with smtplib.SMTP(self.config.host, self.config.port, timeout=30) as server:
                 if self.config.use_tls:
