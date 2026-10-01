@@ -384,7 +384,19 @@
                     background:var(--card);color:var(--ink);font-size:15px">
       <div id="findList"></div>
       <div class="acts" style="margin-top:10px">
-        <button class="act" id="btnAddOpen">Add a business you know</button></div>
+        <button class="act" id="btnAddOpen">Add a business you know</button>
+        <button class="act" id="btnAddManyOpen">Add several at once</button></div>
+      <template id="addManyForm">
+        <h3>Add several at once</h3>
+        <div class="who">One per line: name | trade | town. The Pilot Kit's
+          <b>Copy for AnswerRank</b> writes exactly this.</div>
+        <textarea id="addManyText" class="big" placeholder="Harbor Line Plumbing | plumbing | Tulsa, OK"></textarea>
+        <label class="sw" style="border:0"><input type="checkbox" id="addManyPilot" checked>
+          <span><div class="t">Sign each one up as a free pilot</div>
+          <div class="d">Untick to add them to the pipeline only.</div></span></label>
+        <div class="acts" style="margin-top:10px">
+          <button class="act primary" id="btnAddMany">Add them all</button></div>
+      </template>
       <template id="addForm">
         <h3>Add a business you know</h3>
         <div class="who">A pilot, a referral, a friend's firm. They are never sent
@@ -1686,6 +1698,29 @@
   // it so signing them up is the next tap.
   $("btnAddOpen").addEventListener("click", function(){
     openSheet($("addForm").innerHTML);
+  });
+  $("btnAddManyOpen").addEventListener("click", function(){
+    openSheet($("addManyForm").innerHTML);
+  });
+  $("sheetBody").addEventListener("click", function(e){
+    var btn = e.target.closest("#btnAddMany");
+    if(!btn || busy) return;
+    var text = ($("addManyText").value || "").trim();
+    if(!text){ toast("Paste at least one line"); return; }
+    busy = true; btn.disabled = true; btn.textContent = "Adding…";
+    api("/api/add_many", { text: text, pilots: $("addManyPilot").checked })
+      .then(function(r){
+        var msg = r.added.length + " added" +
+          (r.signed.length ? ", " + r.signed.length + " signed up as free pilots" : "");
+        if(r.skipped.length){
+          msg += ". Skipped " + r.skipped.length + ": " + r.skipped.map(function(x){
+            return x.line.split("|")[0].trim() + " (" + x.why + ")"; }).join("; ");
+        }
+        toast(msg, r.skipped.length ? 9000 : 4500);
+        if(r.added.length){ closeSheet(); return load(true); }
+      })
+      .catch(function(){ toast("That didn't go through"); })
+      .then(function(){ busy = false; btn.disabled = false; btn.textContent = "Add them all"; });
   });
   $("sheetBody").addEventListener("click", function(e){
     var btn = e.target.closest("#btnAdd");

@@ -6974,3 +6974,34 @@ class TestThePilotEnds(_Biz):
         (item,) = self._api().pilots()
         self.assertTrue(item["ends_on"])
         self.assertIn("$997", item["offer"])
+
+
+class TestAddSeveralAtOnce(_Biz):
+    """The Pilot Kit scores businesses you know; each one then had to be typed
+    into AnswerRank again by hand. Its "Copy for AnswerRank" lines paste in."""
+
+    KIT = ("# From the Pilot Kit\n"
+           "Harbor Line Plumbing | plumbing | Tulsa, OK | Said yes\n"
+           "Sunward Roofing | Roofing contractor | Owasso, OK | Said yes | dana@sunward.example\n"
+           "Mystery Co | astrology | Tulsa, OK\n"
+           "No Town Ltd | plumbing |\n")
+
+    def test_lines_from_the_kit_become_pilots(self):
+        r = self._api().add_many(self.KIT, pilots=True)
+        self.assertEqual(r["added"], ["Harbor Line Plumbing", "Sunward Roofing"])
+        self.assertEqual(r["signed"], ["Harbor Line Plumbing", "Sunward Roofing"])
+        self.assertEqual(len(r["skipped"]), 2, "an unknown trade and a missing town")
+        pilots = {c.business.name: c for c in self.store.get_clients("active") if c.plan == "pilot"}
+        self.assertEqual(set(pilots), {"Harbor Line Plumbing", "Sunward Roofing"})
+        self.assertEqual(pilots["Sunward Roofing"].business.vertical, "roofing",
+                         "the trade's label is understood as well as its key")
+        self.assertEqual((pilots["Harbor Line Plumbing"].business.city,
+                          pilots["Harbor Line Plumbing"].business.state), ("Tulsa", "OK"))
+
+    def test_pipeline_only_and_no_duplicates(self):
+        self._api().add_many("Harbor Line Plumbing | plumbing | Tulsa, OK", pilots=False)
+        self.assertEqual(self.store.get_clients("active"), [])
+        again = self._api().add_many("Harbor Line Plumbing | plumbing | Tulsa, OK", pilots=False)
+        names = [p.business.name for p in self.store.get_prospects(limit=50)]
+        self.assertEqual(names.count("Harbor Line Plumbing"), 1)
+        self.assertEqual(again["added"], ["Harbor Line Plumbing"], "found, not added twice")

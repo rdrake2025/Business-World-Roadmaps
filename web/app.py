@@ -403,6 +403,11 @@ class Application:
             **{k: str(d.get(k, "")) for k in ("name", "city", "state", "vertical",
                                                "website", "email", "phone")}))
 
+    def api_add_many(self, environ, start):
+        d = self._body_json(environ)
+        return self._json(start, self.api.add_many(str(d.get("text", "")),
+                                                   bool(d.get("pilots"))))
+
     def api_expense(self, environ, start):
         d = self._body_json(environ)
         return self._json(start, self.api.log_expense(
@@ -517,6 +522,7 @@ class Application:
             "/api/win": self.api_win,
             "/api/paid": self.api_paid,
             "/api/add": self.api_add,
+            "/api/add_many": self.api_add_many,
             "/api/calls": self.api_calls,
             "/api/call-sheet": self.api_call_sheet,
             "/api/call": self.api_call,
