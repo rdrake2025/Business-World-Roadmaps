@@ -199,3 +199,109 @@ def write_up(store, client) -> tuple[Evidence, str]:
     lines += ["---", "AI answers vary from run to run and no one can guarantee a "
               "placement in them. These are measurements, not promises."]
     return ev, "\n".join(lines)
+
+
+_PAGE_CSS = """
+:root{--bg:#fbfaf7;--ink:#17191e;--muted:#5d6370;--rule:#e4e2dc;--good:#1e7a4a;
+--good-soft:#e5f3eb;--warn:#a2420f;--warn-soft:#fbece3;--quote:#f1efe9}
+@media (prefers-color-scheme:dark){:root{--bg:#121417;--ink:#ebecee;--muted:#a1a6b0;
+--rule:#2a2e35;--good:#79d59f;--good-soft:#16281e;--warn:#ff9b73;--warn-soft:#2c1c14;
+--quote:#1b1e23}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,-apple-system,
+"Segoe UI",sans-serif;padding:28px 18px 48px}
+main{max-width:720px;margin:0 auto}
+h1{font-size:26px;line-height:1.2;margin:0 0 18px;text-wrap:balance}
+h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+margin:30px 0 10px}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:13px;color:var(--muted);font-weight:600}
+td:not(:first-child),th:not(:first-child){text-align:right}
+ul{padding-left:20px}li{margin:4px 0}
+blockquote{margin:0;padding:12px 16px;background:var(--quote);border-radius:10px;
+color:var(--muted)}
+.verdict{padding:14px 16px;border-radius:12px;background:var(--good-soft);
+border:1px solid var(--good)}
+.verdict.no{background:var(--warn-soft);border-color:var(--warn)}
+hr{border:0;border-top:1px solid var(--rule);margin:26px 0 14px}
+hr+p{font-size:13.5px;color:var(--muted)}
+footer{margin-top:34px;font-size:13px;color:var(--muted)}
+footer a{color:inherit}
+"""
+
+
+def to_html(markdown: str, brand: str = "AnswerRank") -> str:
+    """The write-up as a page to show someone, on a phone or printed.
+
+    It was served as raw Markdown, pipes and hashes and all, and it is the one
+    page meant for a stranger's eyes. This reads only what :func:`write_up`
+    writes: headings, one table, lists, a quote and paragraphs. Everything is
+    escaped first, since a business name is whatever its owner typed.
+    """
+    import html as h
+    import re
+
+    def inline(s: str) -> str:
+        return re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", h.escape(s))
+
+    lines, out, i, title, verdict = markdown.splitlines(), [], 0, brand, False
+    while i < len(lines):
+        ln = lines[i].rstrip()
+        if not ln.strip():
+            i += 1
+        elif ln.strip() == "---":
+            out.append("<hr>")
+            verdict = False
+            i += 1
+        elif ln.startswith("# "):
+            title = ln[2:]
+            out.append(f"<h1>{inline(title)}</h1>")
+            i += 1
+        elif ln.startswith("## "):
+            verdict = ln[3:].strip().lower() == "verdict"
+            out.append(f"<h2>{inline(ln[3:])}</h2>")
+            i += 1
+        elif ln.startswith("|"):
+            rows = []
+            while i < len(lines) and lines[i].startswith("|"):
+                cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
+                if not all(set(c) <= set("-: ") for c in cells):
+                    rows.append(cells)
+                i += 1
+            head, body = rows[0], rows[1:]
+            out.append('<div class="scroll"><table><thead><tr>'
+                       + "".join(f"<th>{inline(c)}</th>" for c in head) + "</tr></thead><tbody>"
+                       + "".join("<tr>" + "".join(f"<td>{inline(c)}</td>" for c in r) + "</tr>"
+                                 for r in body) + "</tbody></table></div>")
+        elif ln.startswith("- "):
+            items = []
+            while i < len(lines) and lines[i].startswith("- "):
+                items.append(lines[i][2:])
+                i += 1
+            out.append("<ul>" + "".join(f"<li>{inline(x)}</li>" for x in items) + "</ul>")
+        elif ln.startswith(">"):
+            quote = []
+            while i < len(lines) and lines[i].startswith(">"):
+                quote.append(lines[i].lstrip(">").strip())
+                i += 1
+            out.append(f"<blockquote>{inline(' '.join(quote))}</blockquote>")
+        else:
+            para = []
+            while i < len(lines) and lines[i].strip() and lines[i].strip() != "---" \
+                    and not lines[i].startswith(("#", "|", "- ", ">")):
+                para.append(lines[i].strip())
+                i += 1
+            text = " ".join(para)
+            if verdict:
+                no = "do not publish" in text.lower() or "too early" in text.lower()
+                out.append(f'<p class="verdict{" no" if no else ""}">{inline(text)}</p>')
+            else:
+                out.append(f"<p>{inline(text)}</p>")
+    return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            f"<title>{h.escape(title)}</title><style>{_PAGE_CSS}</style></head><body><main>"
+            + "".join(out)
+            + f"<footer>Measured by {h.escape(brand)}. "
+              "<a href=\"?format=text\">Plain text version</a></footer></main></body></html>")

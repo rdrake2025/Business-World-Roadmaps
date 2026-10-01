@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +54,7 @@ class Api:
     def state(self) -> dict[str, Any]:
         from answerrank.agents.bookkeeper import BookkeeperAgent
         from answerrank.agents.outreach import OutreachAgent
+        from answerrank.mailer import SMTPConfig
 
         kpis = BookkeeperAgent(self.store, self.settings).kpis()
         blockers = OutreachAgent(self.store, self.settings).preflight()
@@ -100,11 +101,57 @@ class Api:
             "agents": agents,
             "blockers": blockers,
             "can_send": not blockers,
+            "mailbox": SMTPConfig.from_env().configured(),
+            "pilots": self.pilots(),
             "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
 
+    def pilots(self) -> list[dict[str, Any]]:
+        """Each pilot's measurements so far, and when the next things happen.
+
+        On the $5 path (PILOTS.md) the pilots are the whole business, and
+        nothing said how they were doing: not the first score, not when the
+        next measurement runs, not when the before-and-after can be read.
+        """
+        from answerrank.casestudy import MIN_DAYS
+
+        def day(iso: str, plus: int = 0) -> str:
+            try:
+                d = datetime.fromisoformat(iso.replace("Z", "+00:00")) + timedelta(days=plus)
+            except ValueError:
+                return ""
+            return d.strftime("%d %b").lstrip("0")
+
+        out = []
+        for c in self.store.get_clients("active"):
+            if c.plan != "pilot":
+                continue
+            audits = self.store.audit_history(c.business.id, limit=24, comparable=True)
+            from answerrank import sales
+            ends = sales.pilot_ends(c)
+            plan = sales.offer_plan(self.settings, c.business.vertical)
+            item: dict[str, Any] = {"id": c.id, "name": c.business.name,
+                                    "measured": len(audits), "ends_on": day(ends + "T00:00:00+00:00"),
+                                    "offer": f"{plan.capitalize()}, ${self.settings.pricing.plan_price(plan):,.0f}/mo"}
+            if audits:
+                first, last = audits[-1], audits[0]
+                age = (datetime.now(timezone.utc)
+                       - datetime.fromisoformat(first.created_at.replace("Z", "+00:00"))).days
+                item.update(
+                    first_score=round(first.score), first_on=day(first.created_at),
+                    latest_score=round(last.score), latest_on=day(last.created_at),
+                    # The Auditor measures a client again once their last full
+                    # audit is 28 days old, while AnswerRank is open.
+                    next_on=day(last.created_at, 28),
+                    case_on=day(first.created_at, MIN_DAYS),
+                    case_ready=age >= MIN_DAYS and len(audits) >= 2,
+                    case_url=f"/files/case/{c.id}")
+            out.append(item)
+        return out
+
     #: What each kind of draft is, in the words on its badge.
-    KIND_LABEL = {"reply": "answer to their reply", "report": "report they asked for",
+    KIND_LABEL = {"pilot_offer": "end of their free pilot",
+                  "reply": "answer to their reply", "report": "report they asked for",
                   "welcome": "welcome", "invoice": "payment link",
                   "client_report": "monthly report", "client_care": "check-in"}
 
@@ -441,6 +488,11 @@ class Api:
             self.store.save_message(m)
             return {"ok": True, "status": "drafted",
                     "label": "Pulled back. It's in your drafts again."}
+        if m.status == "sent" and self.store.kv_get(f"byhand.{m.id}"):
+            m.status, m.sent_at = "drafted", ""
+            self.store.save_message(m)
+            self.store.kv_set(f"byhand.{m.id}", "")
+            return {"ok": True, "status": "drafted", "label": "Back in your drafts."}
         if m.status == "sent":
             return {"error": "That one has already gone."}
         raw = self.store.kv_get(f"undo.{m.id}") or ""
@@ -455,6 +507,56 @@ class Api:
             self.store.kv_set(f"undo.{m.id}", "")
             return {"ok": True, "status": "drafted", "label": "Back in your drafts."}
         return {"error": "Nothing to undo for that one."}
+
+    def convert_pilot(self, client_id: str, plan: str = "") -> dict[str, Any]:
+        """A pilot said yes to a paid plan."""
+        from answerrank import sales
+
+        client = self.store.get_client(client_id)
+        if client is None:
+            return {"error": "That client isn't here any more."}
+        done = sales.convert_pilot(self.store, self.settings, client, plan)
+        if done.get("error"):
+            return done
+        price = f"${done['mrr']:,.0f}"
+        if done["payment_link"] and done["email"]:
+            nxt = f"The payment link for {price}/month goes to {done['email']} shortly."
+        elif done["payment_link"]:
+            nxt = ("The payment link is in the Inbox: Copy text, send it to them, then "
+                   "I sent it myself. They go live the moment it's paid.")
+        else:
+            nxt = (f"No payment link is set up yet. Send them an invoice for {price}, "
+                   f"then tap Paid on the Clients tab when it arrives.")
+        return {**done, "next": nxt}
+
+    def sent_by_hand(self, message_id: str) -> dict[str, Any]:
+        """You sent it yourself: from your own email, by text, in person.
+
+        On the $5 pilot path there is no mailbox, so a pilot's welcome sat in
+        the drafts for good and was reported as blocking every day. "I'll
+        handle it" cleared it but recorded it as never sent, so a report you
+        had sent by hand could be sent again. First emails to strangers can't
+        be marked this way: only the send path adds the unsubscribe link and
+        keeps to the warm-up.
+        """
+        from answerrank.models import now_iso
+
+        m = self.store.get_message(message_id)
+        if m is None:
+            return {"error": "That email isn't here any more."}
+        if (m.kind or "cold") == "cold":
+            return {"error": "First emails go out through AnswerRank, so the "
+                             "unsubscribe link and the daily limit apply."}
+        if m.status not in {"drafted", "approved"}:
+            return {"error": "That one has already gone."}
+        m.status, m.sent_at, m.approved_at = "sent", now_iso(), ""
+        self.store.save_message(m)
+        self.store.kv_set(f"byhand.{m.id}", m.sent_at)
+        p = self._prospect(m.prospect_id)
+        if p is not None:
+            p.last_touch_at = m.sent_at
+            self.store.upsert_prospect(p)
+        return {"ok": True, "status": "sent", "label": "Marked as sent by you."}
 
     def reject(self, ids: list[str]) -> dict[str, Any]:
         """Skip a draft.

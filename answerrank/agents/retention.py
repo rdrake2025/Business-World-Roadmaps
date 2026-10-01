@@ -364,6 +364,7 @@ class RetentionAgent(Agent):
                     note=h.action[:300])
 
         cared = self._care(rows)
+        offers = self._pilot_offers()
 
         at_risk = [h for h in rows if h.band == "act_now"]
         monitor = [h for h in rows if h.band == "monitor"]
@@ -374,7 +375,42 @@ class RetentionAgent(Agent):
             summary += (f" | ${risk_mrr:,.0f}/mo at risk — worst: {at_risk[0].line()}")
         if cared:
             summary += f" | {cared} care email(s) written"
+        if offers:
+            summary += f" | {offers} pilot(s) ending soon: offer written"
         return len(rows), summary
+
+    def _pilot_offers(self) -> int:
+        """A week before a free pilot ends, the offer: where they stand and the
+        price. Nothing ended a pilot before; it stayed free for good, and the
+        step from proof to the first paying client was left to memory."""
+        from datetime import date
+
+        from .. import automation, sales
+        from ..models import OutreachMessage, now_iso
+
+        today = datetime.now(timezone.utc).date()
+        written = 0
+        for client in self.store.get_clients("active"):
+            if client.plan != "pilot" or self.store.has_outcome(client.id, "pilot_offer"):
+                continue
+            ends = date.fromisoformat(sales.pilot_ends(client))
+            if (ends - today).days > sales.PILOT_NOTICE_DAYS:
+                continue
+            prospect = self.store.prospect_for_business(client.business)
+            if prospect is None:
+                continue
+            subject, body = sales.pilot_offer(self.store, self.settings, client)
+            auto = bool(prospect.business.email) and automation.auto_approve(
+                self.store, "pilot_offer")
+            self.store.save_message(OutreachMessage(
+                prospect_id=prospect.id, subject=subject, body=body, kind="pilot_offer",
+                sequence_step=0, scheduled_for=now_iso(),
+                status="approved" if auto else "drafted"))
+            self.store.record_outcome(prospect_id=client.id, kind="pilot_offer",
+                                      vertical=client.business.vertical,
+                                      note=f"free pilot ends {ends.isoformat()}")
+            written += 1
+        return written
 
     def _care(self, rows: list[Health]) -> int:
         """Write the email each at-risk client's action calls for."""

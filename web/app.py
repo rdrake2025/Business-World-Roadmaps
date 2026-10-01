@@ -311,6 +311,15 @@ class Application:
     def api_undo(self, environ, start):
         return self._json(start, self.api.undo(str(self._body_json(environ).get("id", ""))))
 
+    def api_convert_pilot(self, environ, start):
+        d = self._body_json(environ)
+        return self._json(start, self.api.convert_pilot(str(d.get("id", "")),
+                                                        str(d.get("plan", ""))))
+
+    def api_sent_by_hand(self, environ, start):
+        return self._json(start, self.api.sent_by_hand(
+            str(self._body_json(environ).get("id", ""))))
+
     def api_send(self, environ, start):
         d = self._body_json(environ)
         return self._json(start, self.api.send(
@@ -493,6 +502,8 @@ class Application:
             "/api/reject": self.api_reject,
             "/api/edit": self.api_edit,
             "/api/undo": self.api_undo,
+            "/api/sent_by_hand": self.api_sent_by_hand,
+            "/api/convert_pilot": self.api_convert_pilot,
             "/api/send": self.api_send,
             "/api/tick": self.api_tick,
             "/api/clients": self.api_clients,
@@ -541,8 +552,13 @@ class Application:
             if not client:
                 return self._ok(start, render("notfound.html"), status="404 Not Found")
             _ev, text = casestudy.write_up(self.store, client)
-            body = text.encode("utf-8")
-            start("200 OK", [("Content-Type", "text/plain; charset=utf-8"),
+            query = urllib.parse.parse_qs(environ.get("QUERY_STRING", ""))
+            if (query.get("format") or [""])[0] == "text":
+                body, ctype = text.encode("utf-8"), "text/plain; charset=utf-8"
+            else:
+                body = casestudy.to_html(text, self.settings.brand).encode("utf-8")
+                ctype = "text/html; charset=utf-8"
+            start("200 OK", [("Content-Type", ctype),
                              ("Content-Length", str(len(body))),
                              ("Cache-Control", "no-store")])
             return [body]

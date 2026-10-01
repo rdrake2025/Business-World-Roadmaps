@@ -319,6 +319,7 @@
   <!-- ============ TODAY ============ -->
   <section class="pane on" id="pane-today">
     <div id="todayBanner"></div>
+    <div id="pilotCard"></div>
 
     <div class="ap" id="apCard"><div class="barnote">Loading Autopilot…</div></div>
 
@@ -516,6 +517,11 @@
 
   // A toast can carry Undo for the email it is about: approving or skipping
   // by mistake is one tap to take back.
+  function copyText(text){
+    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
+      .then(function(){ toast("Copied. Paste it into your own email or text."); },
+            function(){ toast("This browser won't copy from here. Open the email and select the text.", 5000); });
+  }
   function toast(msg, ms, undoId){
     var t = $("toast");
     t.innerHTML = '<span>' + esc(msg) + '</span>' +
@@ -542,6 +548,50 @@
   }
 
   // ---------------------------------------------------------------- render
+  function renderPilots(list){
+    var el = $("pilotCard");
+    if(!list.length){ el.innerHTML = ""; return; }
+    el.innerHTML = '<div class="card" style="margin-bottom:11px"><h2>Pilots</h2>' +
+      list.map(function(p){
+        if(!p.measured){
+          return '<div class="row"><span class="l">' + esc(p.name) + '</span>' +
+            '<span class="r" style="font-size:12.5px;color:var(--muted)">first ' +
+            'measurement soon</span></div>';
+        }
+        var moved = p.measured > 1 ? p.first_score + ' \u2192 ' + p.latest_score : String(p.first_score);
+        return '<div class="row" style="flex-wrap:wrap"><span class="l"><b>' + esc(p.name) +
+          '</b></span><span class="r mono">' + moved + '</span>' +
+          '<div class="barnote" style="flex-basis:100%;margin-top:3px">' +
+          (p.measured > 1 ? 'Measured ' + p.measured + ' times since ' + esc(p.first_on)
+                          : 'First measured ' + esc(p.first_on)) +
+          '. Next measurement from ' + esc(p.next_on) + ', while AnswerRank is open. ' +
+          (p.case_ready ? '<a href="' + esc(p.case_url) + '" target="_blank" rel="noopener">' +
+                          'The before-and-after is ready</a>.'
+                        : 'Before-and-after from ' + esc(p.case_on) + '.') +
+          ' Free until ' + esc(p.ends_on) + '.</div>' +
+          '<button class="act" style="flex-basis:100%;margin-top:8px" data-convert="' +
+            esc(p.id) + '" data-offer="' + esc(p.offer) + '">They said yes: start paid plan</button>' +
+          '</div>';
+      }).join("") + '<div class="barnote" style="margin-top:6px">Scores are out of 100: ' +
+      'how often and how well AI assistants name them.</div></div>';
+  }
+  $("pilotCard").addEventListener("click", function(e){
+    var b = e.target.closest("button[data-convert]");
+    if(!b || busy) return;
+    if(!b.dataset.armed){
+      b.dataset.armed = "1";
+      b.textContent = "Tap again to start " + b.dataset.offer;
+      setTimeout(function(){ if(b.isConnected){ delete b.dataset.armed;
+        b.textContent = "They said yes: start paid plan"; } }, 4000);
+      return;
+    }
+    busy = true;
+    api("/api/convert_pilot", { id: b.dataset.convert }).then(function(r){
+      toast(r.error ? r.error : r.name + ": " + r.next, 7000);
+      return load(true);
+    }).catch(function(){ toast("That didn't go through"); })
+      .then(function(){ busy = false; });
+  });
   function renderToday(){
     var q = S.queue, p = S.pipeline;
     $("tDraft").textContent = q.drafted;
@@ -550,7 +600,14 @@
     $("tHot").textContent = p.hot;
 
     var b = $("todayBanner");
-    if(S.blockers.length){
+    if(!S.mailbox){
+      // Pilots on your own computer (PILOTS.md): nothing is meant to be sent
+      // from here yet, so "Sending is blocked" was alarming and beside the point.
+      b.innerHTML = '<div class="banner ok"><b>No mailbox yet, and that\u2019s fine</b>' +
+        'AnswerRank writes the emails; you send them yourself. In the Inbox, tap ' +
+        'Copy text, send it from your own email, then I sent it myself. Set up a ' +
+        'mailbox when you\u2019re ready to email businesses you don\u2019t know.</div>';
+    } else if(S.blockers.length){
       b.innerHTML = '<div class="banner block"><b>Sending is blocked</b>' +
         'You can review and approve, but nothing will go out until these are fixed ' +
         'on the laptop.<ul>' +
@@ -559,6 +616,8 @@
     } else {
       b.innerHTML = "";
     }
+
+    renderPilots(S.pilots || []);
 
     $("btnGoInbox").hidden = !q.drafted;
     $("btnSend").hidden = !!AUTO.auto_send;
@@ -650,7 +709,11 @@
           '<button data-a="reject">' + (m.kind === "cold" ? "Skip" : "I'll handle it") + '</button>' +
           '<button data-a="edit">Edit</button>' +
           '<button class="yes" data-a="approve">Approve</button>' +
-        '</div></div>';
+        '</div>' +
+        (m.kind === "cold" ? '' : '<div class="trio flat two">' +
+          '<button data-a="copy">Copy text</button>' +
+          '<button data-a="byhand">I sent it myself</button></div>') +
+        '</div>';
     }).join("");
   }
 
@@ -1267,6 +1330,8 @@
       '<div class="trio"><button data-rv="skip">' + (warm ? "I'll handle it" : "Skip") +
         '</button><button data-rv="edit">Edit</button>' +
         '<button class="yes" data-rv="approve">Approve</button></div>' +
+      (warm ? '<div class="trio two flat" style="margin-top:8px"><button data-rv="copy">Copy text</button>' +
+        '<button data-rv="byhand">I sent it myself</button></div>' : '') +
       '<div class="barnote kb">Keys: A approve · S skip · E edit · U undo</div>');
   }
   function editReview(){
@@ -1291,9 +1356,16 @@
     var m = R.items[R.i];
     if(act === "edit"){ editReview(); return; }
     if(act === "cancel"){ showReview(); return; }
+    if(act === "copy"){ copyText(m.subject + "\n\n" + m.body); return; }
     busy = true;
     var done;
-    if(act === "save"){
+    if(act === "byhand"){
+      done = api("/api/sent_by_hand", { id: m.id }).then(function(r){
+        if(r.error){ toast(r.error, 5000); throw new Error("kept"); }
+        toast(r.label);
+      });
+      act = "approve";
+    } else if(act === "save"){
       done = api("/api/edit", { id: m.id, subject: $("rvSubj").value, text: $("rvText").value })
         .then(function(r){
           if(r.error){ toast(r.error, 6000); throw new Error("kept"); }
@@ -1513,6 +1585,22 @@
     if(!btn || busy) return;
     var card = btn.closest(".msg"), id = card.dataset.id, act = btn.dataset.a;
     if(act === "edit"){ openReview(id, true); return; }
+    if(act === "copy"){
+      copyText(card.querySelector(".subj").textContent + "\n\n" + card.querySelector("pre").textContent);
+      return;
+    }
+    if(act === "byhand"){
+      busy = true;
+      card.style.opacity = ".45";
+      api("/api/sent_by_hand", { id: id }).then(function(r){
+        if(r.error){ card.style.opacity = "1"; toast(r.error, 5000); return; }
+        card.remove();
+        toast(r.label, 0, id);
+        return load(true);
+      }).catch(function(){ card.style.opacity = "1"; toast("That didn't go through"); })
+        .then(function(){ busy = false; });
+      return;
+    }
     var warm = btn.textContent !== "Skip";
     busy = true;
     card.style.opacity = ".45";

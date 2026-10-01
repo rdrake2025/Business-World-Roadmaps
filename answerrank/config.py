@@ -165,6 +165,11 @@ class Settings:
     #: while it runs; if the pings stop, the service emails you. The Guardian
     #: can't do this: if the server dies, the Guardian dies with it.
     heartbeat_url: str = ""
+    #: Your Obsidian vault's folder. When set, the fleet keeps an AnswerRank
+    #: folder in it up to date (at most hourly): the reference notes plus a
+    #: dashboard and a note per client and pilot from your own data. Only
+    #: notes it writes are ever replaced. See answerrank/vault.py.
+    obsidian_vault: str = ""
     #: Whether the done-for-you Managed plan is offered. It means installing
     #: fixes on the client's site by hand, which only a person can do, so
     #: Autopilot turns it off and sells up to Growth (set from the switch on

@@ -278,7 +278,7 @@ def classify_outbound(subject: str, body: str) -> str:
     s, b = subject or "", body or ""
     if "visibility report" in s.lower():
         return "report"
-    if s.startswith("You're in"):
+    if s.startswith(("You're in", "Your free pilot")):
         return "welcome"
     if re.match(r"^[A-Z][a-z]+ report \u2014 ", s):
         return "client_report"

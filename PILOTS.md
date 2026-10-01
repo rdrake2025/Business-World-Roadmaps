@@ -40,20 +40,29 @@ permission to share the before-and-after.
    - their report (where they stand now, and what to fix);
    - the files for their website, with steps for their website builder.
 
-   The welcome email is written for you in the Inbox tab. Copy it into your
-   own email or text, and attach the report and files.
+   The welcome email is written for you in the Inbox tab. Tap **Copy text**,
+   send it from your own email (attach the report and files), then tap **I
+   sent it myself** so AnswerRank knows it went.
 7. **Open AnswerRank about once a month** and leave it open for ten minutes.
    It measures each pilot again every 28 days, using the same questions each
-   time.
-8. **After 45 days**, Clients → the business → **Before & after (case
-   study)**. It says plainly whether the change is real or within the noise.
+   time. The **Pilots** card on Today shows each one's first and latest
+   score, and the date of the next measurement.
+8. **After 45 days**, the Pilots card links to the **before-and-after**: a
+   page you can show other businesses (also under Clients → the business →
+   **Before & after (case study)**).
+9. **A week before the three months end**, AnswerRank writes the offer (Inbox:
+   "end of their free pilot"): where they stand, honestly, and the price for
+   their trade, no contract. Send it, and if they say yes, tap **They said
+   yes: start paid plan** on the Pilots card. That's your first paying client. It says plainly whether the change is real or within the noise.
    It only says "worth publishing" when the change is bigger than the margin
    of error. If it didn't move, it says not to publish.
 
 ## What to expect
 
-- The console will remind you that the welcome and report emails haven't
-  gone out. That's expected with no mailbox: you're sending them yourself.
+- With no mailbox, anything written for a pilot waits in the Inbox until you
+  tap **I sent it myself**. Undo works if you tap it by mistake.
+- The dashboard shows what you've actually spent: the checks, and no monthly
+  overhead, because there's no mailbox or server to pay for yet.
 - Nothing else is spent. No business finder key is saved, so the system
   doesn't look for strangers to email, checks no one else, and makes nothing
   up. (Before this was fixed, real mode with missing keys quietly used

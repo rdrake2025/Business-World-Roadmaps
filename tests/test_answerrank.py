@@ -6623,3 +6623,354 @@ class TestRealModeNeverPretends(_SalesFixture):
         lines = {l["label"]: l["monthly"] for l in costs.estimate(self.settings)["lines"]}
         self.assertIn("Market research", lines)
         self.assertLess(lines["Market research"], 3, "a monthly re-check, not twice a day")
+
+
+class TestThePilotPathIsClean(_Biz):
+    """The $5 pilot path (PILOTS.md): no mailbox, no server. The dashboard
+    showed a $139 monthly loss from a flat $138 of tooling the plan never
+    buys, and a pilot's welcome sat in the drafts for good, reported as
+    blocking every day, with no way to say you'd sent it yourself."""
+
+    def _no_mailbox(self, configured=False):
+        return unittest.mock.patch("answerrank.mailer.SMTPConfig.configured",
+                                   return_value=configured)
+
+    def test_fixed_costs_are_only_what_is_in_use(self):
+        from answerrank import costs
+        with self._no_mailbox(False):
+            self.assertEqual(costs.fixed_monthly(self.settings), {},
+                             "pilots on your own computer cost nothing a month")
+        self.settings.server_host = "digitalocean"
+        full = costs.fixed_monthly(self.settings, sending=True)
+        self.assertEqual(set(full), {"mailbox", "server", "domain"})
+        self.assertAlmostEqual(sum(full.values()), 15.40)
+        self.settings.server_host = "gcp_free"
+        self.assertNotIn("server", costs.fixed_monthly(self.settings, sending=True))
+
+    def test_the_books_show_no_made_up_overhead(self):
+        with self._no_mailbox(False):
+            BookkeeperAgent(self.store, self.settings).execute()
+        self.assertEqual(self.store.cost_breakdown(30), {})
+        self.assertEqual(self.store.pnl(30)["profit"], 0.0)
+        with self._no_mailbox(True):
+            agent = BookkeeperAgent(self.store, self.settings)
+            agent.execute()
+            agent.execute()          # once a month, however often it runs
+        self.assertEqual(set(self.store.cost_breakdown(30)), {"mailbox", "server", "domain"})
+
+    def _welcome(self):
+        from answerrank import sales
+        p = self._prospect(email="")
+        sales.sign_up(self.store, self.settings, p, "pilot", send_link=False)
+        from answerrank.agents.onboarder import OnboarderAgent
+        OnboarderAgent(self.store, self.settings).execute()
+        return p, next(m for m in self.store.messages_for(p.id) if m.kind == "welcome")
+
+    def test_a_welcome_you_sent_yourself_is_marked_sent(self):
+        from answerrank.research import OnboarderResearcher
+        p, m = self._welcome()
+        self.assertEqual(m.status, "drafted")
+        self.assertTrue(OnboarderResearcher(self.store, self.settings).investigate())
+        r = self._api().sent_by_hand(m.id)
+        self.assertEqual(r["status"], "sent")
+        self.assertEqual(self.store.get_message(m.id).status, "sent")
+        self.assertEqual(OnboarderResearcher(self.store, self.settings).investigate(), [],
+                         "no more 'blocking' for an email that went out")
+        self.assertIn("already", self._api().sent_by_hand(m.id)["error"])
+
+    def test_marking_it_sent_can_be_undone(self):
+        _p, m = self._welcome()
+        self._api().sent_by_hand(m.id)
+        self.assertEqual(self._api().undo(m.id)["status"], "drafted")
+        self.assertEqual(self.store.get_message(m.id).status, "drafted")
+
+    def test_first_emails_to_strangers_cannot_be_marked_sent_by_hand(self):
+        p = self._prospect(stage="audited")
+        cold = OutreachMessage(prospect_id=p.id, subject="Hello", body="Hi", kind="cold")
+        self.store.save_message(cold)
+        self.assertIn("unsubscribe", self._api().sent_by_hand(cold.id)["error"])
+        self.assertEqual(self.store.get_message(cold.id).status, "drafted")
+
+
+class TestObsidianVault(unittest.TestCase):
+    """The vault is generated from the code, so it can't drift from it."""
+
+    def test_every_link_resolves(self):
+        from answerrank import vault
+        notes = vault.build()
+        names = {p.rsplit("/", 1)[-1][:-3] for p in notes}
+        broken = {p: [l for l in vault.links_in(t) if l not in names]
+                  for p, t in notes.items()}
+        self.assertEqual({p: l for p, l in broken.items() if l}, {})
+
+    def test_every_agent_trade_and_source_has_a_note(self):
+        from answerrank import evidence, knowledge, vault
+        from answerrank.orchestrator import AGENT_ORDER
+        notes = vault.build()
+        self.assertEqual(sum(p.startswith("AnswerRank/Agents/") for p in notes), len(AGENT_ORDER))
+        self.assertEqual(sum(p.startswith("AnswerRank/Trades/") for p in notes),
+                         len(knowledge.VERTICALS))
+        self.assertEqual(sum(p.startswith("AnswerRank/Research/") for p in notes),
+                         len(evidence.LIBRARY))
+
+    def test_the_committed_vault_is_current(self):
+        """vault/ is generated; regenerate it with `python run.py vault`
+        after changing an agent, a trade, a source or the costs."""
+        from answerrank import vault
+        root = pathlib.Path(__file__).resolve().parent.parent / "vault"
+        stale = [p for p, body in vault.build().items()
+                 if not (root / p).exists() or (root / p).read_text(encoding="utf-8") != body]
+        self.assertEqual(stale, [], "run: python run.py vault")
+
+
+class TestPilotsOnToday(_Biz):
+    """Pilots are the whole business on the $5 path, and nothing showed how
+    they were doing or when the before-and-after could be read; that page,
+    the one meant for a stranger, came out as raw Markdown."""
+
+    def _pilot_with_audits(self, days_ago):
+        from answerrank import sales
+        p = self._prospect()
+        sales.sign_up(self.store, self.settings, p, "pilot", send_link=False)
+        for i, ago in enumerate(days_ago):
+            when = (datetime.now(timezone.utc) - timedelta(days=ago)).isoformat(timespec="seconds")
+            self.store.save_audit(Audit(business_id=p.business.id, business_name=p.business.name,
+                                        market=p.business.market, vertical=p.business.vertical,
+                                        score=10.0 + 30 * i, is_free_teaser=False,
+                                        created_at=when))
+        return p
+
+    def test_a_new_pilot_waits_for_its_first_measurement(self):
+        from answerrank import sales
+        p = self._prospect()
+        sales.sign_up(self.store, self.settings, p, "pilot", send_link=False)
+        (item,) = self._api().pilots()
+        self.assertEqual(item["measured"], 0)
+
+    def test_scores_and_dates_for_each_pilot(self):
+        self._pilot_with_audits([50, 2])
+        (item,) = self._api().pilots()
+        self.assertEqual((item["first_score"], item["latest_score"]), (10, 40))
+        self.assertTrue(item["case_ready"], "45 days and two measurements")
+        self.assertTrue(item["next_on"])
+
+    def test_too_soon_for_the_before_and_after(self):
+        self._pilot_with_audits([20, 2])
+        self.assertFalse(self._api().pilots()[0]["case_ready"])
+
+    def test_today_knows_when_there_is_no_mailbox(self):
+        with unittest.mock.patch("answerrank.mailer.SMTPConfig.configured", return_value=False):
+            state = self._api().state()
+        self.assertFalse(state["mailbox"])
+        self.assertIn("pilots", state)
+
+    def test_the_before_and_after_is_a_page_and_escapes_names(self):
+        from answerrank.casestudy import to_html
+        md = ("# <script>x</script> Plumbing: AI search visibility\n\n## The numbers\n\n"
+              "| | Before | After |\n| --- | --- | --- |\n| Visibility score | 10/100 | 40/100 |\n\n"
+              "## Verdict\n\n**Do not publish this.** Inside the noise.\n\n---\nMeasurements, not promises.\n")
+        page = to_html(md)
+        self.assertNotIn("<script>x</script>", page)
+        self.assertIn("&lt;script&gt;", page)
+        self.assertIn("<table>", page)
+        self.assertIn('class="verdict no"', page)
+        self.assertIn("<hr><p>Measurements, not promises.</p>", page)
+
+
+class TestNotesInYourOwnVault(_Biz):
+    """Give AnswerRank your Obsidian vault's folder and it keeps an AnswerRank
+    folder there up to date: the reference notes, a dashboard and a note per
+    client and pilot from your own data, without touching your own notes."""
+
+    def _pilot(self, days_ago=(50, 1)):
+        from answerrank import sales
+        p = self._prospect()
+        sales.sign_up(self.store, self.settings, p, "pilot", send_link=False)
+        for i, ago in enumerate(days_ago):
+            when = (datetime.now(timezone.utc) - timedelta(days=ago)).isoformat(timespec="seconds")
+            results = [ProbeResult(probe_id=f"q{q}-r{r}", engine="openai", prompt=f"question {q}",
+                                   answer_text="", mentioned=bool(i) and q < 7, cited=False,
+                                   position=None)
+                       for q in range(10) for r in range(3)]
+            self.store.save_audit(Audit(business_id=p.business.id, business_name=p.business.name,
+                                        market=p.business.market, vertical=p.business.vertical,
+                                        score=5.0 + 60 * i, is_free_teaser=False,
+                                        created_at=when, results=results))
+        return p
+
+    def test_a_note_per_pilot_with_its_measurements_and_result(self):
+        from answerrank import vault
+        self._pilot()
+        notes = vault.live_notes(self.store, self.settings)
+        note = notes["AnswerRank/Clients/Ridge Electric.md"]
+        self.assertIn("0 of 10", note, "each question counted once, not once per repeat")
+        self.assertIn("7 of 10", note)
+        self.assertIn("## Before and after", note)
+        self.assertIn("[[Ridge Electric]]", notes["AnswerRank/Dashboard.md"])
+
+    def test_every_link_resolves_with_your_data_in(self):
+        from answerrank import vault
+        self._pilot()
+        notes = {**vault.build(), **vault.live_notes(self.store, self.settings)}
+        names = {p.rsplit("/", 1)[-1][:-3] for p in notes}
+        broken = [(p, l) for p, t in notes.items() for l in vault.links_in(t) if l not in names]
+        self.assertEqual(broken, [])
+
+    def test_your_own_notes_are_left_alone(self):
+        from answerrank import vault
+        own = pathlib.Path(tempfile.mkdtemp())
+        (own / "AnswerRank").mkdir()
+        (own / "AnswerRank" / "Mine.md").write_text("mine", encoding="utf-8")
+        (own / "Elsewhere.md").write_text("also mine", encoding="utf-8")
+        vault.write(own, self.store, self.settings)
+        self.assertEqual((own / "AnswerRank" / "Mine.md").read_text(encoding="utf-8"), "mine")
+        self.assertEqual((own / "Elsewhere.md").read_text(encoding="utf-8"), "also mine")
+        self.assertTrue((own / "AnswerRank" / "Dashboard.md").exists())
+        with self.assertRaises(FileNotFoundError):
+            vault.write(own / "gone", self.store, self.settings)
+
+    def test_the_fleet_refreshes_the_notes_at_most_hourly(self):
+        own = pathlib.Path(tempfile.mkdtemp())
+        self.settings.demo_mode = False
+        self.settings.obsidian_vault = str(own)
+        orch = Orchestrator(self.store, self.settings)
+        with unittest.mock.patch("answerrank.vault.write") as write:
+            orch._vault()
+            orch._vault()
+        self.assertEqual(write.call_count, 1)
+        self.settings.demo_mode = True
+        orch._last_vault = -1e9
+        with unittest.mock.patch("answerrank.vault.write") as write:
+            orch._vault()
+        write.assert_not_called()
+
+    def test_keys_asks_for_the_vault_folder(self):
+        from answerrank import keys
+        own = pathlib.Path(tempfile.mkdtemp())
+        (own / ".obsidian").mkdir()
+        cfg = own / "answerrank.yml"
+        cfg.write_text("brand: AnswerRank\n", encoding="utf-8")
+        said = []
+        keys._ask_obsidian(self.settings, cfg, lambda _q: str(own / "nope"), said.append)
+        self.assertIn("doesn't exist", said[-1])
+        keys._ask_obsidian(self.settings, cfg, lambda _q: f'"{own}"', said.append)
+        self.assertEqual(self.settings.obsidian_vault, str(own))
+        self.assertIn("obsidian_vault:", cfg.read_text(encoding="utf-8"))
+
+
+class TestTheWeekInYourVault(TestNotesInYourOwnVault):
+    """Each week gets a note that stays once the week is over: a diary of the
+    business. Its advice fits the stage you're at."""
+
+    def test_this_week_has_a_note_linked_from_the_dashboard(self):
+        from answerrank import vault
+        self._pilot()
+        notes = vault.live_notes(self.store, self.settings)
+        year, week, _ = datetime.now(timezone.utc).isocalendar()
+        name = f"Week {year}-W{week:02d}"
+        self.assertIn(f"AnswerRank/Weeks/{name}.md", notes)
+        self.assertIn(f"[[{name}]]", notes["AnswerRank/Dashboard.md"])
+
+    def test_pilot_stage_advice_instead_of_cold_email_targets(self):
+        from answerrank import vault
+        self._pilot()
+        year, week, _ = datetime.now(timezone.utc).isocalendar()
+        note = vault.live_notes(self.store, self.settings)[
+            f"AnswerRank/Weeks/Week {year}-W{week:02d}.md"]
+        self.assertIn("before-and-after is ready for [[Ridge Electric]]", note)
+        self.assertNotIn("more cold emails", note)
+
+
+class TestThePilotWelcome(_Biz):
+    """A pilot was welcomed as if they'd bought: "Thanks for signing up", and
+    with a billing link set, where to find their invoices and card."""
+
+    def _welcome(self, plan):
+        from answerrank.agents.onboarder import welcome_email
+        p = self._prospect()
+        client = Client(business=p.business, plan=plan, mrr=0.0 if plan == "pilot" else 997.0)
+        self.settings.billing_portal_link = "https://billing.stripe.com/p/login/test"
+        return welcome_email(client, None, self.settings)
+
+    def test_a_pilot_hears_the_terms_and_no_billing(self):
+        subject, body = self._welcome("pilot")
+        self.assertIn("free pilot", subject.lower())
+        self.assertIn("three months", body)
+        self.assertIn("free", body)
+        self.assertNotIn("billing.stripe.com", body)
+        self.assertNotIn("invoices", body)
+        self.assertNotIn("signing up", body)
+
+    def test_a_paying_client_still_gets_the_billing_link(self):
+        subject, body = self._welcome("growth")
+        self.assertIn("billing.stripe.com", body)
+        self.assertIn("Thanks for signing up", body)
+
+
+class TestThePilotEnds(_Biz):
+    """A pilot used to stay free for good: nothing marked the three months,
+    and turning a pilot into the first paying client was left to memory."""
+
+    def _pilot(self, started_days_ago, vertical="plumbing", moved=True):
+        from answerrank import sales
+        p = self._prospect()
+        p.business.vertical = vertical
+        self.store.upsert_prospect(p)
+        sales.sign_up(self.store, self.settings, p, "pilot", send_link=False)
+        client = next(c for c in self.store.get_clients("active") if c.plan == "pilot")
+        client.started_at = (datetime.now(timezone.utc)
+                             - timedelta(days=started_days_ago)).isoformat(timespec="seconds")
+        self.store.upsert_client(client)
+        for i, ago in enumerate((started_days_ago - 1, 2)):
+            when = (datetime.now(timezone.utc) - timedelta(days=ago)).isoformat(timespec="seconds")
+            results = [ProbeResult(probe_id=f"q{q}-r{r}", engine="openai", prompt=f"question {q}",
+                                   answer_text="", mentioned=moved and bool(i) and q < 8,
+                                   cited=False, position=None)
+                       for q in range(10) for r in range(3)]
+            self.store.save_audit(Audit(business_id=p.business.id, business_name=p.business.name,
+                                        market=p.business.market, vertical=p.business.vertical,
+                                        score=5.0 + (70 * i if moved else 1), is_free_teaser=False,
+                                        created_at=when, results=results))
+        return p, self.store.get_client(client.id)
+
+    def _offers(self, p):
+        return [m for m in self.store.messages_for(p.id) if m.kind == "pilot_offer"]
+
+    def test_the_offer_is_written_a_week_before_the_end_and_once(self):
+        from answerrank.agents.retention import RetentionAgent
+        p, _client = self._pilot(85)
+        RetentionAgent(self.store, self.settings).execute()
+        RetentionAgent(self.store, self.settings).execute()
+        (offer,) = self._offers(p)
+        self.assertIn("free pilot ends", offer.subject.lower())
+        self.assertIn("$997 a month", offer.body, "a plumber's Managed quote is capped at Growth")
+        self.assertIn("no contract", offer.body)
+        self.assertIn("stop", offer.body)
+
+    def test_not_while_there_is_time_left(self):
+        from answerrank.agents.retention import RetentionAgent
+        p, _client = self._pilot(40)
+        RetentionAgent(self.store, self.settings).execute()
+        self.assertEqual(self._offers(p), [])
+
+    def test_a_result_inside_the_noise_is_called_that(self):
+        from answerrank import sales
+        _p, client = self._pilot(85, moved=False)
+        _subject, body = sales.pilot_offer(self.store, self.settings, client)
+        self.assertIn("hasn't moved enough", body)
+        self.assertNotIn("The numbers moved", body)
+
+    def test_a_pilot_becomes_a_paying_client(self):
+        p, client = self._pilot(85)
+        r = self._api().convert_pilot(client.id)
+        self.assertEqual((r["plan"], r["mrr"], r["status"]), ("growth", 997.0, "awaiting_payment"))
+        self.assertEqual(self.store.get_client(client.id).plan, "growth")
+        self.assertTrue(any(m.kind == "invoice" for m in self.store.messages_for(p.id)),
+                        "the payment link goes to them like any sign-up")
+        self.assertIn("error", self._api().convert_pilot(client.id))
+
+    def test_the_pilots_card_shows_the_end_date(self):
+        _p, _client = self._pilot(10)
+        (item,) = self._api().pilots()
+        self.assertTrue(item["ends_on"])
+        self.assertIn("$997", item["offer"])

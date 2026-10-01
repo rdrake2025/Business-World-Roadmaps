@@ -232,6 +232,30 @@ def _save_console_link(settings: Settings, link: str) -> None:
     path.write_text(link + "\n", encoding="utf-8")
 
 
+def cmd_vault(args, settings: Settings) -> int:
+    """Write AnswerRank's Obsidian notes, generated from the code."""
+    from . import vault
+
+    own = (getattr(settings, "obsidian_vault", "") or "").strip()
+    if args.out or not own:
+        # The reference notes only. Your own data never goes in the repo's
+        # copy: it's committed, and the desktop button's update would trip on it.
+        out = args.out or "vault"
+        written = vault.write(out)
+        print(f"  Wrote {len(written)} notes to {Path(out) / vault.ROOT}")
+        if not own:
+            print("  To keep notes in your own vault, with your clients and a dashboard,")
+            print("  give its folder in Keys and settings (desktop menu, option 2).")
+        return 0
+    try:
+        written = vault.write(own, _store(settings), settings)
+    except FileNotFoundError:
+        print(f"  Your vault folder isn't there any more: {own}. Fix it in Keys and settings.")
+        return 1
+    print(f"  Wrote {len(written)} notes to {Path(own) / vault.ROOT}")
+    return 0
+
+
 def cmd_evidence(args, settings: Settings) -> int:
     """The professional research behind the agents' rules, with sources."""
     from . import evidence
@@ -509,10 +533,12 @@ def cmd_dashboard(args, settings: Settings) -> int:
 
 def cmd_forecast(args, settings: Settings) -> int:
     """Model the path from where we are to the profit target."""
-    from .agents.bookkeeper import FIXED_COSTS, PROCESSOR_FLAT, PROCESSOR_PCT
+    from .agents.bookkeeper import PROCESSOR_FLAT, PROCESSOR_PCT
+    from .costs import fixed_monthly
 
     p = settings.pricing
-    fixed = sum(FIXED_COSTS.values())
+    # The model is of the business once it sends: the mailbox, server and domain.
+    fixed = sum(fixed_monthly(settings, sending=True).values())
     _hr("UNIT ECONOMICS")
     print(f"  {'Plan':<10}{'Price':>10}{'Delivery':>10}{'Fees':>9}{'Margin':>10}{'To target':>11}")
     for plan in ("starter", "growth", "managed"):
@@ -1567,6 +1593,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--domain", default="",
                    help="e.g. getanswerrank.com (default: the one you send from)")
     s.set_defaults(func=cmd_server_script)
+
+    s = sub.add_parser("vault", help="write the Obsidian notes for AnswerRank")
+    s.add_argument("--out", default="", help="folder to write the reference notes into "
+                   "(default: your vault from Keys and settings, else ./vault)")
+    s.set_defaults(func=cmd_vault)
 
     s = sub.add_parser("evidence", help="print the research the agents work from")
     s.set_defaults(func=cmd_evidence)

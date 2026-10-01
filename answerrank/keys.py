@@ -296,6 +296,28 @@ def _ask_budget(settings, config_path: Path, ask, say) -> None:
             f"Change it any time here.")
 
 
+def _ask_obsidian(settings, config_path: Path, ask, say) -> None:
+    """Where the Obsidian vault is, so AnswerRank keeps notes in it."""
+    say("\n  Obsidian (optional): paste your vault's folder, and AnswerRank keeps an "
+        "AnswerRank folder in it up to date: a dashboard, a note per client and "
+        "pilot, and notes on every agent, trade and source. In Obsidian: Settings "
+        "> Files and links shows where it is. Press Enter to skip.")
+    now = getattr(settings, "obsidian_vault", "") or ""
+    entered = ask(f"  Vault folder [{now or 'none'}]: ").strip().strip('"')
+    if not entered or entered == now:
+        return
+    folder = Path(entered).expanduser()
+    if not folder.is_dir():
+        say("    That folder doesn't exist on this computer. Skipped.")
+        return
+    if not (folder / ".obsidian").is_dir():
+        say("    There's no .obsidian folder inside, so it may not be a vault. "
+            "Saved anyway.")
+    set_setting("obsidian_vault", str(folder), config_path)
+    settings.obsidian_vault = str(folder)
+    say(f"    Notes go in {folder / 'AnswerRank'}, refreshed while AnswerRank runs.")
+
+
 def _ask_heartbeat(settings, config_path: Path, ask, say) -> None:
     """The outside monitor that emails you if the server stops."""
     say("\n  A free warning if the server ever stops: sign up at healthchecks.io, "
@@ -425,6 +447,7 @@ def interactive(settings, path: Path | str = KEYS_FILE,
     _ask_targets(settings, config_path, ask, say)
     _ask_budget(settings, config_path, ask, say)
     _ask_heartbeat(settings, config_path, ask, say)
+    _ask_obsidian(settings, config_path, ask, say)
 
     current_links = dict(getattr(settings, "payment_links", None) or {})
     say("\n  Stripe payment links (Stripe > Payment Links > New, with a recurring "
