@@ -286,6 +286,10 @@ def cmd_audit(args, settings: Settings) -> int:
         vertical=args.vertical, website=args.website or "", email=args.email or "",
         phone=args.phone or "",
     )
+    if not settings.can_measure():
+        from .audit import NO_ENGINE
+        print(NO_ENGINE + " (Or use demo mode to try it with made-up answers.)")
+        return 1
     engines = settings.available_engines()
     print(f"Auditing {biz.name} ({biz.market}) across {len(engines)} engine(s): {', '.join(engines)}")
     print(f"Estimated cost: ${estimate_cost(args.depth, len(engines)):.4f}\n")

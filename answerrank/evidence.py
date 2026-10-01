@@ -262,6 +262,19 @@ LIBRARY: dict[str, Evidence] = {e.key: e for e in (
         "(about $72). costs.py works every figure out from the prices.",
         ("auditor", "costs"), review_months=6),
     Evidence(
+        "openai_prepaid_billing",
+        "OpenAI Help Center, Setting up and managing prepaid API billing",
+        "2026",
+        "https://help.openai.com/en/articles/8264644-setting-up-and-managing-prepaid-api-billing",
+        "API use is paid from prepaid credit. The minimum purchase is $5 and the "
+        "default offered is $10; auto recharge is optional with a $5 minimum; "
+        "purchased credits expire after one year.",
+        "Pilots can be measured before any monthly cost: with only an OpenAI "
+        "key a full audit is about 45 cents, so three pilots measured three "
+        "times each fit inside the $5 minimum. PILOTS.md says to change the "
+        "$10 default to $5 and leave auto recharge off.",
+        ("auditor", "costs"), review_months=6),
+    Evidence(
         "gcp_free_tier",
         "Google Cloud, Free Tier",
         "2026",

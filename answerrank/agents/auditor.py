@@ -30,6 +30,14 @@ class AuditorAgent(Agent):
         self.teaser_budget = teaser_budget
 
     def execute(self) -> tuple[int, str]:
+        from ..audit import NO_ENGINE
+        from .scout import SIMULATED_MARKER
+
+        # Real mode with no engine key would measure every prospect and client
+        # with the made-up engine: invented scores in cold emails, in reports
+        # and in a pilot's baseline. Nothing measured beats something invented.
+        if not self.settings.can_measure():
+            return 0, NO_ENGINE
         engine_count = len(self.settings.available_engines())
         processed = 0
         spend = 0.0
@@ -57,8 +65,15 @@ class AuditorAgent(Agent):
             # A site that turns the engines away leads, because it is a
             # stronger and more checkable claim than a low score.
             blocked = (audit.crawler_access or {}).get("critical")
+            fixture = SIMULATED_MARKER in (prospect.notes or "")
             prospect.notes = (f"{audit.crawler_access['headline']} | {audit.headline()}"
                               if blocked else audit.headline())
+            # The marker is the only thing that keeps a made-up business out
+            # of Outreach. Replacing the notes used to drop it, and every
+            # invented business got a cold email drafted to its invented
+            # address straight after its first audit.
+            if fixture:
+                prospect.notes += f" | {SIMULATED_MARKER}"
             self.store.upsert_prospect(prospect)
 
             if (audit.crawler_access or {}).get("critical"):

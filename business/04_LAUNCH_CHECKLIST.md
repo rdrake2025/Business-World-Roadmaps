@@ -135,6 +135,9 @@ the first email, not after the first client. Every screen is in
       being measured and written up. That before-and-after is what sells the
       service to strangers. You add them on the phone with **Add a business you
       know** (Pipeline tab).
+- [ ] Not ready to pay for the full setup yet? [PILOTS.md](../PILOTS.md) runs
+      the pilots on your own computer for about $5 of OpenAI credit, with no
+      mailbox or server.
 
 ---
 

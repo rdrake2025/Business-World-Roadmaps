@@ -565,7 +565,10 @@ class ConciergeAgent(Agent):
         # The id comes back with the decision so the caller shows the reply it
         # just wrote rather than whichever draft happens to be first.
         tell_owner, link = False, ""
-        if intent == "interested" and not report_sent and client is None:
+        # The report is a measurement. With no engine key in real mode it would
+        # be invented, so the reply waits for you instead (needs_human below).
+        if intent == "interested" and not report_sent and client is None \
+                and self.settings.can_measure():
             audit = self._report_for(prospect)
             subject, body = report_email(prospect, audit, self.settings)
             action, kind = "send_report", "report"

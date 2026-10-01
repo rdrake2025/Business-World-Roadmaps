@@ -28,6 +28,14 @@ log = logging.getLogger("answerrank.audit")
 
 DEPTHS = {"teaser": 4, "full": 10, "deep": 16}
 
+#: What every caller says when real mode has no answer engine to ask.
+NO_ENGINE = ("No AI engine key is saved, so nothing was checked. Add your OpenAI "
+             "key in Keys and settings (desktop menu).")
+
+
+class NoAnswerEngine(RuntimeError):
+    """Real mode, and no engine key: refusing beats inventing a score."""
+
 #: Estimated USD per probe, with web search: OpenAI $10/1k searches plus
 #: tokens on gpt-5-mini; Anthropic $10/1k searches (up to two) plus the
 #: tokens results add; Perplexity Sonar's request fee plus tokens; one
@@ -45,6 +53,8 @@ def run_audit(business: Business, settings: Settings, depth: str = "full",
     default so this function stays a pure measurement of the engines; the
     Auditor agent turns it on, which is where the other budget decisions live.
     """
+    if engines is None and not settings.can_measure():
+        raise NoAnswerEngine(NO_ENGINE)
     limit = DEPTHS.get(depth, DEPTHS["full"])
     engine_names = settings.available_engines()
     if depth == "teaser":

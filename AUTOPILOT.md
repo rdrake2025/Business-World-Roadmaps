@@ -175,17 +175,22 @@ settings asks). `python run.py costs` prints your own numbers.
 
 | Budget | Checked a day | With the $6 server | With Google's free server |
 | --- | --- | --- | --- |
-| **Lean** | 5 | about $25 a month | **about $19 a month** |
-| **Standard** | 20 | about $54 | about $48 |
-| **Growth** | 40 | about $93 | about $87 |
+| **Lean** | 5 | about $27 a month | **about $21 a month** |
+| **Standard** | 20 | about $56 | about $50 |
+| **Growth** | 40 | about $94 | about $88 |
 
 Those totals include the mailbox ($8.40), the AI checks (about 6 cents a
-business), the business finder (free for the first 2,500 searches, then
-about $1 per 1,000) and the domain (about $1). On top:
+business), a monthly re-check of five possible new trades (about $1.50),
+the business finder (free for the first 2,500 searches, then about $1 per
+1,000) and the domain (about $1). On top:
 
 - A postal address, $0-20: only if you'd rather not use your home address.
 - Stripe: about 3.6% of each payment, about $36 of a $997 month.
 - Each client's monthly audit: about $1.60.
+
+Not ready for any monthly cost? [PILOTS.md](PILOTS.md) proves the service
+on two or three businesses you know for about $5 of OpenAI credit, on your
+own computer.
 
 Lean finds clients more slowly: a few first emails a day instead of the
 full warm-up. It is the cheapest way to start, and one answer in Keys and

@@ -16,7 +16,7 @@ work that pays.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .. import knowledge, markets
 from ..audit import run_audit
@@ -29,6 +29,12 @@ SAMPLE_SIZE = 5
 
 #: A market is only interesting if a real share of it is genuinely invisible.
 INVISIBLE_THRESHOLD = 35.0
+
+#: Days before a measured market is measured again. It used to be re-sampled
+#: every twelve hours for good once each candidate had a finding: about $19 a
+#: month of checks that no cost estimate counted, as much as the whole Lean
+#: budget, to re-learn something that changes over months.
+REVISIT_DAYS = 30
 
 
 class ExplorerAgent(Agent):
@@ -66,6 +72,12 @@ class ExplorerAgent(Agent):
                     b.vertical = candidate.key
                 return found[: self.sample_size]
 
+        # Real mode samples real businesses or none. Falling through to the
+        # made-up names below after an empty search used to measure fiction
+        # with a real engine, unflagged, because a key was saved.
+        if not self.settings.demo_mode:
+            return []
+
         stems = ["Apex", "Summit", "Cornerstone", "Ironclad", "Beacon", "Redwood"]
         return [
             Business(
@@ -81,15 +93,38 @@ class ExplorerAgent(Agent):
     # ---------------- run ----------------
 
     def execute(self) -> tuple[int, str]:
-        explored = self.store.explored_markets()
-        # Least-examined first, then by prior score — so the whole candidate
-        # list gets covered rather than the top of it being re-tested forever.
-        queue = sorted(
-            markets.CANDIDATES,
-            key=lambda c: (c.key in explored, -c.score(self.settings.pricing.growth_monthly)),
-        )
-        if not queue:
+        from ..audit import NO_ENGINE
+
+        if not markets.CANDIDATES:
             return 0, "no candidate markets defined"
+        if not self.settings.can_measure():
+            return 0, NO_ENGINE
+        # Made-up businesses checked with a real engine cost real money and
+        # teach nothing: they are never named, because they do not exist.
+        if not self.settings.demo_mode and not self.settings.api_key("serper"):
+            return 0, ("no business finder key saved (Serper), so there are no "
+                       "real businesses to sample. Nothing was checked.")
+
+        # Never measured first, best prior first, so the whole list gets
+        # covered; then the stalest finding, once it is REVISIT_DAYS old.
+        latest = {f["market"]: f.get("created_at") or "" for f in self.store.latest_findings(200)}
+        growth = self.settings.pricing.growth_monthly
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=REVISIT_DAYS)).isoformat(
+            timespec="seconds")
+        fresh = sorted((c for c in markets.CANDIDATES if c.key not in latest),
+                       key=lambda c: -c.score(growth))
+        stale = sorted((c for c in markets.CANDIDATES
+                        if c.key in latest and latest[c.key] < cutoff),
+                       key=lambda c: latest[c.key])
+        queue = fresh + stale
+        if not queue:
+            oldest = min(latest.values())
+            try:
+                due = (datetime.fromisoformat(oldest) + timedelta(days=REVISIT_DAYS)).strftime("%d %b")
+            except ValueError:
+                due = "in a few weeks"
+            return 0, (f"every candidate market was measured in the last {REVISIT_DAYS} "
+                       f"days; the next re-check is due {due}")
 
         candidate = queue[0]
         # Registered provisionally: auditable, but invisible to every pricing
