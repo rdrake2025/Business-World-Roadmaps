@@ -6879,3 +6879,29 @@ class TestTheWeekInYourVault(TestNotesInYourOwnVault):
             f"AnswerRank/Weeks/Week {year}-W{week:02d}.md"]
         self.assertIn("before-and-after is ready for [[Ridge Electric]]", note)
         self.assertNotIn("more cold emails", note)
+
+
+class TestThePilotWelcome(_Biz):
+    """A pilot was welcomed as if they'd bought: "Thanks for signing up", and
+    with a billing link set, where to find their invoices and card."""
+
+    def _welcome(self, plan):
+        from answerrank.agents.onboarder import welcome_email
+        p = self._prospect()
+        client = Client(business=p.business, plan=plan, mrr=0.0 if plan == "pilot" else 997.0)
+        self.settings.billing_portal_link = "https://billing.stripe.com/p/login/test"
+        return welcome_email(client, None, self.settings)
+
+    def test_a_pilot_hears_the_terms_and_no_billing(self):
+        subject, body = self._welcome("pilot")
+        self.assertIn("free pilot", subject.lower())
+        self.assertIn("three months", body)
+        self.assertIn("free", body)
+        self.assertNotIn("billing.stripe.com", body)
+        self.assertNotIn("invoices", body)
+        self.assertNotIn("signing up", body)
+
+    def test_a_paying_client_still_gets_the_billing_link(self):
+        subject, body = self._welcome("growth")
+        self.assertIn("billing.stripe.com", body)
+        self.assertIn("Thanks for signing up", body)

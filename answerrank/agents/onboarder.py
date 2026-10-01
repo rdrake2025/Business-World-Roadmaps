@@ -54,22 +54,37 @@ def welcome_email(client, audit, settings) -> tuple[str, str]:
     billing = (f"Your invoices, card details and cancellation are here, any time: "
                f"{portal}" if portal else "")
 
+    pilot = client.plan == "pilot"
+    if pilot:
+        # A pilot pays nothing: no invoices, no card, and the terms they agreed
+        # to (free for three months, measured, feedback in return) said again
+        # so nobody is surprised by a bill or by being asked for a quote.
+        billing = ""
     if client.plan != "managed":
         # Done-for-you work needs a person with their logins; everything else
         # is delivered as files with steps, so the welcome asks for nothing
         # only a person could act on.
+        opening = ("Thanks for trying this with me. For the next three months it's "
+                   "free. All I ask in return is honest feedback and, if it works, "
+                   "permission to share the before-and-after with other businesses."
+                   if pilot else
+                   "Thanks for signing up. Here is exactly what happens now, so there "
+                   "are no surprises.")
+        report = ("Your first report comes with the fixes as ready-to-paste files and "
+                  "plain steps for your website builder." if pilot else
+                  "Within a week you'll get your first report by email, with the fixes "
+                  "as ready-to-paste files and plain steps for your website builder.")
+        after = (" After about six weeks I'll show you the before-and-after, whichever "
+                 "way it went." if pilot else "")
         body = playbook.email_body(
             "Hi,",
-            "Thanks for signing up. Here is exactly what happens now, so there are "
-            "no surprises.",
+            opening,
             standing,
             f"This month: {plan['title']}. {plan['thesis']}",
             "Three things:",
         ) + "\n\n" + work + "\n\n" + playbook.email_body(
-            "Within a week you'll get your first report by email, with the fixes "
-            "as ready-to-paste files and plain steps for your website builder. "
-            "You, or whoever looks after your site, can put them in; nobody needs "
-            "your logins.",
+            f"{report} You, or whoever looks after your site, can put them in; "
+            "nobody needs your logins.",
             "One thing to check now: your business name, address and phone should "
             "read exactly the same on your Google Business Profile, your website "
             "and every listing. A mismatch is the most common thing that is "
@@ -79,11 +94,12 @@ def welcome_email(client, audit, settings) -> tuple[str, str]:
             "Structured data shows up when the engines next crawl, which is days "
             "to weeks, and reviews compound over months. Expect the number to move "
             "in month two, not next week. You'll see the same measurement every "
-            "month either way, including the months it doesn't move.",
+            "month either way, including the months it doesn't move." + after,
             billing,
             "Any questions, just reply.",
-            f"{settings.brand}\n{settings.website}")
-        return "You're in — here's what happens next", body
+            f"{settings.brand}\n{settings.website}".strip())
+        return ("Your free pilot: here's what happens next" if pilot
+                else "You're in — here's what happens next"), body
 
     body = playbook.email_body(
         f"Hi,",
