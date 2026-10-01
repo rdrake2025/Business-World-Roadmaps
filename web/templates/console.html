@@ -516,6 +516,11 @@
 
   // A toast can carry Undo for the email it is about: approving or skipping
   // by mistake is one tap to take back.
+  function copyText(text){
+    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
+      .then(function(){ toast("Copied. Paste it into your own email or text."); },
+            function(){ toast("This browser won't copy from here. Open the email and select the text.", 5000); });
+  }
   function toast(msg, ms, undoId){
     var t = $("toast");
     t.innerHTML = '<span>' + esc(msg) + '</span>' +
@@ -650,7 +655,11 @@
           '<button data-a="reject">' + (m.kind === "cold" ? "Skip" : "I'll handle it") + '</button>' +
           '<button data-a="edit">Edit</button>' +
           '<button class="yes" data-a="approve">Approve</button>' +
-        '</div></div>';
+        '</div>' +
+        (m.kind === "cold" ? '' : '<div class="trio flat two">' +
+          '<button data-a="copy">Copy text</button>' +
+          '<button data-a="byhand">I sent it myself</button></div>') +
+        '</div>';
     }).join("");
   }
 
@@ -1267,6 +1276,8 @@
       '<div class="trio"><button data-rv="skip">' + (warm ? "I'll handle it" : "Skip") +
         '</button><button data-rv="edit">Edit</button>' +
         '<button class="yes" data-rv="approve">Approve</button></div>' +
+      (warm ? '<div class="trio two flat" style="margin-top:8px"><button data-rv="copy">Copy text</button>' +
+        '<button data-rv="byhand">I sent it myself</button></div>' : '') +
       '<div class="barnote kb">Keys: A approve · S skip · E edit · U undo</div>');
   }
   function editReview(){
@@ -1291,9 +1302,16 @@
     var m = R.items[R.i];
     if(act === "edit"){ editReview(); return; }
     if(act === "cancel"){ showReview(); return; }
+    if(act === "copy"){ copyText(m.subject + "\n\n" + m.body); return; }
     busy = true;
     var done;
-    if(act === "save"){
+    if(act === "byhand"){
+      done = api("/api/sent_by_hand", { id: m.id }).then(function(r){
+        if(r.error){ toast(r.error, 5000); throw new Error("kept"); }
+        toast(r.label);
+      });
+      act = "approve";
+    } else if(act === "save"){
       done = api("/api/edit", { id: m.id, subject: $("rvSubj").value, text: $("rvText").value })
         .then(function(r){
           if(r.error){ toast(r.error, 6000); throw new Error("kept"); }
@@ -1513,6 +1531,22 @@
     if(!btn || busy) return;
     var card = btn.closest(".msg"), id = card.dataset.id, act = btn.dataset.a;
     if(act === "edit"){ openReview(id, true); return; }
+    if(act === "copy"){
+      copyText(card.querySelector(".subj").textContent + "\n\n" + card.querySelector("pre").textContent);
+      return;
+    }
+    if(act === "byhand"){
+      busy = true;
+      card.style.opacity = ".45";
+      api("/api/sent_by_hand", { id: id }).then(function(r){
+        if(r.error){ card.style.opacity = "1"; toast(r.error, 5000); return; }
+        card.remove();
+        toast(r.label, 0, id);
+        return load(true);
+      }).catch(function(){ card.style.opacity = "1"; toast("That didn't go through"); })
+        .then(function(){ busy = false; });
+      return;
+    }
     var warm = btn.textContent !== "Skip";
     busy = true;
     card.style.opacity = ".45";

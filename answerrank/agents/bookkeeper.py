@@ -12,12 +12,9 @@ from datetime import datetime, timezone
 from ..models import LedgerEntry
 from .base import Agent
 
-# Fixed monthly stack. Deliberately small — this is the whole point of an
-# agent-run business. Update these to match real invoices.
-FIXED_COSTS = {
-    "tooling": 89.0,     # email sending, hosting, domain, scheduling
-    "software": 49.0,    # accounting, e-sign, payment processing base fees
-}
+# The fixed monthly stack comes from costs.fixed_monthly: the mailbox, the
+# server and the domain, and only once the business is sending. Anything
+# else you pay for (a PO box, an LLC's fees) goes in with `run.py expense`.
 
 # Payment processor take: Stripe's 2.9% + $0.30 per card charge, plus the
 # 0.7% Stripe Billing adds to every subscription — and a recurring payment
@@ -72,7 +69,7 @@ class BookkeeperAgent(Agent):
     interval = 2 * 3600
 
     def execute(self) -> tuple[int, str]:
-        from .. import payments
+        from .. import costs, payments
 
         month = datetime.now(timezone.utc).strftime("%Y-%m")
         billed = 0
@@ -86,7 +83,7 @@ class BookkeeperAgent(Agent):
                 billed += 1
                 billed_amount += client.mrr
 
-        for category, amount in FIXED_COSTS.items():
+        for category, amount in costs.fixed_monthly(self.settings).items():
             self.store.add_ledger_once(
                 LedgerEntry(
                     kind="cost", category=category, amount=amount,
@@ -120,7 +117,8 @@ class BookkeeperAgent(Agent):
         unit_cost = pricing.delivery_cost_monthly + unit_price * PROCESSOR_PCT + PROCESSOR_FLAT
         unit_margin = unit_price - unit_cost
 
-        fixed = sum(FIXED_COSTS.values())
+        from .. import costs
+        fixed = sum(costs.fixed_monthly(self.settings, sending=True).values())
         clients_needed = max(0, -(-int((target + fixed) // max(unit_margin, 1)) // 1))
         gap = max(0.0, target - pnl["profit"])
 

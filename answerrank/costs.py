@@ -54,6 +54,26 @@ def preset_for(settings) -> str:
     return "custom"
 
 
+def fixed_monthly(settings, sending: bool | None = None) -> dict[str, float]:
+    """What the business pays each month whether or not anyone signs.
+
+    Only what is in use. With no mailbox nothing can be sent, so there is no
+    mailbox to pay for and no server needed for unsubscribe links: the $5
+    pilot path (PILOTS.md) costs nothing a month. The Bookkeeper used to book
+    a flat $138 of "tooling" and "software" the plan never buys, so the
+    dashboard showed a $139 monthly loss on a business that had spent 90
+    cents. AI checks are booked as they happen, never here.
+    """
+    if sending is None:
+        from .mailer import SMTPConfig
+        sending = SMTPConfig.from_env().configured()
+    if not sending:
+        return {}
+    server = getattr(settings, "server_host", "") or "digitalocean"
+    return {k: v for k, v in (("mailbox", WORKSPACE), ("server", SERVERS.get(server, 6.0)),
+                              ("domain", DOMAIN)) if v}
+
+
 def check_costs(settings) -> tuple[float, int]:
     """(AI engine cost, Serper searches) for one free check of a prospect."""
     from .audit import DEPTHS, ENGINE_COST

@@ -311,6 +311,10 @@ class Application:
     def api_undo(self, environ, start):
         return self._json(start, self.api.undo(str(self._body_json(environ).get("id", ""))))
 
+    def api_sent_by_hand(self, environ, start):
+        return self._json(start, self.api.sent_by_hand(
+            str(self._body_json(environ).get("id", ""))))
+
     def api_send(self, environ, start):
         d = self._body_json(environ)
         return self._json(start, self.api.send(
@@ -493,6 +497,7 @@ class Application:
             "/api/reject": self.api_reject,
             "/api/edit": self.api_edit,
             "/api/undo": self.api_undo,
+            "/api/sent_by_hand": self.api_sent_by_hand,
             "/api/send": self.api_send,
             "/api/tick": self.api_tick,
             "/api/clients": self.api_clients,

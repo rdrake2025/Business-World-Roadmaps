@@ -441,6 +441,11 @@ class Api:
             self.store.save_message(m)
             return {"ok": True, "status": "drafted",
                     "label": "Pulled back. It's in your drafts again."}
+        if m.status == "sent" and self.store.kv_get(f"byhand.{m.id}"):
+            m.status, m.sent_at = "drafted", ""
+            self.store.save_message(m)
+            self.store.kv_set(f"byhand.{m.id}", "")
+            return {"ok": True, "status": "drafted", "label": "Back in your drafts."}
         if m.status == "sent":
             return {"error": "That one has already gone."}
         raw = self.store.kv_get(f"undo.{m.id}") or ""
@@ -455,6 +460,35 @@ class Api:
             self.store.kv_set(f"undo.{m.id}", "")
             return {"ok": True, "status": "drafted", "label": "Back in your drafts."}
         return {"error": "Nothing to undo for that one."}
+
+    def sent_by_hand(self, message_id: str) -> dict[str, Any]:
+        """You sent it yourself: from your own email, by text, in person.
+
+        On the $5 pilot path there is no mailbox, so a pilot's welcome sat in
+        the drafts for good and was reported as blocking every day. "I'll
+        handle it" cleared it but recorded it as never sent, so a report you
+        had sent by hand could be sent again. First emails to strangers can't
+        be marked this way: only the send path adds the unsubscribe link and
+        keeps to the warm-up.
+        """
+        from answerrank.models import now_iso
+
+        m = self.store.get_message(message_id)
+        if m is None:
+            return {"error": "That email isn't here any more."}
+        if (m.kind or "cold") == "cold":
+            return {"error": "First emails go out through AnswerRank, so the "
+                             "unsubscribe link and the daily limit apply."}
+        if m.status not in {"drafted", "approved"}:
+            return {"error": "That one has already gone."}
+        m.status, m.sent_at, m.approved_at = "sent", now_iso(), ""
+        self.store.save_message(m)
+        self.store.kv_set(f"byhand.{m.id}", m.sent_at)
+        p = self._prospect(m.prospect_id)
+        if p is not None:
+            p.last_touch_at = m.sent_at
+            self.store.upsert_prospect(p)
+        return {"ok": True, "status": "sent", "label": "Marked as sent by you."}
 
     def reject(self, ids: list[str]) -> dict[str, Any]:
         """Skip a draft.

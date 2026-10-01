@@ -509,10 +509,12 @@ def cmd_dashboard(args, settings: Settings) -> int:
 
 def cmd_forecast(args, settings: Settings) -> int:
     """Model the path from where we are to the profit target."""
-    from .agents.bookkeeper import FIXED_COSTS, PROCESSOR_FLAT, PROCESSOR_PCT
+    from .agents.bookkeeper import PROCESSOR_FLAT, PROCESSOR_PCT
+    from .costs import fixed_monthly
 
     p = settings.pricing
-    fixed = sum(FIXED_COSTS.values())
+    # The model is of the business once it sends: the mailbox, server and domain.
+    fixed = sum(fixed_monthly(settings, sending=True).values())
     _hr("UNIT ECONOMICS")
     print(f"  {'Plan':<10}{'Price':>10}{'Delivery':>10}{'Fees':>9}{'Margin':>10}{'To target':>11}")
     for plan in ("starter", "growth", "managed"):

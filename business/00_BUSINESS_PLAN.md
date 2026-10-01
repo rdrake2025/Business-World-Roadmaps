@@ -92,7 +92,10 @@ At the **Growth** tier ($997/mo):
 | Payment processing (2.9% + $0.30) | −$29.21 |
 | **Contribution margin** | **$949.79 (95%)** |
 
-Fixed overhead is ~$138/mo (sending infrastructure, hosting, domain, accounting).
+Fixed overhead is about $15/mo once the business is sending (mailbox $8.40, a $6
+server, the domain), or $9 on Google's free server; the AI checks come on top and
+depend on the budget chosen (`python run.py costs`). Pilots on your own computer
+cost nothing a month ([PILOTS.md](../PILOTS.md)).
 
 **$5,000/month profit = 6 Growth clients**, or a realistic blend of ~7–8 clients
 across Starter and Growth. See `01_FINANCIAL_MODEL.md` for scenarios.

@@ -40,8 +40,9 @@ permission to share the before-and-after.
    - their report (where they stand now, and what to fix);
    - the files for their website, with steps for their website builder.
 
-   The welcome email is written for you in the Inbox tab. Copy it into your
-   own email or text, and attach the report and files.
+   The welcome email is written for you in the Inbox tab. Tap **Copy text**,
+   send it from your own email (attach the report and files), then tap **I
+   sent it myself** so AnswerRank knows it went.
 7. **Open AnswerRank about once a month** and leave it open for ten minutes.
    It measures each pilot again every 28 days, using the same questions each
    time.
@@ -52,8 +53,10 @@ permission to share the before-and-after.
 
 ## What to expect
 
-- The console will remind you that the welcome and report emails haven't
-  gone out. That's expected with no mailbox: you're sending them yourself.
+- With no mailbox, anything written for a pilot waits in the Inbox until you
+  tap **I sent it myself**. Undo works if you tap it by mistake.
+- The dashboard shows what you've actually spent: the checks, and no monthly
+  overhead, because there's no mailbox or server to pay for yet.
 - Nothing else is spent. No business finder key is saved, so the system
   doesn't look for strangers to email, checks no one else, and makes nothing
   up. (Before this was fixed, real mode with missing keys quietly used

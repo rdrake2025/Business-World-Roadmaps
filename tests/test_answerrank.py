@@ -6623,3 +6623,70 @@ class TestRealModeNeverPretends(_SalesFixture):
         lines = {l["label"]: l["monthly"] for l in costs.estimate(self.settings)["lines"]}
         self.assertIn("Market research", lines)
         self.assertLess(lines["Market research"], 3, "a monthly re-check, not twice a day")
+
+
+class TestThePilotPathIsClean(_Biz):
+    """The $5 pilot path (PILOTS.md): no mailbox, no server. The dashboard
+    showed a $139 monthly loss from a flat $138 of tooling the plan never
+    buys, and a pilot's welcome sat in the drafts for good, reported as
+    blocking every day, with no way to say you'd sent it yourself."""
+
+    def _no_mailbox(self, configured=False):
+        return unittest.mock.patch("answerrank.mailer.SMTPConfig.configured",
+                                   return_value=configured)
+
+    def test_fixed_costs_are_only_what_is_in_use(self):
+        from answerrank import costs
+        with self._no_mailbox(False):
+            self.assertEqual(costs.fixed_monthly(self.settings), {},
+                             "pilots on your own computer cost nothing a month")
+        self.settings.server_host = "digitalocean"
+        full = costs.fixed_monthly(self.settings, sending=True)
+        self.assertEqual(set(full), {"mailbox", "server", "domain"})
+        self.assertAlmostEqual(sum(full.values()), 15.40)
+        self.settings.server_host = "gcp_free"
+        self.assertNotIn("server", costs.fixed_monthly(self.settings, sending=True))
+
+    def test_the_books_show_no_made_up_overhead(self):
+        with self._no_mailbox(False):
+            BookkeeperAgent(self.store, self.settings).execute()
+        self.assertEqual(self.store.cost_breakdown(30), {})
+        self.assertEqual(self.store.pnl(30)["profit"], 0.0)
+        with self._no_mailbox(True):
+            agent = BookkeeperAgent(self.store, self.settings)
+            agent.execute()
+            agent.execute()          # once a month, however often it runs
+        self.assertEqual(set(self.store.cost_breakdown(30)), {"mailbox", "server", "domain"})
+
+    def _welcome(self):
+        from answerrank import sales
+        p = self._prospect(email="")
+        sales.sign_up(self.store, self.settings, p, "pilot", send_link=False)
+        from answerrank.agents.onboarder import OnboarderAgent
+        OnboarderAgent(self.store, self.settings).execute()
+        return p, next(m for m in self.store.messages_for(p.id) if m.kind == "welcome")
+
+    def test_a_welcome_you_sent_yourself_is_marked_sent(self):
+        from answerrank.research import OnboarderResearcher
+        p, m = self._welcome()
+        self.assertEqual(m.status, "drafted")
+        self.assertTrue(OnboarderResearcher(self.store, self.settings).investigate())
+        r = self._api().sent_by_hand(m.id)
+        self.assertEqual(r["status"], "sent")
+        self.assertEqual(self.store.get_message(m.id).status, "sent")
+        self.assertEqual(OnboarderResearcher(self.store, self.settings).investigate(), [],
+                         "no more 'blocking' for an email that went out")
+        self.assertIn("already", self._api().sent_by_hand(m.id)["error"])
+
+    def test_marking_it_sent_can_be_undone(self):
+        _p, m = self._welcome()
+        self._api().sent_by_hand(m.id)
+        self.assertEqual(self._api().undo(m.id)["status"], "drafted")
+        self.assertEqual(self.store.get_message(m.id).status, "drafted")
+
+    def test_first_emails_to_strangers_cannot_be_marked_sent_by_hand(self):
+        p = self._prospect(stage="audited")
+        cold = OutreachMessage(prospect_id=p.id, subject="Hello", body="Hi", kind="cold")
+        self.store.save_message(cold)
+        self.assertIn("unsubscribe", self._api().sent_by_hand(cold.id)["error"])
+        self.assertEqual(self.store.get_message(cold.id).status, "drafted")
