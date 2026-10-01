@@ -228,6 +228,9 @@ A page for the free first step: it lists the questions to ask ChatGPT for
 any trade and town, scores the businesses you know, and writes each one a
 free-pilot offer. [Open the Pilot Kit]({PAGES['Pilot Kit']})
 
+When some say yes, **Copy for AnswerRank** at the bottom of the Kit copies
+them in the form AnswerRank's Pipeline → **Add several at once** reads.
+
 Next: [[Pilots]]. Back to [[AnswerRank]].
 """
 
@@ -255,8 +258,9 @@ cost. All it takes is your own computer and **$5 of OpenAI credit**.
 2. Buy $5 of OpenAI credit. It suggests $10: change it to 5, and leave
    automatic recharge off.
 3. AnswerRank button → **2 Keys and settings** → paste only the OpenAI key.
-4. **1 Open AnswerRank** → Pipeline → **Add a business you know** → choose
-   **Free pilot**.
+4. **1 Open AnswerRank** → Pipeline → **Add several at once** → paste what
+   **Copy for AnswerRank** in the [[Pilot Kit]] gave you. (Or **Add a
+   business you know** → choose **Free pilot**, one at a time.)
 5. Inbox: **Copy text** on the welcome, send it yourself with their report
    and files, then **I sent it myself**.
 6. Open AnswerRank about once a month so it measures again. The **Pilots**
@@ -509,6 +513,52 @@ def _week_fix(store, r, clients) -> str:
             "depends on it. Open AnswerRank once a month for the next measurement.")
 
 
+def _coming_up(store, c, now, days: int = 100) -> list[tuple[str, str]]:
+    """One client's dated steps ahead, as (YYYY-MM-DD, what happens). A pilot
+    has four dates to plan around, and until now they were only on the
+    console's Pilots card, which you see only with AnswerRank open."""
+    from datetime import timedelta
+
+    from .casestudy import MIN_DAYS
+    from .sales import PILOT_NOTICE_DAYS, pilot_ends
+
+    if c.status != "active":
+        return []
+    today = now.date().isoformat()
+    horizon = (now + timedelta(days=days)).date().isoformat()
+    link = f"[[{_title(c.business.name) or c.id}]]"
+    audits = store.audit_history(c.business.id, limit=24, comparable=True)
+    out = []
+    if audits:
+        out.append((max(_day(audits[0].created_at, 28), today),
+                    f"{link} measured again. Open AnswerRank and leave it ten minutes."))
+    else:
+        out.append((today, f"{link}'s first measurement. Open AnswerRank and leave it "
+                           f"ten minutes."))
+    if c.plan == "pilot":
+        start = (audits[-1].created_at if audits else c.started_at) or now.isoformat()
+        out.append((_day(start, MIN_DAYS), f"{link}'s before-and-after is ready to show "
+                                           f"(it says honestly whether it worked)."))
+        end = pilot_ends(c)
+        out.append((_day(end, -PILOT_NOTICE_DAYS), f"{link}'s offer is written for you "
+                                                   f"(Inbox). Send it."))
+        out.append((end, f"{link}'s free pilot ends. If they said yes: **They said yes: "
+                         f"start paid plan** on the Pilots card."))
+    return sorted((d, t) for d, t in out if today <= d <= horizon)
+
+
+def _dated(rows: list[tuple[str, str]]) -> list[str]:
+    from datetime import date
+    out = []
+    for d, text in rows:
+        try:
+            label = f"**{d}** ({date.fromisoformat(d).strftime('%a')})"
+        except ValueError:
+            label = f"**{d}**"
+        out.append(f"- {label}: {text}")
+    return out
+
+
 def _week_note(store, settings, now, clients) -> tuple[str, str]:
     """This week's review as a note of its own. It's rewritten until the week
     ends and then left as it was, so the folder becomes the business's diary."""
@@ -557,7 +607,7 @@ def live_notes(store, settings) -> dict[str, str]:
     now = datetime.now(timezone.utc)
     clients = [c for status in LIVE_STATUSES for c in store.get_clients(status)]
     notes: dict[str, str] = {}
-    index, pilots = [], []
+    index, pilots, ahead = [], [], []
     for c in clients:
         audits = store.audit_history(c.business.id, limit=24, comparable=True)
         name = _title(c.business.name) or c.id
@@ -590,6 +640,10 @@ def live_notes(store, settings) -> dict[str, str]:
             body += ["Not measured yet: the first measurement runs within the hour "
                      "while AnswerRank is open.", ""]
             score = "not yet"
+        theirs = _coming_up(store, c, now)
+        ahead += theirs
+        if theirs:
+            body += ["## Coming up", *_dated(theirs), ""]
         body += ["*Rewritten by AnswerRank each hour. Keep your own notes about them "
                  "in a separate note (the Pilot log template) that links here.*", "",
                  "Part of [[Clients]]." + (" See [[Pilots]]." if c.plan == "pilot" else "")]
@@ -618,6 +672,7 @@ def live_notes(store, settings) -> dict[str, str]:
              f"- Goal: ${settings.profit_target_monthly:,.0f} a month. See [[Plan]].", "",
              f"This week so far: [[{week_name}]]", "",
              "## Pilots", *(pilots or ["- None yet. See [[Pilots]]."]), "",
+             *(["## Coming up", *_dated(sorted(ahead)), ""] if ahead else []),
              "## Waiting for you",
              f"- {drafts} email(s) in the Inbox" if drafts else "- Nothing in the Inbox", ""]
     if stages:
@@ -654,7 +709,9 @@ def build() -> dict[str, str]:
         f"{ROOT}/Dashboard.md": _placeholder(
             "Dashboard", "Your live numbers appear here once AnswerRank writes to your "
             "own vault: in Keys and settings, give it your vault's folder. It's "
-            "refreshed every hour while AnswerRank runs."),
+            "refreshed every hour while AnswerRank runs, with the dates coming up "
+            "for each pilot: the next measurement, the before-and-after, the offer "
+            "and the end of the free months."),
         f"{ROOT}/Clients.md": _placeholder(
             "Clients", "A note for each client and pilot appears here once AnswerRank "
             "writes to your own vault: their scores over time, the next measurement "

@@ -6976,6 +6976,52 @@ class TestThePilotEnds(_Biz):
         self.assertIn("$997", item["offer"])
 
 
+class TestTheDatesAhead(TestNotesInYourOwnVault):
+    """A pilot has four dates to plan around: the next measurement, the
+    before-and-after, the offer and the end. They were only on the console's
+    Pilots card; the vault's Dashboard and each client's note list them."""
+
+    def _live(self):
+        from answerrank import vault
+        return vault.live_notes(self.store, self.settings)
+
+    def test_a_new_pilot_shows_every_date_ahead_soonest_first(self):
+        from answerrank import sales
+        self._pilot(days_ago=(2,))
+        client = self.store.get_clients("active")[0]
+        ends = sales.pilot_ends(client)
+        dash = self._live()["AnswerRank/Dashboard.md"]
+        ahead = dash[dash.index("## Coming up"):dash.index("## Waiting")]
+        lines = [l for l in ahead.splitlines() if l.startswith("- ")]
+        self.assertEqual(len(lines), 4, ahead)
+        self.assertEqual([l[4:14] for l in lines], sorted(l[4:14] for l in lines))
+        self.assertIn("measured again", lines[0])
+        self.assertIn("before-and-after", lines[1])
+        self.assertIn("offer", lines[2])
+        self.assertIn(ends, lines[3])
+        self.assertIn("## Coming up", self._live()["AnswerRank/Clients/Ridge Electric.md"])
+
+    def test_past_dates_drop_off_and_a_late_measurement_is_due_today(self):
+        self._pilot(days_ago=(60, 40))
+        today = datetime.now(timezone.utc).date().isoformat()
+        note = self._live()["AnswerRank/Clients/Ridge Electric.md"]
+        ahead = note[note.index("## Coming up"):]
+        self.assertIn(f"**{today}**", ahead, "measurement overdue: due now, not in the past")
+        self.assertNotIn("before-and-after is ready", ahead, "that date has passed")
+
+    def test_paying_clients_show_only_their_measurement(self):
+        from answerrank import sales
+        p = self._prospect()
+        sales.sign_up(self.store, self.settings, p, "growth", send_link=False)
+        client = self.store.get_clients("awaiting_payment")[0]
+        client.status = "active"
+        self.store.upsert_client(client)
+        note = self._live()["AnswerRank/Clients/Ridge Electric.md"]
+        ahead = note[note.index("## Coming up"):note.index("*Rewritten")]
+        self.assertEqual(len([l for l in ahead.splitlines() if l.startswith("- ")]), 1)
+        self.assertIn("first measurement", ahead)
+
+
 class TestAddSeveralAtOnce(_Biz):
     """The Pilot Kit scores businesses you know; each one then had to be typed
     into AnswerRank again by hand. Its "Copy for AnswerRank" lines paste in."""

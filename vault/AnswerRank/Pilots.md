@@ -18,8 +18,9 @@ cost. All it takes is your own computer and **$5 of OpenAI credit**.
 2. Buy $5 of OpenAI credit. It suggests $10: change it to 5, and leave
    automatic recharge off.
 3. AnswerRank button → **2 Keys and settings** → paste only the OpenAI key.
-4. **1 Open AnswerRank** → Pipeline → **Add a business you know** → choose
-   **Free pilot**.
+4. **1 Open AnswerRank** → Pipeline → **Add several at once** → paste what
+   **Copy for AnswerRank** in the [[Pilot Kit]] gave you. (Or **Add a
+   business you know** → choose **Free pilot**, one at a time.)
 5. Inbox: **Copy text** on the welcome, send it yourself with their report
    and files, then **I sent it myself**.
 6. Open AnswerRank about once a month so it measures again. The **Pilots**
