@@ -457,6 +457,12 @@ class Store:
             audit = _audit_from_raw(r["raw"])
             if comparable and audit.is_free_teaser:
                 continue
+            # One where over a fifth of the questions failed (audit.MIN_ANSWERED;
+            # saved before such audits were refused) measured the outage, not
+            # the business.
+            failed = sum(1 for x in audit.results if x.error)
+            if comparable and audit.results and failed > len(audit.results) / 5:
+                continue
             out.append(audit)
             if len(out) >= limit:
                 break

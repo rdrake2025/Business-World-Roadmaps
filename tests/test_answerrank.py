@@ -7143,6 +7143,113 @@ class TestPilotDatesOnYourCalendar(TestNotesInYourOwnVault):
         self.assertIn("/files/dates/answerrank-pilots.ics", json.dumps(self._api().state()))
 
 
+class TestAFailedMeasurementIsNotAScore(_SalesFixture):
+    """With $5 of OpenAI credit, running out is part of the plan. Every
+    question then failed, the audit was saved as a 0, the before-and-after
+    said "it went the wrong way", and nothing was re-measured for 28 days."""
+
+    NO_CREDIT = ('HTTP 429: {"error": {"message": "You exceeded your current quota, '
+                 'please check your plan and billing details.", "code": "insufficient_quota"}}')
+
+    def _failing(self, every=1):
+        from answerrank.engines.base import EngineAnswer
+        from answerrank.engines.mock import MockEngine
+        real, calls = MockEngine.ask, [0]
+
+        def ask(engine, prompt):
+            calls[0] += 1
+            if calls[0] % every == 0:
+                return EngineAnswer(text="", sources=[], latency_ms=5, error=self.NO_CREDIT)
+            return real(engine, prompt)
+        return unittest.mock.patch.object(MockEngine, "ask", ask)
+
+    def _pilot(self):
+        from answerrank import sales
+        p = self._prospect(stage="replied")
+        sales.sign_up(self.store, self.settings, p, "pilot", send_link=False)
+        return p, self.store.get_clients("active")[0]
+
+    def test_no_credit_saves_nothing_and_says_why(self):
+        from answerrank import audit, today
+        p, client = self._pilot()
+        with self._failing():
+            n, summary = AuditorAgent(self.store, self.settings).execute()
+        self.assertEqual(self.store.audit_history(client.business.id), [])
+        self.assertIn("stopped", summary)
+        why = audit.outage(self.store)["why"]
+        self.assertIn("out of credit", why)
+        self.assertIn("nothing was saved", why)
+        items = today.next_actions(self.store, self.settings)["items"]
+        self.assertIn("Measurements paused", [i["title"] for i in items])
+
+    def test_the_next_measurement_that_works_clears_it(self):
+        from answerrank import audit
+        p, client = self._pilot()
+        with self._failing():
+            AuditorAgent(self.store, self.settings).execute()
+        AuditorAgent(self.store, self.settings).execute()
+        self.assertEqual(len(self.store.audit_history(client.business.id)), 1)
+        self.assertIsNone(audit.outage(self.store))
+
+    def test_a_few_failed_questions_are_still_a_measurement(self):
+        from answerrank import audit
+        p, client = self._pilot()
+        with self._failing(every=15):
+            AuditorAgent(self.store, self.settings).execute()
+        self.assertEqual(len(self.store.audit_history(client.business.id)), 1)
+        self.assertIsNone(audit.outage(self.store))
+
+    def test_a_report_is_not_made_of_an_outage(self):
+        from answerrank import audit
+        prospect = self._prospect()
+        with self._failing():
+            result = self._concierge().handle_reply(prospect, "Yes please, send it over.")
+        self.assertNotEqual(result["action"], "send_report")
+        self.assertFalse([m for m in self.store.messages_for(prospect.id) if m.kind == "report"])
+        self.assertIsNotNone(audit.outage(self.store))
+
+    def test_an_old_failed_audit_is_not_compared(self):
+        p, client = self._pilot()
+        results = [ProbeResult(probe_id=f"q{i}", engine="openai", prompt=f"question {i}",
+                               answer_text="", mentioned=False, cited=False, position=None,
+                               error=self.NO_CREDIT) for i in range(30)]
+        self.store.save_audit(Audit(business_id=client.business.id,
+                                    business_name=client.business.name,
+                                    market=client.business.market,
+                                    vertical=client.business.vertical, score=0.0,
+                                    is_free_teaser=False, results=results))
+        self.assertEqual(self.store.audit_history(client.business.id, comparable=True), [])
+        self.assertEqual(len(self.store.audit_history(client.business.id)), 1)
+
+    def test_the_reason_names_the_fix(self):
+        from answerrank.audit import why_failed
+        self.assertIn("Keys and settings", why_failed(["HTTP 401: invalid_api_key"], 30))
+        self.assertIn("internet", why_failed(["ConnectionError: Max retries exceeded"], 30))
+        self.assertIn("limiting", why_failed(["HTTP 429: rate_limit_exceeded"], 30))
+
+    def test_the_key_check_says_the_credit_ran_out(self):
+        from answerrank import selftest
+        from answerrank.engines import live
+        with unittest.mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}), \
+                unittest.mock.patch.object(live, "_post",
+                                           lambda *a, **k: (None, self.NO_CREDIT)):
+            result = selftest.check_ai(self.settings)
+        self.assertFalse(result.ok)
+        self.assertIn("out of credit", result.fix)
+
+    def test_a_refused_account_is_not_asked_twice(self):
+        from answerrank.engines import live
+        calls = []
+
+        def post(url, headers, payload, timeout):
+            calls.append(url)
+            return None, self.NO_CREDIT
+        with unittest.mock.patch.object(live, "_post", post):
+            answer = live.OpenAIEngine(api_key="sk-test").ask("best plumber in Tulsa")
+        self.assertTrue(answer.error)
+        self.assertEqual(len(calls), 1, "no second try without search")
+
+
 class TestAddSeveralAtOnce(_Biz):
     """The Pilot Kit scores businesses you know; each one then had to be typed
     into AnswerRank again by hand. Its "Copy for AnswerRank" lines paste in."""

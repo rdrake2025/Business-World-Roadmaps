@@ -272,6 +272,10 @@ cost. All it takes is your own computer and **$5 of OpenAI credit**.
 8. A week before the three months end, the offer is written for you: their
    numbers and the price. If they say yes: **They said yes: start paid plan**.
 
+If the credit runs out, Today (and the [[Dashboard]]) says **Measurements
+paused**. Nothing is saved from a measurement that failed, so no pilot's
+numbers are spoiled; add credit and it tries again within the hour.
+
 Keep a note per pilot with the **Pilot log** template.
 
 The full guide is `PILOTS.md` in the AnswerRank folder. Back to [[AnswerRank]].

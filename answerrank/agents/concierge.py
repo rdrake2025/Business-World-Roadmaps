@@ -566,10 +566,18 @@ class ConciergeAgent(Agent):
         # just wrote rather than whichever draft happens to be first.
         tell_owner, link = False, ""
         # The report is a measurement. With no engine key in real mode it would
-        # be invented, so the reply waits for you instead (needs_human below).
+        # be invented, and if the measurement fails (no credit left, say) it
+        # would be a report of the outage: either way the reply waits for you
+        # instead (needs_human below).
+        audit = None
         if intent == "interested" and not report_sent and client is None \
                 and self.settings.can_measure():
-            audit = self._report_for(prospect)
+            from ..audit import MeasurementFailed, note_outage
+            try:
+                audit = self._report_for(prospect)
+            except MeasurementFailed as exc:
+                note_outage(self.store, str(exc))
+        if audit is not None:
             subject, body = report_email(prospect, audit, self.settings)
             action, kind = "send_report", "report"
         elif intent == "client_message":

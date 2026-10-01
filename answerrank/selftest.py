@@ -123,9 +123,9 @@ def check_ai(settings) -> Result:
                       f"{type(exc).__name__}: {exc}"[:160],
                       "Check the key at platform.openai.com and that the account has credit.")
     if answer.error:
+        from .audit import fix_for
         return Result("ai", "Real AI check (ChatGPT with web search)", False,
-                      answer.error[:160],
-                      "Check the key at platform.openai.com and that the account has credit.")
+                      answer.error[:160], fix_for([answer.error]))
     if not answer.grounded:
         return Result("ai", "Real AI check (ChatGPT with web search)", False,
                       "answered from memory, not a live web search",

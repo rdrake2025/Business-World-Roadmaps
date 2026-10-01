@@ -76,6 +76,10 @@ permission to share the before-and-after.
   made-up businesses and made-up answers.)
 - AI answers change from one day to the next. That's why each question is
   asked three times, and why one good week isn't treated as proof.
+- If the $5 runs out, Today says **Measurements paused** and why. Nothing
+  is saved from a measurement that failed, so no pilot's numbers are
+  spoiled by it. Add credit (another $5 covers about ten measurements) and
+  leave AnswerRank open: it tries again within the hour.
 
 ## When a pilot works
 

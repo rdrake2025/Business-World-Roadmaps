@@ -36,6 +36,73 @@ NO_ENGINE = ("No AI engine key is saved, so nothing was checked. Add your OpenAI
 class NoAnswerEngine(RuntimeError):
     """Real mode, and no engine key: refusing beats inventing a score."""
 
+
+class MeasurementFailed(RuntimeError):
+    """Too few questions came back answered to count as a measurement."""
+
+
+#: Below this share of questions answered, nothing is kept. An audit of an
+#: outage reads as a business nobody names: saved, it was a 0 in a pilot's
+#: history, the before-and-after said "it went the wrong way", and the next
+#: re-measure waited 28 days because one had just been done. Running out of
+#: OpenAI credit, which a $5 start will do, failed every question at once.
+MIN_ANSWERED = 0.8
+
+#: Where the last failed measurement is noted for the Today list. Cleared by
+#: the next one that works.
+OUTAGE_KEY = "measure.outage"
+
+
+def why_failed(errors: list[str], asked: int) -> str:
+    """What went wrong, in words, and what to do about it."""
+    return (f"{len(errors)} of {asked} questions asked got no answer, so nothing was "
+            f"measured and nothing was saved. {fix_for(errors)}")
+
+
+def fix_for(errors: list[str]) -> str:
+    """What to do about failed answers, from what the engines said."""
+    text = " ".join(errors).lower()
+    if "insufficient_quota" in text or "exceeded your current quota" in text:
+        fix = ("OpenAI says the account is out of credit. Add some at "
+               "platform.openai.com, Settings, Billing ($5 covers about ten "
+               "measurements), then leave AnswerRank open: it tries again within "
+               "the hour.")
+    elif "http 401" in text or "invalid_api_key" in text or "incorrect api key" in text:
+        fix = ("An answer engine turned the key down. Check it in Keys and settings "
+               "(desktop menu, option 2).")
+    elif "http 429" in text:
+        fix = ("An answer engine is limiting how fast it answers. AnswerRank tries "
+               "again within the hour.")
+    elif any(w in text for w in ("connectionerror", "timeout", "max retries", "name resolution")):
+        fix = ("The answer engines couldn't be reached. Is the internet connection "
+               "up? AnswerRank tries again within the hour.")
+    else:
+        fix = (f"The first error was: {errors[0][:160]}. AnswerRank tries again "
+               f"within the hour.")
+    return fix
+
+
+def note_outage(store, why: str) -> None:
+    import json
+    from datetime import datetime, timezone
+    store.kv_set(OUTAGE_KEY, json.dumps(
+        {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "why": why}))
+
+
+def clear_outage(store) -> None:
+    if store.kv_get(OUTAGE_KEY):
+        store.kv_set(OUTAGE_KEY, "")
+
+
+def outage(store) -> dict | None:
+    """The last failed measurement, if nothing has worked since."""
+    import json
+    raw = store.kv_get(OUTAGE_KEY)
+    try:
+        return json.loads(raw) if raw else None
+    except ValueError:
+        return None
+
 #: Estimated USD per probe, with web search: OpenAI $10/1k searches plus
 #: tokens on gpt-5-mini; Anthropic $10/1k searches (up to two) plus the
 #: tokens results add; Perplexity Sonar's request fee plus tokens; one
@@ -111,6 +178,10 @@ def run_audit(business: Business, settings: Settings, depth: str = "full",
     # 40-probe audit finishes in seconds rather than minutes.
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
         audit.results = list(pool.map(probe, jobs))
+
+    failed = [r.error for r in audit.results if r.error]
+    if audit.results and len(failed) > (1 - MIN_ANSWERED) * len(audit.results):
+        raise MeasurementFailed(why_failed(failed, len(audit.results)))
 
     audit = score_audit(audit)
     audit.cost = round(sum(ENGINE_COST.get(r.engine, 0.01)

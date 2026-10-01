@@ -59,6 +59,13 @@ def next_actions(store, settings, now: datetime | None = None) -> dict[str, Any]
     if blockers:
         items.append(_item("blocked", "warn", "Sending is blocked", blockers[0],
                            {"type": "none"}))
+    # Measurements that failed (no credit left, a bad key): nothing was saved,
+    # and until it's fixed no pilot or client is measured.
+    from .audit import outage
+    down = outage(store)
+    if down:
+        items.append(_item("measure_outage", "warn", "Measurements paused",
+                           down.get("why", ""), {"type": "none"}))
     for stage, label in automation.STAGES.items():
         why = automation.paused(store, stage)
         if why:
