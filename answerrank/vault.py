@@ -264,7 +264,9 @@ cost. All it takes is your own computer and **$5 of OpenAI credit**.
 5. Inbox: **Copy text** on the welcome, send it yourself with their report
    and files, then **I sent it myself**.
 6. Open AnswerRank about once a month so it measures again. The **Pilots**
-   card on Today shows each pilot's scores and the next measurement date.
+   card on Today shows each pilot's scores and the next measurement date,
+   and **add these dates to your calendar** puts every date on your phone
+   with a reminder. The [[Dashboard]] lists them too.
 7. After 45 days the Pilots card links to the **before-and-after**, a page
    you can show other businesses.
 8. A week before the three months end, the offer is written for you: their
@@ -513,38 +515,12 @@ def _week_fix(store, r, clients) -> str:
             "depends on it. Open AnswerRank once a month for the next measurement.")
 
 
-def _coming_up(store, c, now, days: int = 100) -> list[tuple[str, str]]:
-    """One client's dated steps ahead, as (YYYY-MM-DD, what happens). A pilot
-    has four dates to plan around, and until now they were only on the
-    console's Pilots card, which you see only with AnswerRank open."""
-    from datetime import timedelta
+def _coming_up(store, c, now) -> list[tuple[str, str]]:
+    """One client's dated steps ahead (see dates.py), worded for the vault."""
+    from .dates import SAYS, ahead
 
-    from .casestudy import MIN_DAYS
-    from .sales import PILOT_NOTICE_DAYS, pilot_ends
-
-    if c.status != "active":
-        return []
-    today = now.date().isoformat()
-    horizon = (now + timedelta(days=days)).date().isoformat()
     link = f"[[{_title(c.business.name) or c.id}]]"
-    audits = store.audit_history(c.business.id, limit=24, comparable=True)
-    out = []
-    if audits:
-        out.append((max(_day(audits[0].created_at, 28), today),
-                    f"{link} measured again. Open AnswerRank and leave it ten minutes."))
-    else:
-        out.append((today, f"{link}'s first measurement. Open AnswerRank and leave it "
-                           f"ten minutes."))
-    if c.plan == "pilot":
-        start = (audits[-1].created_at if audits else c.started_at) or now.isoformat()
-        out.append((_day(start, MIN_DAYS), f"{link}'s before-and-after is ready to show "
-                                           f"(it says honestly whether it worked)."))
-        end = pilot_ends(c)
-        out.append((_day(end, -PILOT_NOTICE_DAYS), f"{link}'s offer is written for you "
-                                                   f"(Inbox). Send it."))
-        out.append((end, f"{link}'s free pilot ends. If they said yes: **They said yes: "
-                         f"start paid plan** on the Pilots card."))
-    return sorted((d, t) for d, t in out if today <= d <= horizon)
+    return [(d, SAYS[kind].format(who=link)) for d, kind in ahead(store, c, now)]
 
 
 def _dated(rows: list[tuple[str, str]]) -> list[str]:
@@ -557,6 +533,29 @@ def _dated(rows: list[tuple[str, str]]) -> list[str]:
             label = f"**{d}**"
         out.append(f"- {label}: {text}")
     return out
+
+
+#: More than this and the rest are counted, not listed: the note is a glance.
+TODAY_MAX = 8
+
+
+def _today(store, settings, now) -> list[str]:
+    """The console's Today list, most urgent first, for reading in Obsidian
+    (on your phone too, if your vault syncs) without opening AnswerRank."""
+    from . import today
+
+    items = [i for i in today.next_actions(store, settings, now)["items"]
+             # The console shows sending problems in its own banner, and for
+             # pilots with no mailbox they are beside the point.
+             if i["key"] != "blocked"]
+    out = ["## Today", "", "As of the time above. The Today tab in AnswerRank is "
+           "always current.", ""]
+    out += [f"- **{i['title']}**: {i['detail']}" for i in items[:TODAY_MAX]]
+    if len(items) > TODAY_MAX:
+        out.append(f"- …and {len(items) - TODAY_MAX} more on the Today tab.")
+    if not items:
+        out.append("- Nothing needs you right now.")
+    return out + [""]
 
 
 def _week_note(store, settings, now, clients) -> tuple[str, str]:
@@ -665,6 +664,7 @@ def live_notes(store, settings) -> dict[str, str]:
     stages = store.count_prospects_by_stage()
     drafts = len(store.get_messages("drafted", 500))
     lines = [f"# Dashboard", "", f"Updated {now.strftime('%Y-%m-%d %H:%M')} UTC by AnswerRank.", "",
+             *_today(store, settings, now),
              "## Money",
              f"- Coming in each month: **${store.mrr():,.0f}** from "
              f"{sum(1 for c in paying if c.mrr > 0)} paying client(s)",
@@ -709,9 +709,10 @@ def build() -> dict[str, str]:
         f"{ROOT}/Dashboard.md": _placeholder(
             "Dashboard", "Your live numbers appear here once AnswerRank writes to your "
             "own vault: in Keys and settings, give it your vault's folder. It's "
-            "refreshed every hour while AnswerRank runs, with the dates coming up "
-            "for each pilot: the next measurement, the before-and-after, the offer "
-            "and the end of the free months."),
+            "refreshed every hour while AnswerRank runs: what needs you today (the "
+            "same list as the Today tab), the money coming in, and the dates coming "
+            "up for each pilot: the next measurement, the before-and-after, the "
+            "offer and the end of the free months."),
         f"{ROOT}/Clients.md": _placeholder(
             "Clients", "A note for each client and pilot appears here once AnswerRank "
             "writes to your own vault: their scores over time, the next measurement "

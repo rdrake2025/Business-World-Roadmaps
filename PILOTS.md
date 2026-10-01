@@ -49,7 +49,9 @@ permission to share the before-and-after.
 7. **Open AnswerRank about once a month** and leave it open for ten minutes.
    It measures each pilot again every 28 days, using the same questions each
    time. The **Pilots** card on Today shows each one's first and latest
-   score, and the date of the next measurement.
+   score, and the date of the next measurement. Tap **add these dates to
+   your calendar** on that card: your phone then reminds you on the morning
+   of each measurement, and of the other dates below.
 8. **After 45 days**, the Pilots card links to the **before-and-after**: a
    page you can show other businesses (also under Clients → the business →
    **Before & after (case study)**). It says plainly whether the change is

@@ -7022,6 +7022,88 @@ class TestTheDatesAhead(TestNotesInYourOwnVault):
         self.assertIn("first measurement", ahead)
 
 
+class TestTodayInYourVault(TestNotesInYourOwnVault):
+    """The console's Today list, on the vault's Dashboard."""
+
+    def test_what_needs_you_is_listed_and_sending_problems_are_not(self):
+        from answerrank import vault
+        self.settings.physical_address = ""   # would block cold sending
+        p = self._prospect(stage="replied")
+        self.store.record_outcome(prospect_id=p.id, vertical="electrical", kind="replied",
+                                  sentiment="ready_to_buy", note="let's do it")
+        self.store.save_message(OutreachMessage(prospect_id=p.id, subject="Re", body="x",
+                                                kind="reply", status="drafted"))
+        dash = vault.live_notes(self.store, self.settings)["AnswerRank/Dashboard.md"]
+        today = dash[dash.index("## Today"):dash.index("## Money")]
+        self.assertNotIn("Sending is blocked", today)
+        self.assertIn("Ridge Electric", today, "someone ready to buy is at the top")
+
+    def test_an_empty_day_says_so(self):
+        from answerrank import vault
+        dash = vault.live_notes(self.store, self.settings)["AnswerRank/Dashboard.md"]
+        self.assertIn("- Nothing needs you right now.", dash)
+
+
+class TestPilotDatesOnYourCalendar(TestNotesInYourOwnVault):
+    """Pilots are measured only while AnswerRank is open. A calendar file
+    puts each pilot's dates on your phone, with a reminder on the morning."""
+
+    def _cal(self):
+        from answerrank import dates
+        return dates.calendar(self.store)
+
+    def test_each_date_with_a_morning_reminder(self):
+        from answerrank import sales
+        self._pilot(days_ago=(2,))
+        ends = sales.pilot_ends(self.store.get_clients("active")[0]).replace("-", "")
+        cal = self._cal()
+        self.assertTrue(cal.startswith("BEGIN:VCALENDAR\r\n"))
+        self.assertTrue(cal.endswith("END:VCALENDAR\r\n"))
+        self.assertEqual(cal.count("BEGIN:VEVENT"), 4)
+        self.assertEqual(cal.count("TRIGGER:PT9H"), 4)
+        self.assertIn(f"DTSTART;VALUE=DATE:{ends}", cal)
+        self.assertIn("SUMMARY:AnswerRank: send Ridge Electric their offer", cal)
+        self.assertNotIn("**", cal)
+        self.assertTrue(all(len(line.encode()) <= 75 for line in cal.split("\r\n")))
+
+    def test_paying_clients_are_left_out(self):
+        from answerrank import sales
+        p = self._prospect()
+        sales.sign_up(self.store, self.settings, p, "growth", send_link=False)
+        client = self.store.get_clients("awaiting_payment")[0]
+        client.status = "active"
+        self.store.upsert_client(client)
+        self.assertNotIn("BEGIN:VEVENT", self._cal())
+
+    def test_long_lines_fold_without_splitting_a_letter(self):
+        from answerrank import dates
+        line = "SUMMARY:" + "Café Électricité " * 8
+        folded = dates._fold(line)
+        self.assertTrue(all(len(part.encode()) <= 75 for part in folded))
+        self.assertEqual(folded[0] + "".join(part[1:] for part in folded[1:]), line)
+
+    def test_the_console_serves_it_behind_the_login(self):
+        from web.app import Application
+        self._pilot(days_ago=(2,))
+        app = Application(self.settings, self.store)
+
+        def get(path, token=app.token):
+            got = {}
+            env = {"PATH_INFO": path, "REQUEST_METHOD": "GET", "QUERY_STRING": "",
+                   "wsgi.input": io.BytesIO(b"")}
+            if token:
+                env["HTTP_X_AUTH_TOKEN"] = token
+            body = b"".join(app(env, lambda s, h, e=None: got.update(status=s, headers=dict(h))))
+            return got["status"], got["headers"], body
+        status, headers, body = get("/files/dates/answerrank-pilots.ics")
+        self.assertTrue(status.startswith("200"), status)
+        self.assertTrue(headers["Content-Type"].startswith("text/calendar"))
+        self.assertIn(b"BEGIN:VEVENT", body)
+        status, _h, _b = get("/files/dates/answerrank-pilots.ics", token="")
+        self.assertTrue(status.startswith("401"))
+        self.assertIn("/files/dates/answerrank-pilots.ics", json.dumps(self._api().state()))
+
+
 class TestAddSeveralAtOnce(_Biz):
     """The Pilot Kit scores businesses you know; each one then had to be typed
     into AnswerRank again by hand. Its "Copy for AnswerRank" lines paste in."""

@@ -103,6 +103,7 @@ class Api:
             "can_send": not blockers,
             "mailbox": SMTPConfig.from_env().configured(),
             "pilots": self.pilots(),
+            "pilot_calendar": "/files/dates/answerrank-pilots.ics",
             "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
 

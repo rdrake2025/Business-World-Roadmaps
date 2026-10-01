@@ -548,10 +548,20 @@ class Application:
         served from the output directory, whatever the database says.
         """
         parts = environ.get("PATH_INFO", "").strip("/").split("/")
-        if len(parts) != 3 or parts[1] not in {"report", "file", "case", "audit"}:
+        if len(parts) != 3 or parts[1] not in {"report", "file", "case", "audit", "dates"}:
             return self._ok(start, render("notfound.html"), status="404 Not Found")
         _, kind, ident = parts
         root = Path(self.settings.output_dir).resolve()
+        if kind == "dates":
+            # Each pilot's dates for a phone or computer calendar: pilots are
+            # measured only while AnswerRank is open, so a reminder matters.
+            from answerrank import dates
+            body = dates.calendar(self.store).encode("utf-8")
+            start("200 OK", [("Content-Type", "text/calendar; charset=utf-8"),
+                             ("Content-Length", str(len(body))),
+                             ("Content-Disposition", 'attachment; filename="answerrank-pilots.ics"'),
+                             ("Cache-Control", "no-store")])
+            return [body]
         if kind == "case":
             from answerrank import casestudy
             client = self.store.get_client(ident)

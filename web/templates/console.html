@@ -585,7 +585,9 @@
             esc(p.id) + '" data-offer="' + esc(p.offer) + '">They said yes: start paid plan</button>' +
           '</div>';
       }).join("") + '<div class="barnote" style="margin-top:6px">Scores are out of 100: ' +
-      'how often and how well AI assistants name them.</div></div>';
+      'how often and how well AI assistants name them. Measurements happen only while ' +
+      'AnswerRank is open: <a href="' + esc(S.pilot_calendar || "") + '">add these dates ' +
+      'to your calendar</a> for a reminder on each morning.</div></div>';
   }
   $("pilotCard").addEventListener("click", function(e){
     var b = e.target.closest("button[data-convert]");
