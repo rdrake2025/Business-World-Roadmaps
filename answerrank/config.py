@@ -250,6 +250,17 @@ class Settings:
                 live.append(name)
         return live or ["mock"]
 
+    def can_measure(self) -> bool:
+        """Whether an audit would ask a real answer engine.
+
+        In demo mode the made-up engine is the point. In real mode it is only
+        what :meth:`available_engines` falls back to when no key is saved, and
+        a score built from it is invented: a prospect's report, a pilot's
+        baseline or a case study made from it would be fiction presented as
+        measurement.
+        """
+        return self.demo_mode or self.available_engines() != ["mock"]
+
     def api_key(self, provider: str) -> str | None:
         return os.environ.get(PROVIDER_ENV.get(provider, ""), "").strip() or None
 

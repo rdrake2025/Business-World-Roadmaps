@@ -85,12 +85,21 @@ def estimate(settings, clients: int = 0, server: str | None = None,
     # The finder runs four times a day and stops after two or three searches
     # once it has enough new businesses.
     serper_queries = checks * serper_each + DAYS * 4 * 3
+    # The Explorer re-measures each candidate trade once a month, a handful
+    # of real businesses each, plus a local search to find them.
+    from . import markets
+    from .agents.explorer import REVISIT_DAYS, SAMPLE_SIZE
+    explored = len(markets.CANDIDATES) * DAYS / REVISIT_DAYS
+    serper_queries += round(explored * (SAMPLE_SIZE * serper_each + 3))
     lines = [
         Line("Mailbox (Google Workspace)", WORKSPACE, "one mailbox, month to month"),
         Line("Server", SERVERS.get(server, 6.0),
              "Google Cloud free tier" if server == "gcp_free" else "DigitalOcean"),
         Line("AI checks of new businesses", round(checks * ai_each, 2),
              f"{per_day} a day at about {ai_each * 100:.0f} cents each"),
+        Line("Market research", round(explored * SAMPLE_SIZE * ai_each, 2),
+             f"{len(markets.CANDIDATES)} possible new trades re-checked once a month, "
+             f"{SAMPLE_SIZE} businesses each"),
         Line("Business finder (Serper)", round(serper_queries * SERPER_PER_QUERY, 2),
              f"about {serper_queries:,} searches a month; nothing until the first "
              f"{SERPER_FREE:,} free ones are used"),

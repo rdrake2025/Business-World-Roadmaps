@@ -365,7 +365,18 @@ class TestPipelineIntegration(unittest.TestCase):
         self.assertTrue(audit.findings)
 
     def test_scout_to_outreach_end_to_end(self):
-        ScoutAgent(self.store, self.settings, target_per_run=6).run()
+        # Real businesses (a list the operator drops in), not the Scout's
+        # made-up ones: those are kept out of Outreach on purpose, and this
+        # test used to pass only because the audit wiped the label that did.
+        seed = os.path.join(self.tmp.name, "seed.csv")
+        with open(seed, "w", encoding="utf-8") as fh:
+            fh.write("name,city,state,vertical,website,email,phone\n")
+            for i, stem in enumerate(["Ridge", "Lone Star", "Hill Country", "Capitol",
+                                      "Bluebonnet", "Pecan"]):
+                slug = stem.lower().replace(" ", "")
+                fh.write(f"{stem} Heating & Air,Austin,TX,hvac,https://{slug}air{i}.com,"
+                         f"office@{slug}air{i}.com,512-555-01{i:02d}\n")
+        ScoutAgent(self.store, self.settings, target_per_run=6, seed_file=seed).run()
         AuditorAgent(self.store, self.settings).run()
         OutreachAgent(self.store, self.settings).run()
         stages = self.store.count_prospects_by_stage()
@@ -3775,6 +3786,7 @@ class TestNothingInventedReachesAMailbox(unittest.TestCase):
         self.assertEqual(self.store.get_prospects(limit=50), [])
 
     def test_fixtures_are_marked_where_they_enter(self):
+        self.settings.demo_mode = True      # the only mode that invents any
         agent = ScoutAgent(self.store, self.settings, target_per_run=3)
         added, _ = agent.execute()
         self.assertGreater(added, 0)
@@ -5583,7 +5595,7 @@ class TestReadyForTheRealWorld(_Biz):
         ai_each, serper_each = costs.check_costs(self.settings)
         self.assertAlmostEqual(ai_each, 0.06)
         rows = {r["key"]: r for r in costs.table(self.settings, server="gcp_free")}
-        self.assertLess(rows["lean"]["total"], 20, "about $19 a month, all in")
+        self.assertLess(rows["lean"]["total"], 22, "about $21 a month, all in")
         self.assertLess(rows["lean"]["total"], rows["standard"]["total"])
         with_clients = costs.estimate(self.settings, clients=6)
         self.assertTrue(any("Client audits" in l["label"] for l in with_clients["lines"]))
@@ -6492,3 +6504,122 @@ class TestCaseStudiesAreHonest(_Biz):
         ev, text = casestudy.write_up(self.store, client)
         self.assertEqual(ev.verdict, "flat")
         self.assertIn("Do not publish", text)
+
+
+class TestRealModeNeverPretends(_SalesFixture):
+    """Real mode with keys missing fell back to made-up data without a word:
+    the Scout invented businesses, the Auditor scored them and a pilot with
+    the made-up engine, Outreach drafted cold emails to invented addresses,
+    and a "yes" got a report built from invented answers."""
+
+    KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "PERPLEXITY_API_KEY", "SERPER_API_KEY")
+
+    def setUp(self):
+        super().setUp()
+        self.env = unittest.mock.patch.dict(os.environ, {}, clear=False)
+        self.env.start()
+        for k in self.KEYS:
+            os.environ.pop(k, None)
+        self.settings.demo_mode = False
+
+    def tearDown(self):
+        self.env.stop()
+        super().tearDown()
+
+    def _pilot(self):
+        from answerrank import sales
+        p = self._prospect(stage="replied")
+        sales.sign_up(self.store, self.settings, p, "pilot", send_link=False)
+        return p
+
+    def test_only_a_saved_key_counts_as_measuring(self):
+        self.assertFalse(self.settings.can_measure())
+        os.environ["OPENAI_API_KEY"] = "sk-test"
+        self.assertTrue(self.settings.can_measure())
+        self.assertEqual(self.settings.available_engines(), ["openai"])
+        del os.environ["OPENAI_API_KEY"]
+        self.settings.demo_mode = True
+        self.assertTrue(self.settings.can_measure(), "demo mode is meant to pretend")
+
+    def test_an_audit_refuses_rather_than_invents(self):
+        from answerrank.audit import NoAnswerEngine
+        with self.assertRaises(NoAnswerEngine):
+            run_audit(self._prospect().business, self.settings, depth="full")
+
+    def test_the_scout_invents_nobody_in_real_mode(self):
+        n, summary = ScoutAgent(self.store, self.settings).execute()
+        self.assertEqual(n, 0)
+        self.assertIn("Serper", summary)
+        self.assertEqual(self.store.get_prospects(limit=100), [])
+
+    def test_a_pilot_is_not_measured_with_made_up_answers(self):
+        p = self._pilot()
+        n, summary = AuditorAgent(self.store, self.settings).execute()
+        self.assertEqual(n, 0)
+        self.assertIn("OpenAI key", summary)
+        self.assertEqual(self.store.audit_history(p.business.id, limit=5), [],
+                         "a baseline from the made-up engine would make the case study fiction")
+
+    def test_a_yes_waits_for_you_instead_of_getting_an_invented_report(self):
+        from answerrank.agents.concierge import ConciergeAgent
+        prospect = self._prospect()
+        result = ConciergeAgent(self.store, self.settings).handle_reply(
+            prospect, "Yes please, send it over.")
+        self.assertNotEqual(result["action"], "send_report")
+        self.assertEqual(self.store.audit_history(prospect.business.id, limit=5), [])
+        msgs = self.store.messages_for(prospect.id)
+        self.assertTrue(all(m.kind != "report" and m.status == "drafted" for m in msgs))
+
+    def test_made_up_businesses_keep_their_never_contact_label(self):
+        """In demo mode the fixtures are the point, and the audit used to wipe
+        the label that keeps them out of Outreach."""
+        from answerrank.agents.scout import SIMULATED_MARKER
+        self.settings.demo_mode = True
+        ScoutAgent(self.store, self.settings).execute()
+        AuditorAgent(self.store, self.settings).execute()
+        audited = [p for p in self.store.get_prospects(limit=200) if p.stage == "audited"]
+        self.assertTrue(audited)
+        self.assertTrue(all(SIMULATED_MARKER in (p.notes or "") for p in audited))
+        OutreachAgent(self.store, self.settings).execute()
+        drafted = [m for p in audited for m in self.store.messages_for(p.id)]
+        self.assertEqual(drafted, [], "no email to an address that does not exist")
+
+    def test_the_explorer_needs_real_businesses_and_a_real_engine(self):
+        from answerrank.agents.explorer import ExplorerAgent
+        n, summary = ExplorerAgent(self.store, self.settings).execute()
+        self.assertEqual((n, "OpenAI key" in summary), (0, True))
+        os.environ["OPENAI_API_KEY"] = "sk-test"
+        n, summary = ExplorerAgent(self.store, self.settings).execute()
+        self.assertEqual(n, 0)
+        self.assertIn("Serper", summary)
+        self.assertEqual(self.store.latest_findings(), [])
+
+    def test_the_explorer_rechecks_a_market_once_a_month_not_twice_a_day(self):
+        from answerrank import markets
+        from answerrank.agents.explorer import REVISIT_DAYS, ExplorerAgent
+        self.settings.demo_mode = True
+        agent = ExplorerAgent(self.store, self.settings)
+        for _ in markets.CANDIDATES:
+            self.assertEqual(agent.execute()[0], 1)
+        n, summary = agent.execute()
+        self.assertEqual(n, 0, "every market measured: nothing to spend on")
+        self.assertIn("next re-check", summary)
+        old = (datetime.now(timezone.utc) - timedelta(days=REVISIT_DAYS + 1)).isoformat(
+            timespec="seconds")
+        first = markets.CANDIDATES[0]
+        self.store.save_finding({"id": "mkt_old", "market": first.key, "label": first.label,
+                                 "sampled": 5, "mean_score": 10.0, "invisible_share": 80.0,
+                                 "opportunity": 60.0, "verdict": "test", "notes": [],
+                                 "created_at": old})
+        with self.store.conn() as cx:
+            cx.execute("DELETE FROM market_findings WHERE market = ? AND id != 'mkt_old'",
+                       (first.key,))
+        n, summary = agent.execute()
+        self.assertEqual(n, 1)
+        self.assertIn(first.label, summary)
+
+    def test_the_cost_estimate_counts_the_market_research(self):
+        from answerrank import costs
+        lines = {l["label"]: l["monthly"] for l in costs.estimate(self.settings)["lines"]}
+        self.assertIn("Market research", lines)
+        self.assertLess(lines["Market research"], 3, "a monthly re-check, not twice a day")

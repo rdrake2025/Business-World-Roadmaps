@@ -227,6 +227,14 @@ class ScoutAgent(Agent):
             if seeded and not searched:
                 return 0, (f"seed file has {len(seeded)} businesses, all already "
                            f"in the pipeline; nothing new to add")
+            # Made-up businesses are for demo mode, where nothing is sent. In
+            # real mode they sat in the pipeline beside real ones, were
+            # audited for real money, and were one approval away from a cold
+            # email to an address that does not exist.
+            if not self.settings.demo_mode:
+                return 0, ("no business finder key saved (Serper), so no new "
+                           "businesses were found. Add it in Keys and settings. "
+                           "Nothing was made up to fill the gap.")
             simulated = True
             found = self.simulated(self.target)
 
