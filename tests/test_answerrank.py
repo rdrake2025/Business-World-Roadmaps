@@ -6856,3 +6856,26 @@ class TestNotesInYourOwnVault(_Biz):
         keys._ask_obsidian(self.settings, cfg, lambda _q: f'"{own}"', said.append)
         self.assertEqual(self.settings.obsidian_vault, str(own))
         self.assertIn("obsidian_vault:", cfg.read_text(encoding="utf-8"))
+
+
+class TestTheWeekInYourVault(TestNotesInYourOwnVault):
+    """Each week gets a note that stays once the week is over: a diary of the
+    business. Its advice fits the stage you're at."""
+
+    def test_this_week_has_a_note_linked_from_the_dashboard(self):
+        from answerrank import vault
+        self._pilot()
+        notes = vault.live_notes(self.store, self.settings)
+        year, week, _ = datetime.now(timezone.utc).isocalendar()
+        name = f"Week {year}-W{week:02d}"
+        self.assertIn(f"AnswerRank/Weeks/{name}.md", notes)
+        self.assertIn(f"[[{name}]]", notes["AnswerRank/Dashboard.md"])
+
+    def test_pilot_stage_advice_instead_of_cold_email_targets(self):
+        from answerrank import vault
+        self._pilot()
+        year, week, _ = datetime.now(timezone.utc).isocalendar()
+        note = vault.live_notes(self.store, self.settings)[
+            f"AnswerRank/Weeks/Week {year}-W{week:02d}.md"]
+        self.assertIn("before-and-after is ready for [[Ridge Electric]]", note)
+        self.assertNotIn("more cold emails", note)

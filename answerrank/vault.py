@@ -475,6 +475,76 @@ def _day(iso: str, plus: int = 0) -> str:
 LIVE_STATUSES = ("active", "awaiting_payment", "past_due", "churned")
 
 
+def _week_fix(store, r, clients) -> str:
+    """The week's advice. Before any cold email it's about the pilots: "send
+    150 more cold emails" means nothing to someone with no mailbox yet."""
+    from datetime import datetime, timezone
+
+    from .casestudy import MIN_DAYS
+
+    pilots = [c for c in clients if c.plan == "pilot" and c.status == "active"]
+    if r["week"]["sent"] or store.sends_today() or not pilots:
+        return r["fix"]
+    ready, waiting = [], []
+    for c in pilots:
+        audits = store.audit_history(c.business.id, limit=24, comparable=True)
+        if not audits:
+            waiting.append(c.business.name)
+            continue
+        age = (datetime.now(timezone.utc)
+               - datetime.fromisoformat(audits[-1].created_at.replace("Z", "+00:00"))).days
+        if age >= MIN_DAYS and len(audits) >= 2:
+            ready.append(f"[[{_title(c.business.name)}]]")
+    if ready:
+        return ("The before-and-after is ready for " + ", ".join(ready) + ". Read it, "
+                "and if it says it's worth publishing, ask them for a sentence in their own "
+                "words: that's what sells the service to the next business.")
+    if waiting:
+        return ("Open AnswerRank for ten minutes so " + ", ".join(waiting)
+                + " get their first measurement.")
+    return ("You're in the pilot stage. Make sure each pilot has their report and "
+            "files, and that the changes are going onto their website: the result "
+            "depends on it. Open AnswerRank once a month for the next measurement.")
+
+
+def _week_note(store, settings, now, clients) -> tuple[str, str]:
+    """This week's review as a note of its own. It's rewritten until the week
+    ends and then left as it was, so the folder becomes the business's diary."""
+    from datetime import timedelta
+
+    from . import weekly
+
+    year, week, _ = now.isocalendar()
+    name = f"Week {year}-W{week:02d}"
+    monday = (now - timedelta(days=now.weekday())).date()
+    r = weekly.review(store, settings, now)
+    w, k = r["week"], r["kpis"]
+    measured = sorted({c.business.name for c in clients
+                       for a in store.audit_history(c.business.id, limit=3, comparable=True)
+                       if _day(a.created_at) >= monday.isoformat()})
+    funnel = [f"- {st['label']}: {st['value']:.0%} (healthy {st['healthy']})"
+              + ("" if st["ok"] else " **fix this**") if st["judged"]
+              else f"- {st['label']}: too early to judge" for st in r["steps"]]
+    lines = [f"# {name}", "",
+             f"Monday {monday.isoformat()} to Sunday {(monday + timedelta(days=6)).isoformat()}. "
+             f"Rewritten each hour until the week ends, then kept as it was.", "",
+             "## This week",
+             f"- {w['sent']} cold emails sent, {w['replied']} replies",
+             f"- {w['calls']} calls, {w['booked']} walkthroughs booked, "
+             f"{w['won']} signed up, {w['paid']} paid",
+             "- Measured: " + (", ".join(f"[[{_title(n)}]]" for n in measured) or "nobody"),
+             f"- Now: {int(k['active_clients'])} client(s), "
+             f"${store.mrr():,.0f} a month coming in", "",
+             "## The funnel (last 30 days)", *funnel, "",
+             "## The one thing to change", _week_fix(store, r, clients), ""]
+    if r["upcoming"]:
+        lines += ["## Booked for next week",
+                  *[f"- {u['when']}: {u['kind']}, {u['name']}" for u in r["upcoming"]], ""]
+    lines += ["Your own thoughts on the week go in a note from the Weekly review "
+              "template. Back to [[Dashboard]]."]
+    return name, _front(["answerrank", "week"], week=f"{year}-W{week:02d}") + "\n".join(lines) + "\n"
+
+
 def live_notes(store, settings) -> dict[str, str]:
     """A dashboard, and a note per client and pilot, from your database."""
     from datetime import datetime, timezone
@@ -530,6 +600,9 @@ def live_notes(store, settings) -> dict[str, str]:
         "| Client | Plan | Status | Score |\n| --- | --- | --- | --- |\n" + "\n".join(index)
         if index else "No clients or pilots yet. See [[Pilots]].") + "\n\nBack to [[AnswerRank]].\n"
 
+    week_name, week_note = _week_note(store, settings, now, clients)
+    notes[f"{ROOT}/Weeks/{week_name}.md"] = week_note
+
     paying = store.get_clients("active")
     stages = store.count_prospects_by_stage()
     drafts = len(store.get_messages("drafted", 500))
@@ -539,6 +612,7 @@ def live_notes(store, settings) -> dict[str, str]:
              f"{sum(1 for c in paying if c.mrr > 0)} paying client(s)",
              f"- Signed, waiting to pay: {len(store.get_clients('awaiting_payment'))}",
              f"- Goal: ${settings.profit_target_monthly:,.0f} a month. See [[Plan]].", "",
+             f"This week so far: [[{week_name}]]", "",
              "## Pilots", *(pilots or ["- None yet. See [[Pilots]]."]), "",
              "## Waiting for you",
              f"- {drafts} email(s) in the Inbox" if drafts else "- Nothing in the Inbox", ""]
