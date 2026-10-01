@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from ..audit import run_audit
+from ..audit import MeasurementFailed, clear_outage, note_outage, run_audit
 from ..models import LedgerEntry
 from ..scoring import competitor_gap
 from .base import Agent
@@ -52,9 +52,17 @@ class AuditorAgent(Agent):
             hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
         room = max(0, int(getattr(self.settings, "teaser_audits_per_day", 30))
                    - self.store.teasers_since(midnight))
+        # A measurement that mostly failed (no credit left, a bad key, no
+        # internet) is not kept, and the run stops there: the next business
+        # would fail the same way. The Today list says why until one works.
+        stopped = ""
         for prospect in self.store.due_prospects("discovered", min(self.teaser_budget, room)):
-            audit = run_audit(prospect.business, self.settings, depth="teaser",
-                              check_crawlers=True)
+            try:
+                audit = run_audit(prospect.business, self.settings, depth="teaser",
+                                  check_crawlers=True)
+            except MeasurementFailed as exc:
+                stopped = str(exc)
+                break
             self.store.save_audit(audit)
 
             prospect.score = audit.score
@@ -91,13 +99,22 @@ class AuditorAgent(Agent):
         # answered by comparing this morning with this afternoon.
         clients_audited = 0
         cutoff = (datetime.now(timezone.utc) - timedelta(days=28)).isoformat(timespec="seconds")
-        for client in self.store.get_clients("active"):
-            recent = [a for a in self.store.audit_history(client.business.id, limit=5)
-                      if not a.is_free_teaser and a.created_at > cutoff]
-            if recent:
+        for client in [] if stopped else self.store.get_clients("active"):
+            if client.plan == "pilot":
+                # Three measurements, each timed for something (sales.py).
+                from ..sales import pilot_due
+                if not pilot_due(client, self.store.audit_history(
+                        client.business.id, limit=24, comparable=True)):
+                    continue
+            elif [a for a in self.store.audit_history(client.business.id, limit=5)
+                  if not a.is_free_teaser and a.created_at > cutoff]:
                 continue
-            audit = run_audit(client.business, self.settings, depth="full",
-                              check_crawlers=True)
+            try:
+                audit = run_audit(client.business, self.settings, depth="full",
+                                  check_crawlers=True)
+            except MeasurementFailed as exc:
+                stopped = str(exc)
+                break
             self.store.save_audit(audit)
             spend += audit.cost
             clients_audited += 1
@@ -109,8 +126,15 @@ class AuditorAgent(Agent):
                 description=f"{processed} audits ({engine_count} engines)",
             ))
 
+        if stopped:
+            note_outage(self.store, stopped)
+        elif processed:
+            clear_outage(self.store)
+
         summary = (f"{processed - clients_audited} teaser audits, "
                    f"{clients_audited} client audits, ${spend:.2f} API spend")
+        if stopped:
+            summary += f" | stopped: {stopped}"
         if blocked_sites:
             summary += (f" | {blocked_sites} site(s) block the answer engines in "
                         f"their own robots.txt \u2014 the strongest opener you have")

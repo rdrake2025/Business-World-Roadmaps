@@ -88,7 +88,10 @@ class OpenAIEngine(AnswerEngine):
                           payload, self.timeout)
         ms = int((time.time() - t0) * 1000)
         if err:
-            if err.startswith("HTTP 4"):
+            # A refused key, no credit or a rate limit refuses the fallback
+            # too: asking twice only doubled the failed calls.
+            if err.startswith("HTTP 4") and not err.startswith(("HTTP 401", "HTTP 403",
+                                                                 "HTTP 429")):
                 # A model or account without the tool: answer, but say it
                 # is from memory so nothing quotes it as ChatGPT's view.
                 return self._from_memory(prompt, t0)

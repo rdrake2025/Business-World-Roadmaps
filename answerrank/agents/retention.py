@@ -396,6 +396,12 @@ class RetentionAgent(Agent):
             ends = date.fromisoformat(sales.pilot_ends(client))
             if (ends - today).days > sales.PILOT_NOTICE_DAYS:
                 continue
+            # The offer quotes the latest numbers: if the measurement for it
+            # is due and hasn't run (AnswerRank was closed that day), wait for
+            # it, until the pilot's last day.
+            if today < ends and sales.pilot_due(client, self.store.audit_history(
+                    client.business.id, limit=24, comparable=True)):
+                continue
             prospect = self.store.prospect_for_business(client.business)
             if prospect is None:
                 continue

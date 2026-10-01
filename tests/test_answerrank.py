@@ -7025,10 +7025,13 @@ class TestTheDatesAhead(TestNotesInYourOwnVault):
         lines = [l for l in ahead.splitlines() if l.startswith("- ")]
         self.assertEqual(len(lines), 4, ahead)
         self.assertEqual([l[4:14] for l in lines], sorted(l[4:14] for l in lines))
-        self.assertIn("measured again", lines[0])
-        self.assertIn("before-and-after", lines[1])
-        self.assertIn("offer", lines[2])
+        self.assertIn("measured for the before-and-after", lines[0])
+        self.assertIn("measured one last time, for the offer", lines[1])
+        self.assertIn("offer is written", lines[2])
         self.assertIn(ends, lines[3])
+        from datetime import date
+        self.assertEqual((date.fromisoformat(lines[2][4:14]) - date.fromisoformat(lines[1][4:14])).days,
+                         1, "measured the day before the offer is written")
         self.assertIn("## Coming up", self._live()["AnswerRank/Clients/Ridge Electric.md"])
 
     def test_past_dates_drop_off_and_a_late_measurement_is_due_today(self):
@@ -7036,16 +7039,18 @@ class TestTheDatesAhead(TestNotesInYourOwnVault):
         today = datetime.now(timezone.utc).date().isoformat()
         note = self._live()["AnswerRank/Clients/Ridge Electric.md"]
         ahead = note[note.index("## Coming up"):]
-        self.assertIn(f"**{today}**", ahead, "measurement overdue: due now, not in the past")
-        self.assertNotIn("before-and-after is ready", ahead, "that date has passed")
+        first_line = next(l for l in ahead.splitlines() if l.startswith("- "))
+        self.assertIn(f"**{today}**", first_line, "measurement overdue: due now, not in the past")
+        self.assertIn("measured for the before-and-after", first_line)
 
     def test_this_weeks_dates_are_kept_in_the_week_note(self):
         from answerrank import vault
-        self._pilot(days_ago=(30,))
+        self._pilot(days_ago=(50,))
         notes = vault.live_notes(self.store, self.settings)
         week = next(t for p, t in notes.items() if "/Weeks/" in p)
         self.assertIn("## Dates this week", week)
-        self.assertIn("[[Ridge Electric]] measured again", week, "overdue: due now")
+        self.assertIn("[[Ridge Electric]] measured for the before-and-after", week,
+                      "overdue: due now")
         self.assertNotIn("free pilot ends", week, "that is months away")
 
     def test_paying_clients_show_only_their_measurement(self):
@@ -7141,6 +7146,247 @@ class TestPilotDatesOnYourCalendar(TestNotesInYourOwnVault):
         status, _h, _b = get("/files/dates/answerrank-pilots.ics", token="")
         self.assertTrue(status.startswith("401"))
         self.assertIn("/files/dates/answerrank-pilots.ics", json.dumps(self._api().state()))
+
+
+class TestAFailedMeasurementIsNotAScore(_SalesFixture):
+    """With $5 of OpenAI credit, running out is part of the plan. Every
+    question then failed, the audit was saved as a 0, the before-and-after
+    said "it went the wrong way", and nothing was re-measured for 28 days."""
+
+    NO_CREDIT = ('HTTP 429: {"error": {"message": "You exceeded your current quota, '
+                 'please check your plan and billing details.", "code": "insufficient_quota"}}')
+
+    def _failing(self, every=1):
+        from answerrank.engines.base import EngineAnswer
+        from answerrank.engines.mock import MockEngine
+        real, calls = MockEngine.ask, [0]
+
+        def ask(engine, prompt):
+            calls[0] += 1
+            if calls[0] % every == 0:
+                return EngineAnswer(text="", sources=[], latency_ms=5, error=self.NO_CREDIT)
+            return real(engine, prompt)
+        return unittest.mock.patch.object(MockEngine, "ask", ask)
+
+    def _pilot(self):
+        from answerrank import sales
+        p = self._prospect(stage="replied")
+        sales.sign_up(self.store, self.settings, p, "pilot", send_link=False)
+        return p, self.store.get_clients("active")[0]
+
+    def test_no_credit_saves_nothing_and_says_why(self):
+        from answerrank import audit, today
+        p, client = self._pilot()
+        with self._failing():
+            n, summary = AuditorAgent(self.store, self.settings).execute()
+        self.assertEqual(self.store.audit_history(client.business.id), [])
+        self.assertIn("stopped", summary)
+        why = audit.outage(self.store)["why"]
+        self.assertIn("out of credit", why)
+        self.assertIn("nothing was saved", why)
+        items = today.next_actions(self.store, self.settings)["items"]
+        self.assertIn("Measurements paused", [i["title"] for i in items])
+
+    def test_the_next_measurement_that_works_clears_it(self):
+        from answerrank import audit
+        p, client = self._pilot()
+        with self._failing():
+            AuditorAgent(self.store, self.settings).execute()
+        AuditorAgent(self.store, self.settings).execute()
+        self.assertEqual(len(self.store.audit_history(client.business.id)), 1)
+        self.assertIsNone(audit.outage(self.store))
+
+    def test_a_few_failed_questions_are_still_a_measurement(self):
+        from answerrank import audit
+        p, client = self._pilot()
+        with self._failing(every=15):
+            AuditorAgent(self.store, self.settings).execute()
+        self.assertEqual(len(self.store.audit_history(client.business.id)), 1)
+        self.assertIsNone(audit.outage(self.store))
+
+    def test_a_report_is_not_made_of_an_outage(self):
+        from answerrank import audit
+        prospect = self._prospect()
+        with self._failing():
+            result = self._concierge().handle_reply(prospect, "Yes please, send it over.")
+        self.assertNotEqual(result["action"], "send_report")
+        self.assertFalse([m for m in self.store.messages_for(prospect.id) if m.kind == "report"])
+        self.assertIsNotNone(audit.outage(self.store))
+
+    def test_an_old_failed_audit_is_not_compared(self):
+        p, client = self._pilot()
+        results = [ProbeResult(probe_id=f"q{i}", engine="openai", prompt=f"question {i}",
+                               answer_text="", mentioned=False, cited=False, position=None,
+                               error=self.NO_CREDIT) for i in range(30)]
+        self.store.save_audit(Audit(business_id=client.business.id,
+                                    business_name=client.business.name,
+                                    market=client.business.market,
+                                    vertical=client.business.vertical, score=0.0,
+                                    is_free_teaser=False, results=results))
+        self.assertEqual(self.store.audit_history(client.business.id, comparable=True), [])
+        self.assertEqual(len(self.store.audit_history(client.business.id)), 1)
+
+    def test_the_reason_names_the_fix(self):
+        from answerrank.audit import why_failed
+        self.assertIn("Keys and settings", why_failed(["HTTP 401: invalid_api_key"], 30))
+        self.assertIn("internet", why_failed(["ConnectionError: Max retries exceeded"], 30))
+        self.assertIn("limiting", why_failed(["HTTP 429: rate_limit_exceeded"], 30))
+
+    def test_the_key_check_says_the_credit_ran_out(self):
+        from answerrank import selftest
+        from answerrank.engines import live
+        with unittest.mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}), \
+                unittest.mock.patch.object(live, "_post",
+                                           lambda *a, **k: (None, self.NO_CREDIT)):
+            result = selftest.check_ai(self.settings)
+        self.assertFalse(result.ok)
+        self.assertIn("out of credit", result.fix)
+
+    def test_a_refused_account_is_not_asked_twice(self):
+        from answerrank.engines import live
+        calls = []
+
+        def post(url, headers, payload, timeout):
+            calls.append(url)
+            return None, self.NO_CREDIT
+        with unittest.mock.patch.object(live, "_post", post):
+            answer = live.OpenAIEngine(api_key="sk-test").ask("best plumber in Tulsa")
+        self.assertTrue(answer.error)
+        self.assertEqual(len(calls), 1, "no second try without search")
+
+
+class TestThreeMeasurementsAPilot(TestNotesInYourOwnVault):
+    """Every 28 days meant four measurements (more than the $5), a
+    before-and-after shown as ready at day 45 that said "too early" until
+    day 56, and a last measurement the day after the offer was written. Now:
+    the start, day 45 for the before-and-after, and the day before the offer."""
+
+    def _started(self, days_ago):
+        client = self.store.get_clients("active")[0]
+        client.started_at = (datetime.now(timezone.utc)
+                             - timedelta(days=days_ago)).isoformat(timespec="seconds")
+        self.store.upsert_client(client)
+        return client
+
+    def _history(self, client):
+        return self.store.audit_history(client.business.id, limit=24, comparable=True)
+
+    def test_the_schedule(self):
+        from answerrank import sales
+        self._pilot(days_ago=(2,))
+        client = self._started(2)
+        when, which = sales.pilot_next(client, self._history(client))
+        self.assertEqual(which, "mid")
+        self.assertEqual(when, (datetime.now(timezone.utc) + timedelta(days=43)).date().isoformat())
+
+    def test_the_auditor_measures_on_those_days_and_no_others(self):
+        self._pilot(days_ago=(46,))
+        client = self._started(46)
+        AuditorAgent(self.store, self.settings).execute()
+        self.assertEqual(len(self._history(client)), 2, "day 45: the before-and-after")
+        AuditorAgent(self.store, self.settings).execute()
+        self.assertEqual(len(self._history(client)), 2, "nothing more until the offer")
+
+    def test_none_left_after_the_one_for_the_offer(self):
+        from answerrank import sales
+        self._pilot(days_ago=(84, 38, 1))
+        client = self._started(84)
+        self.assertIsNone(sales.pilot_next(client, self._history(client)))
+        AuditorAgent(self.store, self.settings).execute()
+        self.assertEqual(len(self._history(client)), 3)
+
+    def test_a_late_start_still_measures_before_the_offer(self):
+        """Started 60 days ago, first measured only 10 days ago: 45 days on
+        would be day 95, after the pilot has ended."""
+        from answerrank import sales
+        self._pilot(days_ago=(10,))
+        client = self._started(60)
+        when, which = sales.pilot_next(client, self._history(client))
+        day_82 = (datetime.now(timezone.utc) + timedelta(days=22)).date().isoformat()
+        self.assertEqual((when, which), (day_82, "mid"), "the day before the offer")
+
+    def test_three_pilots_fit_in_five_dollars(self):
+        from answerrank.costs import client_audit_cost
+        settings = Settings()
+        settings.engines = ["openai"]
+        self.assertLessEqual(3 * 3 * client_audit_cost(settings), 5.0)
+
+    def test_the_offer_waits_for_its_measurement(self):
+        from answerrank.agents.retention import RetentionAgent
+        self._pilot(days_ago=(84, 39))
+        client = self._started(84)
+        RetentionAgent(self.store, self.settings)._pilot_offers()
+        self.assertFalse(self.store.has_outcome(client.id, "pilot_offer"),
+                         "the measurement for it is due and hasn't run")
+        AuditorAgent(self.store, self.settings).execute()
+        RetentionAgent(self.store, self.settings)._pilot_offers()
+        self.assertTrue(self.store.has_outcome(client.id, "pilot_offer"))
+
+    def test_the_before_and_after_shows_when_it_can_say_something(self):
+        self._pilot(days_ago=(50, 22))
+        self._started(50)
+        card = self._api().pilots()[0]
+        self.assertFalse(card["case_ready"], "28 days apart: too early, whatever the date")
+        self.assertEqual(card["next_for"], "the before-and-after")
+
+
+class TestWhatTheCreditCovers(_Biz):
+    """A $5 credit runs out quietly. The Pilots card and the Dashboard say what
+    has been spent, what the pilots still need, and what that leaves."""
+
+    def setUp(self):
+        super().setUp()
+        self.env = unittest.mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"})
+        self.env.start()
+        self.settings.demo_mode = False
+        self.settings.engines = ["openai"]
+
+    def tearDown(self):
+        self.env.stop()
+        super().tearDown()
+
+    def _pilots(self, n):
+        api = self._api()
+        for i in range(n):
+            r = api.add_business(f"Pilot {i} Plumbing", "Tulsa", "OK", "plumbing",
+                                 f"pilot{i}.example", "", "")
+            api.win(r["id"], "pilot")
+
+    def test_new_pilots_need_three_measurements_each(self):
+        from answerrank import sales
+        self._pilots(3)
+        b = sales.pilot_budget(self.store, self.settings)
+        self.assertEqual((b["per"], b["to_come"], b["to_come_cost"]), (0.45, 9, 4.05))
+        self.assertIn("That leaves about $0.95", b["line"])
+
+    def test_what_was_spent_counts(self):
+        from answerrank import sales
+        from answerrank.models import LedgerEntry
+        self._pilots(1)
+        self.store.add_ledger(LedgerEntry(kind="cost", category="api", amount=0.45,
+                                          description="1 audits (1 engines)"))
+        b = sales.pilot_budget(self.store, self.settings)
+        self.assertEqual(b["spent"], 0.45)
+        self.assertIn("leaves about $3.20", b["line"])
+
+    def test_it_says_when_the_credit_wont_cover_them(self):
+        from answerrank import sales
+        self._pilots(4)
+        self.assertIn("Add about $0.40 of credit", sales.pilot_budget(self.store, self.settings)["line"])
+
+    def test_on_the_pilots_card_and_the_dashboard(self):
+        from answerrank import vault
+        self._pilots(2)
+        self.assertIn("Still to come for these pilots: 6 measurements", self._api().state()["pilot_budget"])
+        dash = vault.live_notes(self.store, self.settings)["AnswerRank/Dashboard.md"]
+        self.assertIn("Started with $5? That leaves about $2.30.", dash)
+
+    def test_demo_mode_says_nothing(self):
+        from answerrank import sales
+        self.settings.demo_mode = True
+        self.settings.engines = ["mock"]
+        self._pilots(1)
+        self.assertEqual(sales.pilot_budget(self.store, self.settings)["line"], "")
 
 
 class TestAddSeveralAtOnce(_Biz):

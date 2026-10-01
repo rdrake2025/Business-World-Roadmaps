@@ -55,6 +55,7 @@ class Api:
         from answerrank.agents.bookkeeper import BookkeeperAgent
         from answerrank.agents.outreach import OutreachAgent
         from answerrank.mailer import SMTPConfig
+        from answerrank.sales import pilot_budget
 
         kpis = BookkeeperAgent(self.store, self.settings).kpis()
         blockers = OutreachAgent(self.store, self.settings).preflight()
@@ -103,6 +104,7 @@ class Api:
             "can_send": not blockers,
             "mailbox": SMTPConfig.from_env().configured(),
             "pilots": self.pilots(),
+            "pilot_budget": pilot_budget(self.store, self.settings)["line"],
             "pilot_calendar": "/files/dates/answerrank-pilots.ics",
             "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
@@ -135,17 +137,21 @@ class Api:
                                     "measured": len(audits), "ends_on": day(ends + "T00:00:00+00:00"),
                                     "offer": f"{plan.capitalize()}, ${self.settings.pricing.plan_price(plan):,.0f}/mo"}
             if audits:
+                from answerrank import casestudy
                 first, last = audits[-1], audits[0]
-                age = (datetime.now(timezone.utc)
-                       - datetime.fromisoformat(first.created_at.replace("Z", "+00:00"))).days
+                nxt = sales.pilot_next(c, audits)
                 item.update(
                     first_score=round(first.score), first_on=day(first.created_at),
                     latest_score=round(last.score), latest_on=day(last.created_at),
-                    # The Auditor measures a client again once their last full
-                    # audit is 28 days old, while AnswerRank is open.
-                    next_on=day(last.created_at, 28),
+                    # Three measurements, each for something (sales.py); none
+                    # left once the one for the offer is done.
+                    next_on=day(nxt[0] + "T00:00:00+00:00") if nxt else "",
+                    next_for={"mid": "the before-and-after", "final": "the offer"}.get(
+                        nxt[1], "") if nxt else "",
                     case_on=day(first.created_at, MIN_DAYS),
-                    case_ready=age >= MIN_DAYS and len(audits) >= 2,
+                    # Ready when it can say something, not on a date: it needs
+                    # 45 days between the first and last measurement.
+                    case_ready=casestudy.evidence(self.store, c).verdict != "too_early",
                     case_url=f"/files/case/{c.id}")
             out.append(item)
         return out

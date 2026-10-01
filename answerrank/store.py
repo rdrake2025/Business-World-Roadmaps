@@ -457,6 +457,12 @@ class Store:
             audit = _audit_from_raw(r["raw"])
             if comparable and audit.is_free_teaser:
                 continue
+            # One where over a fifth of the questions failed (audit.MIN_ANSWERED;
+            # saved before such audits were refused) measured the outage, not
+            # the business.
+            failed = sum(1 for x in audit.results if x.error)
+            if comparable and audit.results and failed > len(audit.results) / 5:
+                continue
             out.append(audit)
             if len(out) >= limit:
                 break
@@ -983,6 +989,13 @@ class Store:
                    AND occurred_at LIKE ?""",
                 (category, f"{month}%"),
             ).fetchone() is not None
+
+    def api_spend(self) -> float:
+        """Everything spent on the answer engines and search, ever."""
+        with self.conn() as cx:
+            row = cx.execute("SELECT COALESCE(SUM(amount),0) t FROM ledger "
+                             "WHERE kind='cost' AND category='api'").fetchone()
+        return round(float(row["t"]), 2)
 
     def pnl(self, days: int = 30) -> dict[str, float]:
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")

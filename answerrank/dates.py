@@ -1,11 +1,11 @@
 """The dates ahead for each client, and a calendar file to keep them.
 
-A pilot has four dates to plan around: its next measurement, the day the
-before-and-after is ready, the day the offer is written and the day the
-free months end. Measurements only happen while AnswerRank is open, so on a
-laptop a forgotten month is a measurement missed and a before-and-after
-pushed back. The vault's Dashboard lists the dates; the calendar file puts
-them on your phone with a reminder on the morning.
+A pilot is measured three times (at the start, for the before-and-after,
+and for the offer; see sales.py), and has two more dates: the day the offer
+is written and the day the free months end. Measurements only happen while
+AnswerRank is open, so on a laptop a forgotten day is a measurement missed
+and a before-and-after pushed back. The vault's Dashboard lists the dates;
+the calendar file puts them on your phone with a reminder on the morning.
 """
 
 from __future__ import annotations
@@ -17,7 +17,11 @@ from datetime import date, datetime, timedelta, timezone
 SAYS = {
     "first": "{who}'s first measurement. Open AnswerRank and leave it ten minutes.",
     "measure": "{who} measured again. Open AnswerRank and leave it ten minutes.",
-    "case": "{who}'s before-and-after is ready to show (it says honestly whether it worked).",
+    "mid": "{who} measured for the before-and-after. Open AnswerRank and leave it ten "
+           "minutes; the before-and-after is ready straight after (it says honestly "
+           "whether it worked).",
+    "final": "{who} measured one last time, for the offer. Open AnswerRank and leave it "
+             "ten minutes.",
     "offer": "{who}'s offer is written for you (Inbox). Send it.",
     "end": "{who}'s free pilot ends. If they said yes: **They said yes: start paid plan** "
            "on the Pilots card.",
@@ -27,12 +31,13 @@ SAYS = {
 TITLES = {
     "first": "AnswerRank: measure {who} (open it for 10 minutes)",
     "measure": "AnswerRank: measure {who} (open it for 10 minutes)",
-    "case": "AnswerRank: {who}'s before-and-after is ready",
+    "mid": "AnswerRank: measure {who} for the before-and-after",
+    "final": "AnswerRank: measure {who} for the offer",
     "offer": "AnswerRank: send {who} their offer",
     "end": "AnswerRank: {who}'s free pilot ends",
 }
 
-#: Days between measurements, as on the Pilots card.
+#: Days between a paying client's measurements (a pilot's are in sales.py).
 REMEASURE_DAYS = 28
 
 
@@ -49,8 +54,7 @@ def ahead(store, client, now: datetime | None = None,
     """One client's dated steps from today, as (YYYY-MM-DD, kind), soonest
     first. A measurement that is overdue is due today; other dates that have
     passed are left out."""
-    from .casestudy import MIN_DAYS
-    from .sales import PILOT_NOTICE_DAYS, pilot_ends
+    from .sales import PILOT_FINAL_DAYS_LEFT, PILOT_NOTICE_DAYS, pilot_ends, pilot_next
 
     if client.status != "active":
         return []
@@ -59,13 +63,16 @@ def ahead(store, client, now: datetime | None = None,
     horizon = (now + timedelta(days=days)).date().isoformat()
     audits = store.audit_history(client.business.id, limit=24, comparable=True)
     out = []
-    if audits:
-        out.append((max(_day(audits[0].created_at, REMEASURE_DAYS), today), "measure"))
+    if client.plan != "pilot":
+        out.append((max(_day(audits[0].created_at, REMEASURE_DAYS), today), "measure")
+                   if audits else (today, "first"))
     else:
-        out.append((today, "first"))
-    if client.plan == "pilot":
-        start = (audits[-1].created_at if audits else client.started_at) or now.isoformat()
-        out.append((_day(start, MIN_DAYS), "case"))
+        nxt = pilot_next(client, audits, now)
+        if nxt:
+            out.append(nxt)
+            if nxt[1] == "mid":
+                # And the last one, for the offer, once the middle one is done.
+                out.append((_day(pilot_ends(client), -PILOT_FINAL_DAYS_LEFT), "final"))
         end = pilot_ends(client)
         out.append((_day(end, -PILOT_NOTICE_DAYS), "offer"))
         out.append((end, "end"))
@@ -104,9 +111,10 @@ def calendar(store, now: datetime | None = None) -> str:
         who = c.business.name
         for when, kind in ahead(store, c, now):
             day = date.fromisoformat(when)
-            # A measurement's date moves each time one is taken, so each one
-            # is its own event; the others are fixed and keep one each.
-            uid = f"{c.id}-{kind}-{when}" if kind in {"first", "measure"} else f"{c.id}-{kind}"
+            # One event per kind: an overdue measurement's date moves to
+            # today, and importing again moves the event rather than adding
+            # another.
+            uid = f"{c.id}-{kind}"
             says = SAYS[kind].format(who=who).replace("**", "")
             lines += ["BEGIN:VEVENT", f"UID:{uid}@answerrank", f"DTSTAMP:{stamp}",
                       f"DTSTART;VALUE=DATE:{day:%Y%m%d}",

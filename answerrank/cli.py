@@ -23,7 +23,7 @@ from .budget import (
     quit_threshold, reinvestment_split, runway_months, write_template,
 )
 from .agents.reporter import render_report
-from .audit import estimate_cost, run_audit
+from .audit import MeasurementFailed, estimate_cost, run_audit
 from .config import SETTINGS, Pricing, Settings, load_settings
 from .mailer import check_dns_readiness
 from .models import Business, LedgerEntry
@@ -318,7 +318,11 @@ def cmd_audit(args, settings: Settings) -> int:
     print(f"Auditing {biz.name} ({biz.market}) across {len(engines)} engine(s): {', '.join(engines)}")
     print(f"Estimated cost: ${estimate_cost(args.depth, len(engines)):.4f}\n")
 
-    audit = run_audit(biz, settings, depth=args.depth)
+    try:
+        audit = run_audit(biz, settings, depth=args.depth)
+    except MeasurementFailed as exc:
+        print(exc)
+        return 1
     store.save_audit(audit)
 
     _hr(f"VISIBILITY SCORE: {audit.score}/100  (grade {grade(audit.score)})")

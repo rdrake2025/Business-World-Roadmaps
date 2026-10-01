@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from .. import knowledge, markets
-from ..audit import run_audit
+from ..audit import MeasurementFailed, note_outage, run_audit
 from ..models import Business, LedgerEntry, new_id, now_iso
 from .base import Agent
 
@@ -137,7 +137,13 @@ class ExplorerAgent(Agent):
         scores: list[float] = []
         spend = 0.0
         for biz in businesses:
-            audit = run_audit(biz, self.settings, depth="teaser")
+            try:
+                audit = run_audit(biz, self.settings, depth="teaser")
+            except MeasurementFailed as exc:
+                # An outage measured as a market reads as one where nobody
+                # is named: the best-looking market there is. Nothing kept.
+                note_outage(self.store, str(exc))
+                return 0, f"{candidate.label}: not measured. {exc}"
             scores.append(audit.score)
             spend += audit.cost
 
