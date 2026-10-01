@@ -577,7 +577,9 @@
           '<div class="barnote" style="flex-basis:100%;margin-top:3px">' +
           (p.measured > 1 ? 'Measured ' + p.measured + ' times since ' + esc(p.first_on)
                           : 'First measured ' + esc(p.first_on)) +
-          '. Next measurement from ' + esc(p.next_on) + ', while AnswerRank is open. ' +
+          (p.next_on ? '. Next measurement ' + (p.next_for ? 'for ' + esc(p.next_for) + ' ' : '') +
+                       'from ' + esc(p.next_on) + ', while AnswerRank is open. '
+                     : '. All three measurements done. ') +
           (p.case_ready ? '<a href="' + esc(p.case_url) + '" target="_blank" rel="noopener">' +
                           'The before-and-after is ready</a>.'
                         : 'Before-and-after from ' + esc(p.case_on) + '.') +

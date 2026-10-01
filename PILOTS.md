@@ -46,12 +46,15 @@ permission to share the before-and-after.
    The welcome email is written for you in the Inbox tab. Tap **Copy text**,
    send it from your own email (attach the report and files), then tap **I
    sent it myself** so AnswerRank knows it went.
-7. **Open AnswerRank about once a month** and leave it open for ten minutes.
-   It measures each pilot again every 28 days, using the same questions each
-   time. The **Pilots** card on Today shows each one's first and latest
-   score, and the date of the next measurement. Tap **add these dates to
-   your calendar** on that card: your phone then reminds you on the morning
-   of each measurement, and of the other dates below.
+7. **Open AnswerRank on the two measurement days** and leave it open for ten
+   minutes. Each pilot is measured three times, with the same questions each
+   time: at the start, 45 days later (for the before-and-after), and the day
+   before the offer is written (so the offer quotes fresh numbers). That's
+   about $1.35 a pilot. The **Pilots** card on Today shows each one's first
+   and latest score, and the date of the next measurement. Tap **add these
+   dates to your calendar** on that card: your phone then reminds you on the
+   morning of each measurement, and of the other dates below. Missed a day?
+   It measures the next time you open it.
 8. **After 45 days**, the Pilots card links to the **before-and-after**: a
    page you can show other businesses (also under Clients → the business →
    **Before & after (case study)**). It says plainly whether the change is

@@ -263,10 +263,12 @@ cost. All it takes is your own computer and **$5 of OpenAI credit**.
    business you know** → choose **Free pilot**, one at a time.)
 5. Inbox: **Copy text** on the welcome, send it yourself with their report
    and files, then **I sent it myself**.
-6. Open AnswerRank about once a month so it measures again. The **Pilots**
-   card on Today shows each pilot's scores and the next measurement date,
-   and **add these dates to your calendar** puts every date on your phone
-   with a reminder. The [[Dashboard]] lists them too.
+6. Each pilot is measured three times: at the start, after 45 days (the
+   before-and-after) and the day before the offer. Open AnswerRank on those
+   days for ten minutes. The **Pilots** card on Today shows each pilot's
+   scores and the next measurement date, and **add these dates to your
+   calendar** puts every date on your phone with a reminder. The
+   [[Dashboard]] lists them too.
 7. After 45 days the Pilots card links to the **before-and-after**, a page
    you can show other businesses.
 8. A week before the three months end, the offer is written for you: their
@@ -490,9 +492,7 @@ LIVE_STATUSES = ("active", "awaiting_payment", "past_due", "churned")
 def _week_fix(store, r, clients) -> str:
     """The week's advice. Before any cold email it's about the pilots: "send
     150 more cold emails" means nothing to someone with no mailbox yet."""
-    from datetime import datetime, timezone
-
-    from .casestudy import MIN_DAYS
+    from . import casestudy
 
     pilots = [c for c in clients if c.plan == "pilot" and c.status == "active"]
     if r["week"]["sent"] or store.sends_today() or not pilots:
@@ -503,9 +503,7 @@ def _week_fix(store, r, clients) -> str:
         if not audits:
             waiting.append(c.business.name)
             continue
-        age = (datetime.now(timezone.utc)
-               - datetime.fromisoformat(audits[-1].created_at.replace("Z", "+00:00"))).days
-        if age >= MIN_DAYS and len(audits) >= 2:
+        if casestudy.evidence(store, c).verdict != "too_early":
             ready.append(f"[[{_title(c.business.name)}]]")
     if ready:
         return ("The before-and-after is ready for " + ", ".join(ready) + ". Read it, "
@@ -516,7 +514,8 @@ def _week_fix(store, r, clients) -> str:
                 + " get their first measurement.")
     return ("You're in the pilot stage. Make sure each pilot has their report and "
             "files, and that the changes are going onto their website: the result "
-            "depends on it. Open AnswerRank once a month for the next measurement.")
+            "depends on it. Open AnswerRank on each measurement day (the Dashboard "
+            "and your calendar have them).")
 
 
 def _coming_up(store, c, now) -> list[tuple[str, str]]:
@@ -631,12 +630,18 @@ def live_notes(store, settings) -> dict[str, str]:
                 f"{c.status.replace('_', ' ')}, since {_day(c.started_at)}.{until}", ""]
         if audits:
             first, last = audits[-1], audits[0]
-            age = (now - datetime.fromisoformat(first.created_at.replace("Z", "+00:00"))).days
+            if c.plan == "pilot":
+                from .sales import pilot_next
+                nxt = pilot_next(c, audits, now)
+                why = {"mid": " (for the before-and-after)", "final": " (for the offer)"}
+                when = (f"Next measurement{why.get(nxt[1], '')} from {nxt[0]}, while "
+                        f"AnswerRank is running." if nxt else "All three measurements done.")
+            else:
+                when = (f"Next measurement from {_day(last.created_at, 28)}, while "
+                        f"AnswerRank is running.")
             body += ["## Measurements", "", "| Date | Score (out of 100) | Named in |",
-                     "| --- | --- | --- |", rows, "",
-                     f"Next measurement from {_day(last.created_at, 28)}, while "
-                     f"AnswerRank is running.", ""]
-            if age >= MIN_DAYS and len(audits) >= 2:
+                     "| --- | --- | --- |", rows, "", when, ""]
+            if casestudy.evidence(store, c).verdict != "too_early":
                 _ev, text = casestudy.write_up(store, c)
                 text = "\n".join(text.splitlines()[1:]).replace("\n## ", "\n### ")
                 body += ["## Before and after", text.strip(), ""]
@@ -671,7 +676,7 @@ def live_notes(store, settings) -> dict[str, str]:
     paying = store.get_clients("active")
     stages = store.count_prospects_by_stage()
     drafts = len(store.get_messages("drafted", 500))
-    lines = [f"# Dashboard", "", f"Updated {now.strftime('%Y-%m-%d %H:%M')} UTC by AnswerRank.", "",
+    lines = ["# Dashboard", "", f"Updated {now.strftime('%Y-%m-%d %H:%M')} UTC by AnswerRank.", "",
              *_today(store, settings, now),
              "## Money",
              f"- Coming in each month: **${store.mrr():,.0f}** from "

@@ -87,6 +87,60 @@ def pilot_ends(client) -> str:
     return (start + timedelta(days=PILOT_DAYS)).date().isoformat()
 
 
+#: A pilot is measured three times, each one for something: at the start;
+#: 45 days on, when the before-and-after can first be written (it needs 45
+#: days between the first and last measurement); and the day before the
+#: offer, so the offer quotes fresh numbers. Every 28 days meant four
+#: measurements, $5.40 for three pilots against a $5 credit, a before-and-
+#: after shown as ready at day 45 that said "too early" until day 56, and a
+#: last measurement on day 84, the day after the offer was written.
+PILOT_MID_DAYS = 45
+#: The final measurement, this many days before the end: the day before the
+#: offer is written.
+PILOT_FINAL_DAYS_LEFT = PILOT_NOTICE_DAYS + 1
+
+
+def pilot_next_measurement(client, audits, now=None) -> str | None:
+    """When a pilot is next measured (YYYY-MM-DD; today if overdue), or None
+    once all three are done. ``audits``: its comparable history, newest
+    first."""
+    nxt = pilot_next(client, audits, now)
+    return nxt[0] if nxt else None
+
+
+def pilot_next(client, audits, now=None) -> tuple[str, str] | None:
+    """(YYYY-MM-DD, which): "first", "mid" (the before-and-after) or "final"
+    (for the offer); None once all three are done."""
+    from datetime import date, datetime, timedelta, timezone
+
+    def day(iso: str) -> date:
+        try:
+            return datetime.fromisoformat(iso.replace("Z", "+00:00")).date()
+        except ValueError:
+            return today
+
+    today = (now or datetime.now(timezone.utc)).date()
+    if not audits:
+        return today.isoformat(), "first"
+    taken = [day(a.created_at) for a in audits]
+    final = date.fromisoformat(pilot_ends(client)) - timedelta(days=PILOT_FINAL_DAYS_LEFT)
+    # Never after the one for the offer: a first measurement taken weeks late
+    # would otherwise put the middle one past the offer.
+    mid = min(min(taken) + timedelta(days=PILOT_MID_DAYS), final)
+    if not any(d >= mid for d in taken):
+        return max(mid, today).isoformat(), "mid"
+    # A late middle one (AnswerRank closed for weeks) can be the last one too.
+    if not any(d >= final - timedelta(days=7) for d in taken):
+        return max(final, today).isoformat(), "final"
+    return None
+
+
+def pilot_due(client, audits, now=None) -> bool:
+    from datetime import datetime, timezone
+    when = pilot_next_measurement(client, audits, now)
+    return when is not None and when <= (now or datetime.now(timezone.utc)).date().isoformat()
+
+
 def offer_plan(settings, vertical: str) -> str:
     """What a pilot is offered: their trade's plan, but never Managed, which
     means hands-on work on their site; that's a conversation, not an email."""

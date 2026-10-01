@@ -7025,10 +7025,13 @@ class TestTheDatesAhead(TestNotesInYourOwnVault):
         lines = [l for l in ahead.splitlines() if l.startswith("- ")]
         self.assertEqual(len(lines), 4, ahead)
         self.assertEqual([l[4:14] for l in lines], sorted(l[4:14] for l in lines))
-        self.assertIn("measured again", lines[0])
-        self.assertIn("before-and-after", lines[1])
-        self.assertIn("offer", lines[2])
+        self.assertIn("measured for the before-and-after", lines[0])
+        self.assertIn("measured one last time, for the offer", lines[1])
+        self.assertIn("offer is written", lines[2])
         self.assertIn(ends, lines[3])
+        from datetime import date
+        self.assertEqual((date.fromisoformat(lines[2][4:14]) - date.fromisoformat(lines[1][4:14])).days,
+                         1, "measured the day before the offer is written")
         self.assertIn("## Coming up", self._live()["AnswerRank/Clients/Ridge Electric.md"])
 
     def test_past_dates_drop_off_and_a_late_measurement_is_due_today(self):
@@ -7036,16 +7039,18 @@ class TestTheDatesAhead(TestNotesInYourOwnVault):
         today = datetime.now(timezone.utc).date().isoformat()
         note = self._live()["AnswerRank/Clients/Ridge Electric.md"]
         ahead = note[note.index("## Coming up"):]
-        self.assertIn(f"**{today}**", ahead, "measurement overdue: due now, not in the past")
-        self.assertNotIn("before-and-after is ready", ahead, "that date has passed")
+        first_line = next(l for l in ahead.splitlines() if l.startswith("- "))
+        self.assertIn(f"**{today}**", first_line, "measurement overdue: due now, not in the past")
+        self.assertIn("measured for the before-and-after", first_line)
 
     def test_this_weeks_dates_are_kept_in_the_week_note(self):
         from answerrank import vault
-        self._pilot(days_ago=(30,))
+        self._pilot(days_ago=(50,))
         notes = vault.live_notes(self.store, self.settings)
         week = next(t for p, t in notes.items() if "/Weeks/" in p)
         self.assertIn("## Dates this week", week)
-        self.assertIn("[[Ridge Electric]] measured again", week, "overdue: due now")
+        self.assertIn("[[Ridge Electric]] measured for the before-and-after", week,
+                      "overdue: due now")
         self.assertNotIn("free pilot ends", week, "that is months away")
 
     def test_paying_clients_show_only_their_measurement(self):
@@ -7248,6 +7253,81 @@ class TestAFailedMeasurementIsNotAScore(_SalesFixture):
             answer = live.OpenAIEngine(api_key="sk-test").ask("best plumber in Tulsa")
         self.assertTrue(answer.error)
         self.assertEqual(len(calls), 1, "no second try without search")
+
+
+class TestThreeMeasurementsAPilot(TestNotesInYourOwnVault):
+    """Every 28 days meant four measurements (more than the $5), a
+    before-and-after shown as ready at day 45 that said "too early" until
+    day 56, and a last measurement the day after the offer was written. Now:
+    the start, day 45 for the before-and-after, and the day before the offer."""
+
+    def _started(self, days_ago):
+        client = self.store.get_clients("active")[0]
+        client.started_at = (datetime.now(timezone.utc)
+                             - timedelta(days=days_ago)).isoformat(timespec="seconds")
+        self.store.upsert_client(client)
+        return client
+
+    def _history(self, client):
+        return self.store.audit_history(client.business.id, limit=24, comparable=True)
+
+    def test_the_schedule(self):
+        from answerrank import sales
+        self._pilot(days_ago=(2,))
+        client = self._started(2)
+        when, which = sales.pilot_next(client, self._history(client))
+        self.assertEqual(which, "mid")
+        self.assertEqual(when, (datetime.now(timezone.utc) + timedelta(days=43)).date().isoformat())
+
+    def test_the_auditor_measures_on_those_days_and_no_others(self):
+        self._pilot(days_ago=(46,))
+        client = self._started(46)
+        AuditorAgent(self.store, self.settings).execute()
+        self.assertEqual(len(self._history(client)), 2, "day 45: the before-and-after")
+        AuditorAgent(self.store, self.settings).execute()
+        self.assertEqual(len(self._history(client)), 2, "nothing more until the offer")
+
+    def test_none_left_after_the_one_for_the_offer(self):
+        from answerrank import sales
+        self._pilot(days_ago=(84, 38, 1))
+        client = self._started(84)
+        self.assertIsNone(sales.pilot_next(client, self._history(client)))
+        AuditorAgent(self.store, self.settings).execute()
+        self.assertEqual(len(self._history(client)), 3)
+
+    def test_a_late_start_still_measures_before_the_offer(self):
+        """Started 60 days ago, first measured only 10 days ago: 45 days on
+        would be day 95, after the pilot has ended."""
+        from answerrank import sales
+        self._pilot(days_ago=(10,))
+        client = self._started(60)
+        when, which = sales.pilot_next(client, self._history(client))
+        day_82 = (datetime.now(timezone.utc) + timedelta(days=22)).date().isoformat()
+        self.assertEqual((when, which), (day_82, "mid"), "the day before the offer")
+
+    def test_three_pilots_fit_in_five_dollars(self):
+        from answerrank.costs import client_audit_cost
+        settings = Settings()
+        settings.engines = ["openai"]
+        self.assertLessEqual(3 * 3 * client_audit_cost(settings), 5.0)
+
+    def test_the_offer_waits_for_its_measurement(self):
+        from answerrank.agents.retention import RetentionAgent
+        self._pilot(days_ago=(84, 39))
+        client = self._started(84)
+        RetentionAgent(self.store, self.settings)._pilot_offers()
+        self.assertFalse(self.store.has_outcome(client.id, "pilot_offer"),
+                         "the measurement for it is due and hasn't run")
+        AuditorAgent(self.store, self.settings).execute()
+        RetentionAgent(self.store, self.settings)._pilot_offers()
+        self.assertTrue(self.store.has_outcome(client.id, "pilot_offer"))
+
+    def test_the_before_and_after_shows_when_it_can_say_something(self):
+        self._pilot(days_ago=(50, 22))
+        self._started(50)
+        card = self._api().pilots()[0]
+        self.assertFalse(card["case_ready"], "28 days apart: too early, whatever the date")
+        self.assertEqual(card["next_for"], "the before-and-after")
 
 
 class TestAddSeveralAtOnce(_Biz):

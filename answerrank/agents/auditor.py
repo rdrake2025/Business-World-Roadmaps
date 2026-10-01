@@ -100,9 +100,14 @@ class AuditorAgent(Agent):
         clients_audited = 0
         cutoff = (datetime.now(timezone.utc) - timedelta(days=28)).isoformat(timespec="seconds")
         for client in [] if stopped else self.store.get_clients("active"):
-            recent = [a for a in self.store.audit_history(client.business.id, limit=5)
-                      if not a.is_free_teaser and a.created_at > cutoff]
-            if recent:
+            if client.plan == "pilot":
+                # Three measurements, each timed for something (sales.py).
+                from ..sales import pilot_due
+                if not pilot_due(client, self.store.audit_history(
+                        client.business.id, limit=24, comparable=True)):
+                    continue
+            elif [a for a in self.store.audit_history(client.business.id, limit=5)
+                  if not a.is_free_teaser and a.created_at > cutoff]:
                 continue
             try:
                 audit = run_audit(client.business, self.settings, depth="full",
