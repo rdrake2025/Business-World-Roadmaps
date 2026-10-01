@@ -6721,3 +6721,57 @@ class TestObsidianVault(unittest.TestCase):
         stale = [p for p, body in vault.build().items()
                  if not (root / p).exists() or (root / p).read_text(encoding="utf-8") != body]
         self.assertEqual(stale, [], "run: python run.py vault")
+
+
+class TestPilotsOnToday(_Biz):
+    """Pilots are the whole business on the $5 path, and nothing showed how
+    they were doing or when the before-and-after could be read; that page,
+    the one meant for a stranger, came out as raw Markdown."""
+
+    def _pilot_with_audits(self, days_ago):
+        from answerrank import sales
+        p = self._prospect()
+        sales.sign_up(self.store, self.settings, p, "pilot", send_link=False)
+        for i, ago in enumerate(days_ago):
+            when = (datetime.now(timezone.utc) - timedelta(days=ago)).isoformat(timespec="seconds")
+            self.store.save_audit(Audit(business_id=p.business.id, business_name=p.business.name,
+                                        market=p.business.market, vertical=p.business.vertical,
+                                        score=10.0 + 30 * i, is_free_teaser=False,
+                                        created_at=when))
+        return p
+
+    def test_a_new_pilot_waits_for_its_first_measurement(self):
+        from answerrank import sales
+        p = self._prospect()
+        sales.sign_up(self.store, self.settings, p, "pilot", send_link=False)
+        (item,) = self._api().pilots()
+        self.assertEqual(item["measured"], 0)
+
+    def test_scores_and_dates_for_each_pilot(self):
+        self._pilot_with_audits([50, 2])
+        (item,) = self._api().pilots()
+        self.assertEqual((item["first_score"], item["latest_score"]), (10, 40))
+        self.assertTrue(item["case_ready"], "45 days and two measurements")
+        self.assertTrue(item["next_on"])
+
+    def test_too_soon_for_the_before_and_after(self):
+        self._pilot_with_audits([20, 2])
+        self.assertFalse(self._api().pilots()[0]["case_ready"])
+
+    def test_today_knows_when_there_is_no_mailbox(self):
+        with unittest.mock.patch("answerrank.mailer.SMTPConfig.configured", return_value=False):
+            state = self._api().state()
+        self.assertFalse(state["mailbox"])
+        self.assertIn("pilots", state)
+
+    def test_the_before_and_after_is_a_page_and_escapes_names(self):
+        from answerrank.casestudy import to_html
+        md = ("# <script>x</script> Plumbing: AI search visibility\n\n## The numbers\n\n"
+              "| | Before | After |\n| --- | --- | --- |\n| Visibility score | 10/100 | 40/100 |\n\n"
+              "## Verdict\n\n**Do not publish this.** Inside the noise.\n\n---\nMeasurements, not promises.\n")
+        page = to_html(md)
+        self.assertNotIn("<script>x</script>", page)
+        self.assertIn("&lt;script&gt;", page)
+        self.assertIn("<table>", page)
+        self.assertIn('class="verdict no"', page)
+        self.assertIn("<hr><p>Measurements, not promises.</p>", page)

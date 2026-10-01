@@ -45,9 +45,11 @@ permission to share the before-and-after.
    sent it myself** so AnswerRank knows it went.
 7. **Open AnswerRank about once a month** and leave it open for ten minutes.
    It measures each pilot again every 28 days, using the same questions each
-   time.
-8. **After 45 days**, Clients → the business → **Before & after (case
-   study)**. It says plainly whether the change is real or within the noise.
+   time. The **Pilots** card on Today shows each one's first and latest
+   score, and the date of the next measurement.
+8. **After 45 days**, the Pilots card links to the **before-and-after**: a
+   page you can show other businesses (also under Clients → the business →
+   **Before & after (case study)**). It says plainly whether the change is real or within the noise.
    It only says "worth publishing" when the change is bigger than the margin
    of error. If it didn't move, it says not to publish.
 

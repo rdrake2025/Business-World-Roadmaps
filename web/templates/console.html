@@ -319,6 +319,7 @@
   <!-- ============ TODAY ============ -->
   <section class="pane on" id="pane-today">
     <div id="todayBanner"></div>
+    <div id="pilotCard"></div>
 
     <div class="ap" id="apCard"><div class="barnote">Loading Autopilot…</div></div>
 
@@ -547,6 +548,30 @@
   }
 
   // ---------------------------------------------------------------- render
+  function renderPilots(list){
+    var el = $("pilotCard");
+    if(!list.length){ el.innerHTML = ""; return; }
+    el.innerHTML = '<div class="card" style="margin-bottom:11px"><h2>Pilots</h2>' +
+      list.map(function(p){
+        if(!p.measured){
+          return '<div class="row"><span class="l">' + esc(p.name) + '</span>' +
+            '<span class="r" style="font-size:12.5px;color:var(--muted)">first ' +
+            'measurement soon</span></div>';
+        }
+        var moved = p.measured > 1 ? p.first_score + ' \u2192 ' + p.latest_score : String(p.first_score);
+        return '<div class="row" style="flex-wrap:wrap"><span class="l"><b>' + esc(p.name) +
+          '</b></span><span class="r mono">' + moved + '</span>' +
+          '<div class="barnote" style="flex-basis:100%;margin-top:3px">' +
+          (p.measured > 1 ? 'Measured ' + p.measured + ' times since ' + esc(p.first_on)
+                          : 'First measured ' + esc(p.first_on)) +
+          '. Next measurement from ' + esc(p.next_on) + ', while AnswerRank is open. ' +
+          (p.case_ready ? '<a href="' + esc(p.case_url) + '" target="_blank" rel="noopener">' +
+                          'The before-and-after is ready</a>.'
+                        : 'Before-and-after from ' + esc(p.case_on) + '.') +
+          '</div></div>';
+      }).join("") + '<div class="barnote" style="margin-top:6px">Scores are out of 100: ' +
+      'how often and how well AI assistants name them.</div></div>';
+  }
   function renderToday(){
     var q = S.queue, p = S.pipeline;
     $("tDraft").textContent = q.drafted;
@@ -555,7 +580,14 @@
     $("tHot").textContent = p.hot;
 
     var b = $("todayBanner");
-    if(S.blockers.length){
+    if(!S.mailbox){
+      // Pilots on your own computer (PILOTS.md): nothing is meant to be sent
+      // from here yet, so "Sending is blocked" was alarming and beside the point.
+      b.innerHTML = '<div class="banner ok"><b>No mailbox yet, and that\u2019s fine</b>' +
+        'AnswerRank writes the emails; you send them yourself. In the Inbox, tap ' +
+        'Copy text, send it from your own email, then I sent it myself. Set up a ' +
+        'mailbox when you\u2019re ready to email businesses you don\u2019t know.</div>';
+    } else if(S.blockers.length){
       b.innerHTML = '<div class="banner block"><b>Sending is blocked</b>' +
         'You can review and approve, but nothing will go out until these are fixed ' +
         'on the laptop.<ul>' +
@@ -564,6 +596,8 @@
     } else {
       b.innerHTML = "";
     }
+
+    renderPilots(S.pilots || []);
 
     $("btnGoInbox").hidden = !q.drafted;
     $("btnSend").hidden = !!AUTO.auto_send;

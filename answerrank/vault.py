@@ -257,8 +257,10 @@ cost. All it takes is your own computer and **$5 of OpenAI credit**.
    **Free pilot**.
 5. Inbox: **Copy text** on the welcome, send it yourself with their report
    and files, then **I sent it myself**.
-6. Open AnswerRank about once a month so it measures again.
-7. After 45 days: Clients → **Before & after (case study)**.
+6. Open AnswerRank about once a month so it measures again. The **Pilots**
+   card on Today shows each pilot's scores and the next measurement date.
+7. After 45 days the Pilots card links to the **before-and-after**, a page
+   you can show other businesses.
 
 Keep a note per pilot with the **Pilot log** template.
 

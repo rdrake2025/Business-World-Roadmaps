@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +54,7 @@ class Api:
     def state(self) -> dict[str, Any]:
         from answerrank.agents.bookkeeper import BookkeeperAgent
         from answerrank.agents.outreach import OutreachAgent
+        from answerrank.mailer import SMTPConfig
 
         kpis = BookkeeperAgent(self.store, self.settings).kpis()
         blockers = OutreachAgent(self.store, self.settings).preflight()
@@ -100,8 +101,49 @@ class Api:
             "agents": agents,
             "blockers": blockers,
             "can_send": not blockers,
+            "mailbox": SMTPConfig.from_env().configured(),
+            "pilots": self.pilots(),
             "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
+
+    def pilots(self) -> list[dict[str, Any]]:
+        """Each pilot's measurements so far, and when the next things happen.
+
+        On the $5 path (PILOTS.md) the pilots are the whole business, and
+        nothing said how they were doing: not the first score, not when the
+        next measurement runs, not when the before-and-after can be read.
+        """
+        from answerrank.casestudy import MIN_DAYS
+
+        def day(iso: str, plus: int = 0) -> str:
+            try:
+                d = datetime.fromisoformat(iso.replace("Z", "+00:00")) + timedelta(days=plus)
+            except ValueError:
+                return ""
+            return d.strftime("%d %b").lstrip("0")
+
+        out = []
+        for c in self.store.get_clients("active"):
+            if c.plan != "pilot":
+                continue
+            audits = self.store.audit_history(c.business.id, limit=24, comparable=True)
+            item: dict[str, Any] = {"id": c.id, "name": c.business.name,
+                                    "measured": len(audits)}
+            if audits:
+                first, last = audits[-1], audits[0]
+                age = (datetime.now(timezone.utc)
+                       - datetime.fromisoformat(first.created_at.replace("Z", "+00:00"))).days
+                item.update(
+                    first_score=round(first.score), first_on=day(first.created_at),
+                    latest_score=round(last.score), latest_on=day(last.created_at),
+                    # The Auditor measures a client again once their last full
+                    # audit is 28 days old, while AnswerRank is open.
+                    next_on=day(last.created_at, 28),
+                    case_on=day(first.created_at, MIN_DAYS),
+                    case_ready=age >= MIN_DAYS and len(audits) >= 2,
+                    case_url=f"/files/case/{c.id}")
+            out.append(item)
+        return out
 
     #: What each kind of draft is, in the words on its badge.
     KIND_LABEL = {"reply": "answer to their reply", "report": "report they asked for",

@@ -546,8 +546,13 @@ class Application:
             if not client:
                 return self._ok(start, render("notfound.html"), status="404 Not Found")
             _ev, text = casestudy.write_up(self.store, client)
-            body = text.encode("utf-8")
-            start("200 OK", [("Content-Type", "text/plain; charset=utf-8"),
+            query = urllib.parse.parse_qs(environ.get("QUERY_STRING", ""))
+            if (query.get("format") or [""])[0] == "text":
+                body, ctype = text.encode("utf-8"), "text/plain; charset=utf-8"
+            else:
+                body = casestudy.to_html(text, self.settings.brand).encode("utf-8")
+                ctype = "text/html; charset=utf-8"
+            start("200 OK", [("Content-Type", ctype),
                              ("Content-Length", str(len(body))),
                              ("Cache-Control", "no-store")])
             return [body]
