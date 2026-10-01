@@ -176,6 +176,8 @@ run it, around the clock.
 > pilots, measured for about $5: [[Pilots]].
 
 ## Map
+- [[Dashboard]]: your live numbers
+- [[Clients]]: a note for each client and pilot
 - [[Plan]]: the steps from today to $5,000 a month
 - [[Pilots]]: prove it works for about $5
 - [[Costs]]: what each budget costs a month
@@ -446,6 +448,108 @@ Started {{date}}. Status: asked → yes → measuring → case study.
 }
 
 
+def _placeholder(title: str, text: str) -> str:
+    return _front(["answerrank"]) + f"# {title}\n\n{text}\n\nBack to [[AnswerRank]].\n"
+
+
+def _named(audit) -> tuple[int, int]:
+    """(questions that named them, questions asked) in one audit."""
+    asked: dict[str, bool] = {}
+    for r in audit.results:
+        key = r.prompt or r.probe_id     # each question is asked several times
+        asked[key] = asked.get(key, False) or bool(r.mentioned)
+    return sum(asked.values()), len(asked)
+
+
+def _day(iso: str, plus: int = 0) -> str:
+    from datetime import datetime, timedelta
+    try:
+        d = datetime.fromisoformat(iso.replace("Z", "+00:00")) + timedelta(days=plus)
+    except ValueError:
+        return iso[:10]
+    return d.strftime("%Y-%m-%d")
+
+
+#: Notes written only from your own data, never committed: what they hold is
+#: yours. The committed vault has placeholders at the same paths.
+LIVE_STATUSES = ("active", "awaiting_payment", "past_due", "churned")
+
+
+def live_notes(store, settings) -> dict[str, str]:
+    """A dashboard, and a note per client and pilot, from your database."""
+    from datetime import datetime, timezone
+
+    from . import casestudy, knowledge
+    from .casestudy import MIN_DAYS
+
+    now = datetime.now(timezone.utc)
+    clients = [c for status in LIVE_STATUSES for c in store.get_clients(status)]
+    notes: dict[str, str] = {}
+    index, pilots = [], []
+    for c in clients:
+        audits = store.audit_history(c.business.id, limit=24, comparable=True)
+        name = _title(c.business.name) or c.id
+        known = c.business.vertical in knowledge.VERTICALS
+        trade = knowledge.get(c.business.vertical).label.capitalize()
+        trade_link = f"[[{_title(trade)}]]" if known else trade
+        plan = "free pilot" if c.plan == "pilot" else f"{c.plan}, ${c.mrr:,.0f} a month"
+        rows = "\n".join(f"| {_day(a.created_at)} | {a.score:.0f} | {n} of {t} |"
+                         for a in reversed(audits) for n, t in [_named(a)])
+        body = [f"# {c.business.name}", "",
+                f"{trade_link} in {c.business.market}. {plan.capitalize()}, "
+                f"{c.status.replace('_', ' ')}, since {_day(c.started_at)}.", ""]
+        if audits:
+            first, last = audits[-1], audits[0]
+            age = (now - datetime.fromisoformat(first.created_at.replace("Z", "+00:00"))).days
+            body += ["## Measurements", "", "| Date | Score (out of 100) | Named in |",
+                     "| --- | --- | --- |", rows, "",
+                     f"Next measurement from {_day(last.created_at, 28)}, while "
+                     f"AnswerRank is running.", ""]
+            if age >= MIN_DAYS and len(audits) >= 2:
+                _ev, text = casestudy.write_up(store, c)
+                text = "\n".join(text.splitlines()[1:]).replace("\n## ", "\n### ")
+                body += ["## Before and after", text.strip(), ""]
+            else:
+                body += [f"Before-and-after from {_day(first.created_at, MIN_DAYS)}.", ""]
+            score = f"{first.score:.0f} → {last.score:.0f}" if len(audits) > 1 else f"{first.score:.0f}"
+        else:
+            body += ["Not measured yet: the first measurement runs within the hour "
+                     "while AnswerRank is open.", ""]
+            score = "not yet"
+        body += ["*Rewritten by AnswerRank each hour. Keep your own notes about them "
+                 "in a separate note (the Pilot log template) that links here.*", "",
+                 "Part of [[Clients]]." + (" See [[Pilots]]." if c.plan == "pilot" else "")]
+        notes[f"{ROOT}/Clients/{name}.md"] = _front(
+            ["answerrank", "client"] + (["pilot"] if c.plan == "pilot" else []),
+            plan=c.plan, status=c.status) + "\n".join(body) + "\n"
+        index.append(f"| [[{name}]] | {plan} | {c.status.replace('_', ' ')} | {score} |")
+        if c.plan == "pilot" and c.status == "active":
+            pilots.append(f"- [[{name}]]: score {score}")
+
+    notes[f"{ROOT}/Clients.md"] = _front(["answerrank", "clients"]) + "# Clients\n\n" + (
+        "| Client | Plan | Status | Score |\n| --- | --- | --- | --- |\n" + "\n".join(index)
+        if index else "No clients or pilots yet. See [[Pilots]].") + "\n\nBack to [[AnswerRank]].\n"
+
+    paying = store.get_clients("active")
+    stages = store.count_prospects_by_stage()
+    drafts = len(store.get_messages("drafted", 500))
+    lines = [f"# Dashboard", "", f"Updated {now.strftime('%Y-%m-%d %H:%M')} UTC by AnswerRank.", "",
+             "## Money",
+             f"- Coming in each month: **${store.mrr():,.0f}** from "
+             f"{sum(1 for c in paying if c.mrr > 0)} paying client(s)",
+             f"- Signed, waiting to pay: {len(store.get_clients('awaiting_payment'))}",
+             f"- Goal: ${settings.profit_target_monthly:,.0f} a month. See [[Plan]].", "",
+             "## Pilots", *(pilots or ["- None yet. See [[Pilots]]."]), "",
+             "## Waiting for you",
+             f"- {drafts} email(s) in the Inbox" if drafts else "- Nothing in the Inbox", ""]
+    if stages:
+        lines += ["## Businesses found", "", "| Stage | How many |", "| --- | --- |"]
+        lines += [f"| {k.replace('_', ' ')} | {v} |" for k, v in sorted(stages.items())] + [""]
+    lines += ["Back to [[AnswerRank]]."]
+    notes[f"{ROOT}/Dashboard.md"] = _front(["answerrank", "dashboard"]) + "\n".join(lines) + "\n"
+    return notes
+
+
 def build() -> dict[str, str]:
     """Every note, as {path inside the vault: Markdown}."""
     from . import evidence, knowledge, research
@@ -469,6 +573,14 @@ def build() -> dict[str, str]:
         f"{ROOT}/Agents.md": _agents_moc(agents),
         f"{ROOT}/Trades.md": _trades_moc(trades, prices),
         f"{ROOT}/Research.md": _research_moc(names),
+        f"{ROOT}/Dashboard.md": _placeholder(
+            "Dashboard", "Your live numbers appear here once AnswerRank writes to your "
+            "own vault: in Keys and settings, give it your vault's folder. It's "
+            "refreshed every hour while AnswerRank runs."),
+        f"{ROOT}/Clients.md": _placeholder(
+            "Clients", "A note for each client and pilot appears here once AnswerRank "
+            "writes to your own vault: their scores over time, the next measurement "
+            "and, after 45 days, the before-and-after. See [[Pilots]]."),
     }
     for a in agents:
         sources = [(names[e.key], _prose(e.so_we).split(". ")[0].rstrip(".") + ".")
@@ -489,12 +601,18 @@ def links_in(text: str) -> list[str]:
     return [m.split("|")[0].strip() for m in re.findall(r"\[\[([^\]]+)\]\]", text)]
 
 
-def write(out_dir: str | Path = "vault") -> list[Path]:
-    """Write every note under ``out_dir``. Generated notes are replaced; any
-    note you added yourself is left alone."""
+def write(out_dir: str | Path = "vault", store=None, settings=None) -> list[Path]:
+    """Write every note under ``out_dir``/AnswerRank, plus the live ones when
+    given a store. Generated notes are replaced; any note you added yourself
+    is left alone, and nothing is written outside the AnswerRank folder."""
     out = Path(out_dir)
+    if store is not None and not out.is_dir():
+        raise FileNotFoundError(f"no folder at {out}")
+    notes = build()
+    if store is not None:
+        notes.update(live_notes(store, settings))
     written = []
-    for rel, body in build().items():
+    for rel, body in notes.items():
         path = out / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8")

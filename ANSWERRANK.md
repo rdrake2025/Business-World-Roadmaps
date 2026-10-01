@@ -15,9 +15,12 @@ being named, and does the work to change it.
   itself and the one-time setup only you can do
 - **Before any monthly cost:** prove it on two or three businesses you know
   for about $5 of OpenAI credit: **[PILOTS.md](PILOTS.md)**
-- **Obsidian notes:** `vault/AnswerRank` is the whole business as linked notes
-  (agents, trades, research, costs, plan, decisions), generated from the code.
-  Copy it into your vault; `python run.py vault` refreshes it.
+- **Obsidian notes:** give your vault's folder in Keys and settings and
+  AnswerRank keeps an `AnswerRank` folder in it up to date every hour: a live
+  dashboard, a note per client and pilot (scores over time, the
+  before-and-after), and notes on every agent, trade, source, cost and
+  decision. Your own notes are never touched. (`vault/AnswerRank` here is the
+  same reference set without your data.)
 
 ---
 

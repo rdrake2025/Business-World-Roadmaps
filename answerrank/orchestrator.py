@@ -190,7 +190,26 @@ class Orchestrator:
                 continue
             lines.append(self._run_guarded(agent))
         self._heartbeat()
+        self._vault()
         return lines
+
+    #: The Obsidian notes are refreshed at most this often.
+    VAULT_SECONDS = 3600
+
+    def _vault(self) -> None:
+        """Keep the AnswerRank folder in your Obsidian vault up to date."""
+        folder = (getattr(self.settings, "obsidian_vault", "") or "").strip()
+        if not folder or getattr(self.settings, "demo_mode", False):
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_last_vault", -1e9) < self.VAULT_SECONDS:
+            return
+        self._last_vault = now
+        try:
+            from . import vault
+            vault.write(folder, self.store, self.settings)
+        except Exception as exc:  # noqa: BLE001 - notes must never stop the fleet
+            log.warning("could not refresh the Obsidian notes in %s: %s", folder, exc)
 
     #: At most one ping this often; the monitor's period should be longer.
     HEARTBEAT_SECONDS = 300

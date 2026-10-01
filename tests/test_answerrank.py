@@ -6775,3 +6775,84 @@ class TestPilotsOnToday(_Biz):
         self.assertIn("<table>", page)
         self.assertIn('class="verdict no"', page)
         self.assertIn("<hr><p>Measurements, not promises.</p>", page)
+
+
+class TestNotesInYourOwnVault(_Biz):
+    """Give AnswerRank your Obsidian vault's folder and it keeps an AnswerRank
+    folder there up to date: the reference notes, a dashboard and a note per
+    client and pilot from your own data, without touching your own notes."""
+
+    def _pilot(self, days_ago=(50, 1)):
+        from answerrank import sales
+        p = self._prospect()
+        sales.sign_up(self.store, self.settings, p, "pilot", send_link=False)
+        for i, ago in enumerate(days_ago):
+            when = (datetime.now(timezone.utc) - timedelta(days=ago)).isoformat(timespec="seconds")
+            results = [ProbeResult(probe_id=f"q{q}-r{r}", engine="openai", prompt=f"question {q}",
+                                   answer_text="", mentioned=bool(i) and q < 7, cited=False,
+                                   position=None)
+                       for q in range(10) for r in range(3)]
+            self.store.save_audit(Audit(business_id=p.business.id, business_name=p.business.name,
+                                        market=p.business.market, vertical=p.business.vertical,
+                                        score=5.0 + 60 * i, is_free_teaser=False,
+                                        created_at=when, results=results))
+        return p
+
+    def test_a_note_per_pilot_with_its_measurements_and_result(self):
+        from answerrank import vault
+        self._pilot()
+        notes = vault.live_notes(self.store, self.settings)
+        note = notes["AnswerRank/Clients/Ridge Electric.md"]
+        self.assertIn("0 of 10", note, "each question counted once, not once per repeat")
+        self.assertIn("7 of 10", note)
+        self.assertIn("## Before and after", note)
+        self.assertIn("[[Ridge Electric]]", notes["AnswerRank/Dashboard.md"])
+
+    def test_every_link_resolves_with_your_data_in(self):
+        from answerrank import vault
+        self._pilot()
+        notes = {**vault.build(), **vault.live_notes(self.store, self.settings)}
+        names = {p.rsplit("/", 1)[-1][:-3] for p in notes}
+        broken = [(p, l) for p, t in notes.items() for l in vault.links_in(t) if l not in names]
+        self.assertEqual(broken, [])
+
+    def test_your_own_notes_are_left_alone(self):
+        from answerrank import vault
+        own = pathlib.Path(tempfile.mkdtemp())
+        (own / "AnswerRank").mkdir()
+        (own / "AnswerRank" / "Mine.md").write_text("mine", encoding="utf-8")
+        (own / "Elsewhere.md").write_text("also mine", encoding="utf-8")
+        vault.write(own, self.store, self.settings)
+        self.assertEqual((own / "AnswerRank" / "Mine.md").read_text(encoding="utf-8"), "mine")
+        self.assertEqual((own / "Elsewhere.md").read_text(encoding="utf-8"), "also mine")
+        self.assertTrue((own / "AnswerRank" / "Dashboard.md").exists())
+        with self.assertRaises(FileNotFoundError):
+            vault.write(own / "gone", self.store, self.settings)
+
+    def test_the_fleet_refreshes_the_notes_at_most_hourly(self):
+        own = pathlib.Path(tempfile.mkdtemp())
+        self.settings.demo_mode = False
+        self.settings.obsidian_vault = str(own)
+        orch = Orchestrator(self.store, self.settings)
+        with unittest.mock.patch("answerrank.vault.write") as write:
+            orch._vault()
+            orch._vault()
+        self.assertEqual(write.call_count, 1)
+        self.settings.demo_mode = True
+        orch._last_vault = -1e9
+        with unittest.mock.patch("answerrank.vault.write") as write:
+            orch._vault()
+        write.assert_not_called()
+
+    def test_keys_asks_for_the_vault_folder(self):
+        from answerrank import keys
+        own = pathlib.Path(tempfile.mkdtemp())
+        (own / ".obsidian").mkdir()
+        cfg = own / "answerrank.yml"
+        cfg.write_text("brand: AnswerRank\n", encoding="utf-8")
+        said = []
+        keys._ask_obsidian(self.settings, cfg, lambda _q: str(own / "nope"), said.append)
+        self.assertIn("doesn't exist", said[-1])
+        keys._ask_obsidian(self.settings, cfg, lambda _q: f'"{own}"', said.append)
+        self.assertEqual(self.settings.obsidian_vault, str(own))
+        self.assertIn("obsidian_vault:", cfg.read_text(encoding="utf-8"))

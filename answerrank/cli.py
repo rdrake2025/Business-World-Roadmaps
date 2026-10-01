@@ -236,10 +236,23 @@ def cmd_vault(args, settings: Settings) -> int:
     """Write AnswerRank's Obsidian notes, generated from the code."""
     from . import vault
 
-    written = vault.write(args.out)
-    print(f"  Wrote {len(written)} notes to {Path(args.out) / vault.ROOT}")
-    print("  Copy that folder into your Obsidian vault, or open the folder above it")
-    print("  in Obsidian as a vault of its own.")
+    own = (getattr(settings, "obsidian_vault", "") or "").strip()
+    if args.out or not own:
+        # The reference notes only. Your own data never goes in the repo's
+        # copy: it's committed, and the desktop button's update would trip on it.
+        out = args.out or "vault"
+        written = vault.write(out)
+        print(f"  Wrote {len(written)} notes to {Path(out) / vault.ROOT}")
+        if not own:
+            print("  To keep notes in your own vault, with your clients and a dashboard,")
+            print("  give its folder in Keys and settings (desktop menu, option 2).")
+        return 0
+    try:
+        written = vault.write(own, _store(settings), settings)
+    except FileNotFoundError:
+        print(f"  Your vault folder isn't there any more: {own}. Fix it in Keys and settings.")
+        return 1
+    print(f"  Wrote {len(written)} notes to {Path(own) / vault.ROOT}")
     return 0
 
 
@@ -1582,7 +1595,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_server_script)
 
     s = sub.add_parser("vault", help="write the Obsidian notes for AnswerRank")
-    s.add_argument("--out", default="vault", help="folder to write into (default: vault)")
+    s.add_argument("--out", default="", help="folder to write the reference notes into "
+                   "(default: your vault from Keys and settings, else ./vault)")
     s.set_defaults(func=cmd_vault)
 
     s = sub.add_parser("evidence", help="print the research the agents work from")

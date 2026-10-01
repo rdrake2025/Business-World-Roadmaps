@@ -14,6 +14,8 @@ run it, around the clock.
 > pilots, measured for about $5: [[Pilots]].
 
 ## Map
+- [[Dashboard]]: your live numbers
+- [[Clients]]: a note for each client and pilot
 - [[Plan]]: the steps from today to $5,000 a month
 - [[Pilots]]: prove it works for about $5
 - [[Costs]]: what each budget costs a month
