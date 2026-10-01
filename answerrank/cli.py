@@ -232,6 +232,17 @@ def _save_console_link(settings: Settings, link: str) -> None:
     path.write_text(link + "\n", encoding="utf-8")
 
 
+def cmd_vault(args, settings: Settings) -> int:
+    """Write AnswerRank's Obsidian notes, generated from the code."""
+    from . import vault
+
+    written = vault.write(args.out)
+    print(f"  Wrote {len(written)} notes to {Path(args.out) / vault.ROOT}")
+    print("  Copy that folder into your Obsidian vault, or open the folder above it")
+    print("  in Obsidian as a vault of its own.")
+    return 0
+
+
 def cmd_evidence(args, settings: Settings) -> int:
     """The professional research behind the agents' rules, with sources."""
     from . import evidence
@@ -1569,6 +1580,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--domain", default="",
                    help="e.g. getanswerrank.com (default: the one you send from)")
     s.set_defaults(func=cmd_server_script)
+
+    s = sub.add_parser("vault", help="write the Obsidian notes for AnswerRank")
+    s.add_argument("--out", default="vault", help="folder to write into (default: vault)")
+    s.set_defaults(func=cmd_vault)
 
     s = sub.add_parser("evidence", help="print the research the agents work from")
     s.set_defaults(func=cmd_evidence)

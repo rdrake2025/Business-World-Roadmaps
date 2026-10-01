@@ -15,6 +15,9 @@ being named, and does the work to change it.
   itself and the one-time setup only you can do
 - **Before any monthly cost:** prove it on two or three businesses you know
   for about $5 of OpenAI credit: **[PILOTS.md](PILOTS.md)**
+- **Obsidian notes:** `vault/AnswerRank` is the whole business as linked notes
+  (agents, trades, research, costs, plan, decisions), generated from the code.
+  Copy it into your vault; `python run.py vault` refreshes it.
 
 ---
 

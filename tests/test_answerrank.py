@@ -6690,3 +6690,34 @@ class TestThePilotPathIsClean(_Biz):
         self.store.save_message(cold)
         self.assertIn("unsubscribe", self._api().sent_by_hand(cold.id)["error"])
         self.assertEqual(self.store.get_message(cold.id).status, "drafted")
+
+
+class TestObsidianVault(unittest.TestCase):
+    """The vault is generated from the code, so it can't drift from it."""
+
+    def test_every_link_resolves(self):
+        from answerrank import vault
+        notes = vault.build()
+        names = {p.rsplit("/", 1)[-1][:-3] for p in notes}
+        broken = {p: [l for l in vault.links_in(t) if l not in names]
+                  for p, t in notes.items()}
+        self.assertEqual({p: l for p, l in broken.items() if l}, {})
+
+    def test_every_agent_trade_and_source_has_a_note(self):
+        from answerrank import evidence, knowledge, vault
+        from answerrank.orchestrator import AGENT_ORDER
+        notes = vault.build()
+        self.assertEqual(sum(p.startswith("AnswerRank/Agents/") for p in notes), len(AGENT_ORDER))
+        self.assertEqual(sum(p.startswith("AnswerRank/Trades/") for p in notes),
+                         len(knowledge.VERTICALS))
+        self.assertEqual(sum(p.startswith("AnswerRank/Research/") for p in notes),
+                         len(evidence.LIBRARY))
+
+    def test_the_committed_vault_is_current(self):
+        """vault/ is generated; regenerate it with `python run.py vault`
+        after changing an agent, a trade, a source or the costs."""
+        from answerrank import vault
+        root = pathlib.Path(__file__).resolve().parent.parent / "vault"
+        stale = [p for p, body in vault.build().items()
+                 if not (root / p).exists() or (root / p).read_text(encoding="utf-8") != body]
+        self.assertEqual(stale, [], "run: python run.py vault")

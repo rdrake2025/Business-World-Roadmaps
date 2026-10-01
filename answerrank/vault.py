@@ -1,0 +1,500 @@
+"""AnswerRank as an Obsidian vault: notes written from the code itself.
+
+A wiki kept by hand drifts from the thing it describes within a week. These
+notes are generated from the same places the agents read: the fleet and its
+schedules, each researcher's question, the evidence library, the trade
+library and its questions, and the cost model. Regenerate after any change:
+
+    python run.py vault
+
+and copy ``vault/AnswerRank`` into your own vault (or open ``vault`` in
+Obsidian as a vault of its own). Links are Obsidian ``[[wikilinks]]``; every
+one resolves to a note in the folder, which a test checks.
+
+Only two notes are written by hand, in this file: the decisions and the
+plan, because no code knows why a choice was made or what comes next.
+"""
+
+from __future__ import annotations
+
+import inspect
+import re
+from pathlib import Path
+
+ROOT = "AnswerRank"
+
+#: The published pages, so the vault links to what's already been made.
+PAGES = {
+    "Launch plan": "https://claude.ai/artifact/LrJFr4ocTkmRpGSRRhqwQG",
+    "Pilot Kit": "https://claude.ai/artifact/G34kyvqUQLjshCXjxoBXhm",
+    "Calendar (Shifts & Plans)": "https://claude.ai/artifact/A6R7TJvcuz75PAPvoSgEnZ",
+    "Film: The Day It Hits 100%": "https://claude.ai/artifact/REcj3ziVKhc4zqT1ppUo1T",
+    "Code (GitHub)": "https://github.com/rdrake2025/Business-World-Roadmaps",
+}
+
+#: What was decided, and why. Newest last. (When, what, why.)
+DECISIONS = [
+    ("2026-09", "Sell three plans: Starter $499, Growth $997, Managed $1,997 a month.",
+     "Each trade is quoted the price its jobs can carry: a roofer's or tree "
+     "service's numbers support Starter, a plumber's support more. See [[Trades]]."),
+    ("2026-09", "Autopilot sells up to Growth, never Managed.",
+     "Managed means hands-on work on the client's website; nobody does that "
+     "while Autopilot runs alone."),
+    ("2026-09", "You read the first 20 cold emails before Autopilot sends on its own.",
+     "The first emails decide the domain's reputation, and a reputation can't "
+     "be bought back."),
+    ("2026-09", "The Guardian pauses only the part that's going wrong.",
+     "Too many bounces stop first emails; replies, clients and reports carry "
+     "on. See [[Guardian]]."),
+    ("2026-09", "Start on the Lean budget: 5 businesses checked a day.",
+     "The cheapest real start, about $21 a month on Google's free server. "
+     "Move up once the first client pays. See [[Costs]]."),
+    ("2026-09", "Not Oracle's free server.",
+     "Its free tier was halved in June 2026. Google Cloud's e2-micro is the free option."),
+    ("2026-10", "Real mode never makes anything up.",
+     "With a key missing, AnswerRank used to invent businesses and scores. It "
+     "now stops and says which key is missing."),
+    ("2026-10", "Market research re-checks each trade once a month.",
+     "Twice a day cost about $19 a month that no estimate counted. Once a "
+     "month costs about $1.50. See [[Explorer]]."),
+    ("2026-10", "Prove it with pilots first: three free months, measured.",
+     "The only thing not yet proven is that the changes get a business named "
+     "more often. Pilots on your own computer cost about $5 of OpenAI credit. "
+     "See [[Pilots]]."),
+    ("2026-10", "A before-and-after is published only if it beats the noise.",
+     "AI answers change from day to day. The case study says \"don't publish\" "
+     "when the change is within the margin of error."),
+    ("2026-10", "Book only the costs actually being paid.",
+     "The books used to include $138 a month of tools the plan never buys."),
+]
+
+#: The path from today to the goal. (Done?, step, roughly where it puts you.)
+PLAN = [
+    (False, "Check 5 businesses you know in ChatGPT, with the [[Pilot Kit]] (free)", ""),
+    (False, "2 or 3 of them say yes to a free three-month pilot", ""),
+    (False, "Measure them for about $5 of OpenAI credit: [[Pilots]]", ""),
+    (False, "Full setup on the Lean budget, about $21 a month: [[Costs]]", "about 60%"),
+    (False, "The live test passes with your real accounts", "about 72%"),
+    (False, "You read the first 20 emails, switch Autopilot on, replies start", "about 77%"),
+    (False, "45 days in: the pilots' before-and-after", ""),
+    (False, "The first paying client, and a lawyer reviews the contract", "85-90%"),
+    (False, "Six clients and $5,000 a month", "100%"),
+]
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def _title(name: str) -> str:
+    """A note name Obsidian and Windows both accept."""
+    name = re.sub(r'[\\/:*?"<>|#^\[\]]', " -", name)
+    return re.sub(r"\s+", " ", name).strip(" -.")[:120]
+
+
+def _front(tags: list[str], **fields: str) -> str:
+    lines = ["---", "tags: [" + ", ".join(tags) + "]"]
+    lines += [f"{k}: {v}" for k, v in fields.items() if v != ""]
+    return "\n".join(lines + ["---", ""])
+
+
+def _every(seconds: int) -> str:
+    if seconds % 86400 == 0:
+        days = seconds // 86400
+        return "once a day" if days == 1 else f"every {days} days"
+    if seconds % 3600 == 0:
+        hours = seconds // 3600
+        return "every hour" if hours == 1 else f"every {hours} hours"
+    return f"every {seconds // 60} minutes"
+
+
+def _prose(text: str) -> str:
+    """Docstring text as one readable paragraph of Markdown."""
+    text = text.replace("``", "`")
+    return re.sub(r"\s*\n\s*", " ", text).strip()
+
+
+def _doc_markdown(doc: str) -> str:
+    """A docstring's body (after its title line) as Markdown: paragraphs
+    unwrapped, list items kept as list items, ``code`` as `code`."""
+    out = []
+    for para in [p for p in doc.split("\n\n") if p.strip()][1:]:
+        lines = [ln.strip() for ln in para.strip().splitlines()]
+        if re.match(r"^([*-]|\d+\.)\s", lines[0]):
+            items: list[str] = []
+            for ln in lines:
+                if re.match(r"^([*-]|\d+\.)\s", ln):
+                    items.append(re.sub(r"^\*\s", "- ", ln))
+                elif items:
+                    items[-1] += " " + ln
+            out.append("\n".join(items))
+        else:
+            out.append(" ".join(lines))
+    return "\n\n".join(out).replace("``", "`")
+
+
+def _purpose(cls) -> str:
+    """How an agent works, from its module's own docstring."""
+    return _doc_markdown(inspect.getdoc(inspect.getmodule(cls)) or "")
+
+
+def _agents():
+    from .orchestrator import AGENT_ORDER
+    return list(AGENT_ORDER)
+
+
+def _agent_note_name(name: str) -> str:
+    return name.capitalize()
+
+
+def _evidence_names() -> dict[str, str]:
+    from . import evidence
+    names, seen = {}, set()
+    for key, e in evidence.LIBRARY.items():
+        n = _title(e.source)
+        if n in seen:
+            n = _title(f"{e.source} ({key})")
+        seen.add(n)
+        names[key] = n
+    return names
+
+
+# ---------------------------------------------------------------------------
+# notes
+# ---------------------------------------------------------------------------
+
+def _home(n_agents: int, n_trades: int, n_sources: int) -> str:
+    return _front(["answerrank", "moc"], aliases="[AnswerRank home]") + f"""# AnswerRank
+
+AnswerRank gets local businesses named when their customers ask AI assistants
+like ChatGPT who to call. It measures how often a business is named, writes
+the changes for its website, and measures again every month. {n_agents} agents
+run it, around the clock.
+
+> [!tip] Where things stand
+> The software is built and tested. The business starts with two or three
+> pilots, measured for about $5: [[Pilots]].
+
+## Map
+- [[Plan]]: the steps from today to $5,000 a month
+- [[Pilots]]: prove it works for about $5
+- [[Costs]]: what each budget costs a month
+- [[Agents]]: the {n_agents} agents and what each one does
+- [[Trades]]: the {n_trades} trades, their prices and what their customers ask
+- [[Research]]: the {n_sources} sources the agents work from
+- [[Decisions]]: what was decided, and why
+- [[Links]]: the pages made so far
+
+*Generated from the code by `python run.py vault`. Notes you add yourself are
+never touched; the generated ones are rewritten each time.*
+"""
+
+
+def _links() -> str:
+    lines = [f"- [{k}]({v})" for k, v in PAGES.items()]
+    return _front(["answerrank"]) + "# Links\n\nThe pages made for AnswerRank so far.\n\n" \
+        + "\n".join(lines) + "\n\nBack to [[AnswerRank]].\n"
+
+
+def _decisions() -> str:
+    rows = "\n".join(f"### {when}: {what}\n{why}\n" for when, what, why in DECISIONS)
+    return _front(["answerrank", "decisions"]) + \
+        "# Decisions\n\nWhat was decided and why, oldest first. Add your own at the end.\n\n" \
+        + rows + "\nBack to [[AnswerRank]].\n"
+
+
+def _plan() -> str:
+    steps = "\n".join(f"- [{'x' if done else ' '}] {step}" + (f" *({where})*" if where else "")
+                      for done, step, where in PLAN)
+    return _front(["answerrank", "plan"]) + f"""# Plan
+
+Tick each step off as it's done. The percentages are how finished the
+business is once that step is behind you.
+
+{steps}
+
+The [[Pilot Kit]] and the [[Links|calendar]] have these steps on dates.
+
+Back to [[AnswerRank]].
+"""
+
+
+def _pilot_kit() -> str:
+    return _front(["answerrank", "pilots"]) + f"""# Pilot Kit
+
+A page for the free first step: it lists the questions to ask ChatGPT for
+any trade and town, scores the businesses you know, and writes each one a
+free-pilot offer. [Open the Pilot Kit]({PAGES['Pilot Kit']})
+
+Next: [[Pilots]]. Back to [[AnswerRank]].
+"""
+
+
+def _pilots() -> str:
+    from .costs import client_audit_cost
+    from .config import Settings
+    s = Settings()
+    s.engines = ["openai"]
+    each = client_audit_cost(s)
+    return _front(["answerrank", "pilots"]) + f"""# Pilots
+
+Prove the service on two or three businesses you know, before any monthly
+cost. All it takes is your own computer and **$5 of OpenAI credit**.
+
+- One measurement of one pilot: about **{each * 100:.0f} cents** (10 questions,
+  each asked 3 times on ChatGPT with web search)
+- Three pilots, measured three times over two months: about
+  **${each * 9:.0f}**
+
+## Steps
+1. Find 2 or 3 businesses that say yes ([[Pilot Kit]]). Offer three free
+   months in return for honest feedback and, if it works, permission to
+   share the before-and-after.
+2. Buy $5 of OpenAI credit. It suggests $10: change it to 5, and leave
+   automatic recharge off.
+3. AnswerRank button → **2 Keys and settings** → paste only the OpenAI key.
+4. **1 Open AnswerRank** → Pipeline → **Add a business you know** → choose
+   **Free pilot**.
+5. Inbox: **Copy text** on the welcome, send it yourself with their report
+   and files, then **I sent it myself**.
+6. Open AnswerRank about once a month so it measures again.
+7. After 45 days: Clients → **Before & after (case study)**.
+
+Keep a note per pilot with the **Pilot log** template.
+
+The full guide is `PILOTS.md` in the AnswerRank folder. Back to [[AnswerRank]].
+"""
+
+
+def _costs() -> str:
+    from . import costs
+    from .config import Settings
+    s = Settings()
+    free = {r["key"]: r for r in costs.table(s, server="gcp_free")}
+    paid = {r["key"]: r for r in costs.table(s, server="digitalocean")}
+    rows = "\n".join(
+        f"| {free[k]['label']} | {free[k]['per_day']} | ${free[k]['total']:,.2f} | "
+        f"${paid[k]['total']:,.2f} |" for k in free)
+    lean = costs.estimate(s, server="gcp_free", checks_per_day=free["lean"]["per_day"])
+    lines = "\n".join(f"| {line['label']} | ${line['monthly']:,.2f} | {line['note']} |"
+                      for line in lean["lines"])
+    return _front(["answerrank", "costs"]) + f"""# Costs
+
+The one choice is how many new businesses are checked a day (Keys and settings
+asks). Pilots on your own computer cost nothing a month: see [[Pilots]].
+
+| Budget | Checked a day | Google's free server | $6 server |
+| --- | --- | --- | --- |
+{rows}
+
+## Lean, line by line (free server)
+
+| What | A month | Note |
+| --- | --- | --- |
+{lines}
+
+On top: Stripe takes about 3.6% of each payment, and each client's monthly
+audit costs about ${costs.client_audit_cost(s):.2f}.
+
+`python run.py costs` prints your own numbers. Back to [[AnswerRank]].
+"""
+
+
+def _agents_moc(agents) -> str:
+    rows = "\n".join(
+        f"| [[{_agent_note_name(a.name)}]] | {_every(a.interval)} | {a.description} |"
+        for a in agents)
+    return _front(["answerrank", "agents", "moc"]) + f"""# Agents
+
+{len(agents)} agents run the business, in this order each cycle. Each one has a
+researcher that checks its work and asks one question.
+
+| Agent | Runs | Job |
+| --- | --- | --- |
+{rows}
+
+Back to [[AnswerRank]].
+"""
+
+
+def _agent_note(a, question: str, sources: list[tuple[str, str]]) -> str:
+    purpose = _purpose(a)
+    cites = "\n".join(f"- [[{name}]]: {why}" for name, why in sources) or "- None yet."
+    q = f"\n## Its researcher asks\n{question}\n" if question else ""
+    return _front(["answerrank", "agent"], runs=_every(a.interval)) + \
+        f"# {_agent_note_name(a.name)}\n\n**{a.description}** Runs {_every(a.interval)}.\n\n" \
+        + (f"## How it works\n{purpose}\n" if purpose else "") + q + \
+        f"\n## Works from\n{cites}\n\nPart of [[Agents]].\n"
+
+
+def _trades_moc(trades, prices) -> str:
+    rows = "\n".join(
+        f"| [[{_title(v.label.capitalize())}]] | ${prices[v.key]:,.0f} | "
+        f"${v.economics.avg_ticket:,.0f} | ${v.economics.lifetime_value:,.0f} |"
+        for v in trades)
+    return _front(["answerrank", "trades", "moc"]) + f"""# Trades
+
+What each trade is quoted a month, against what one of its jobs and one of its
+customers is worth. On Autopilot the top plan is Growth ($997).
+
+| Trade | Quoted a month | Average job | A customer's lifetime value |
+| --- | --- | --- | --- |
+{rows}
+
+Back to [[AnswerRank]].
+"""
+
+
+def _trade_note(v, price: float) -> str:
+    from .prompts import build_prompts
+    qs = "\n".join(f"{i}. {q}" for i, (q, _) in enumerate(
+        build_prompts(v.key, "your town", limit=6), 1))
+    bullets = lambda xs: "\n".join(f"- {x}" for x in xs) or "- (none recorded)"  # noqa: E731
+    e = v.economics
+    from .config import Pricing
+    growth = Pricing().growth_monthly
+    cap = (f" (on Autopilot, Growth at ${growth:,.0f}: Managed needs hands-on work)"
+           if price > growth else "")
+    return _front(["answerrank", "trade"], quoted=f"{price:.0f}") + f"""# {v.label.capitalize()}
+
+Quoted **${price:,.0f} a month**{cap}. An average job is worth about
+${e.avg_ticket:,.0f}, and a customer over time about ${e.lifetime_value:,.0f}.
+The person who decides is usually the {v.decision_maker}. Busiest:
+{v.peak_label() or 'all year'}.
+
+## Ask ChatGPT
+{qs}
+
+## What their customers type
+{bullets(v.buyer_phrases)}
+
+## What they'll say
+{bullets(v.objections)}
+
+## Signs they spend on marketing
+{bullets(v.spend_signals)}
+
+## Lists that recommend them
+{bullets(v.directories)}
+
+Part of [[Trades]].
+"""
+
+
+def _research_moc(names) -> str:
+    from . import evidence
+    agent_names = {a.name for a in _agents()}
+    rows = []
+    for key, e in evidence.LIBRARY.items():
+        users = ", ".join(f"[[{_agent_note_name(u)}]]" if u in agent_names else u
+                          for u in e.used_by)
+        rows.append(f"| [[{names[key]}]] | {e.published} | {users} |")
+    return _front(["answerrank", "research", "moc"]) + f"""# Research
+
+The {len(evidence.LIBRARY)} sources the agents work from. Each note says what
+the source found and what AnswerRank does because of it.
+
+| Source | Published | Used by |
+| --- | --- | --- |
+""" + "\n".join(rows) + "\n\nBack to [[AnswerRank]].\n"
+
+
+def _research_note(e) -> str:
+    agent_names = {a.name for a in _agents()}
+    users = ", ".join(f"[[{_agent_note_name(u)}]]" if u in agent_names else f"`{u}`"
+                      for u in e.used_by)
+    return _front(["answerrank", "research"], published=e.published, checked=e.checked) + \
+        f"# {e.source}\n\n[Read the source]({e.url})\n\n## What it found\n{e.finding}\n\n" \
+        f"## So AnswerRank\n{e.so_we}\n\nUsed by: {users}. Read again every " \
+        f"{e.review_months} months.\n\nPart of [[Research]].\n"
+
+
+TEMPLATES = {
+    "Pilot log": _front(["answerrank", "pilot"], business="", trade="", town="",
+                        status="asked") + """# {{title}}
+
+Started {{date}}. Status: asked → yes → measuring → case study.
+
+## Before (from AnswerRank)
+- Score:
+- Named in: __ of 10 questions
+- Recommended instead:
+
+## Changes made
+- [ ] Welcome, report and files sent (then **I sent it myself**)
+- [ ] Website files installed
+
+## After (45 days or more)
+- Score:
+- Verdict:
+
+## Notes
+""",
+    "Weekly review": _front(["answerrank", "weekly"]) + """# Week of {{date}}
+
+- [ ] AnswerRank hour done
+- Pilots asked / said yes:
+- Emails sent / replies:
+- Clients / money in each month:
+
+## What worked
+
+## One thing to do next week
+""",
+}
+
+
+def build() -> dict[str, str]:
+    """Every note, as {path inside the vault: Markdown}."""
+    from . import evidence, knowledge, research
+    from .config import Settings
+
+    agents = _agents()
+    questions = {r.subject: r.question for r in research.RESEARCHERS}
+    names = _evidence_names()
+    trades = sorted(knowledge.VERTICALS.values(), key=lambda v: v.label)
+    settings = Settings()
+    prices = {v.key: settings.quote_for(v.key) for v in trades}
+
+    notes = {
+        f"{ROOT}/AnswerRank.md": _home(len(agents), len(trades), len(evidence.LIBRARY)),
+        f"{ROOT}/Plan.md": _plan(),
+        f"{ROOT}/Pilots.md": _pilots(),
+        f"{ROOT}/Pilot Kit.md": _pilot_kit(),
+        f"{ROOT}/Costs.md": _costs(),
+        f"{ROOT}/Decisions.md": _decisions(),
+        f"{ROOT}/Links.md": _links(),
+        f"{ROOT}/Agents.md": _agents_moc(agents),
+        f"{ROOT}/Trades.md": _trades_moc(trades, prices),
+        f"{ROOT}/Research.md": _research_moc(names),
+    }
+    for a in agents:
+        sources = [(names[e.key], _prose(e.so_we).split(". ")[0].rstrip(".") + ".")
+                   for e in evidence.for_agent(a.name)]
+        notes[f"{ROOT}/Agents/{_agent_note_name(a.name)}.md"] = _agent_note(
+            a, questions.get(a.name, ""), sources)
+    for v in trades:
+        notes[f"{ROOT}/Trades/{_title(v.label.capitalize())}.md"] = _trade_note(v, prices[v.key])
+    for key, e in evidence.LIBRARY.items():
+        notes[f"{ROOT}/Research/{names[key]}.md"] = _research_note(e)
+    for name, body in TEMPLATES.items():
+        notes[f"{ROOT}/Templates/{name}.md"] = body
+    return notes
+
+
+def links_in(text: str) -> list[str]:
+    """The note names a page links to (``[[Name]]`` or ``[[Name|label]]``)."""
+    return [m.split("|")[0].strip() for m in re.findall(r"\[\[([^\]]+)\]\]", text)]
+
+
+def write(out_dir: str | Path = "vault") -> list[Path]:
+    """Write every note under ``out_dir``. Generated notes are replaced; any
+    note you added yourself is left alone."""
+    out = Path(out_dir)
+    written = []
+    for rel, body in build().items():
+        path = out / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        written.append(path)
+    return written
