@@ -7009,6 +7009,15 @@ class TestTheDatesAhead(TestNotesInYourOwnVault):
         self.assertIn(f"**{today}**", ahead, "measurement overdue: due now, not in the past")
         self.assertNotIn("before-and-after is ready", ahead, "that date has passed")
 
+    def test_this_weeks_dates_are_kept_in_the_week_note(self):
+        from answerrank import vault
+        self._pilot(days_ago=(30,))
+        notes = vault.live_notes(self.store, self.settings)
+        week = next(t for p, t in notes.items() if "/Weeks/" in p)
+        self.assertIn("## Dates this week", week)
+        self.assertIn("[[Ridge Electric]] measured again", week, "overdue: due now")
+        self.assertNotIn("free pilot ends", week, "that is months away")
+
     def test_paying_clients_show_only_their_measurement(self):
         from answerrank import sales
         p = self._prospect()

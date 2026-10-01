@@ -585,8 +585,12 @@ def _week_note(store, settings, now, clients) -> tuple[str, str]:
              f"{w['won']} signed up, {w['paid']} paid",
              "- Measured: " + (", ".join(f"[[{_title(n)}]]" for n in measured) or "nobody"),
              f"- Now: {int(k['active_clients'])} client(s), "
-             f"${store.mrr():,.0f} a month coming in", "",
-             "## The funnel (last 30 days)", *funnel, "",
+             f"${store.mrr():,.0f} a month coming in", ""]
+    sunday = (monday + timedelta(days=6)).isoformat()
+    due = sorted((d, t) for c in clients for d, t in _coming_up(store, c, now) if d <= sunday)
+    if due:
+        lines += ["## Dates this week", *_dated(due), ""]
+    lines += ["## The funnel (last 30 days)", *funnel, "",
              "## The one thing to change", _week_fix(store, r, clients), ""]
     if r["upcoming"]:
         lines += ["## Booked for next week",
