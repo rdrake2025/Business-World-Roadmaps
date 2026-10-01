@@ -6905,3 +6905,72 @@ class TestThePilotWelcome(_Biz):
         subject, body = self._welcome("growth")
         self.assertIn("billing.stripe.com", body)
         self.assertIn("Thanks for signing up", body)
+
+
+class TestThePilotEnds(_Biz):
+    """A pilot used to stay free for good: nothing marked the three months,
+    and turning a pilot into the first paying client was left to memory."""
+
+    def _pilot(self, started_days_ago, vertical="plumbing", moved=True):
+        from answerrank import sales
+        p = self._prospect()
+        p.business.vertical = vertical
+        self.store.upsert_prospect(p)
+        sales.sign_up(self.store, self.settings, p, "pilot", send_link=False)
+        client = next(c for c in self.store.get_clients("active") if c.plan == "pilot")
+        client.started_at = (datetime.now(timezone.utc)
+                             - timedelta(days=started_days_ago)).isoformat(timespec="seconds")
+        self.store.upsert_client(client)
+        for i, ago in enumerate((started_days_ago - 1, 2)):
+            when = (datetime.now(timezone.utc) - timedelta(days=ago)).isoformat(timespec="seconds")
+            results = [ProbeResult(probe_id=f"q{q}-r{r}", engine="openai", prompt=f"question {q}",
+                                   answer_text="", mentioned=moved and bool(i) and q < 8,
+                                   cited=False, position=None)
+                       for q in range(10) for r in range(3)]
+            self.store.save_audit(Audit(business_id=p.business.id, business_name=p.business.name,
+                                        market=p.business.market, vertical=p.business.vertical,
+                                        score=5.0 + (70 * i if moved else 1), is_free_teaser=False,
+                                        created_at=when, results=results))
+        return p, self.store.get_client(client.id)
+
+    def _offers(self, p):
+        return [m for m in self.store.messages_for(p.id) if m.kind == "pilot_offer"]
+
+    def test_the_offer_is_written_a_week_before_the_end_and_once(self):
+        from answerrank.agents.retention import RetentionAgent
+        p, _client = self._pilot(85)
+        RetentionAgent(self.store, self.settings).execute()
+        RetentionAgent(self.store, self.settings).execute()
+        (offer,) = self._offers(p)
+        self.assertIn("free pilot ends", offer.subject.lower())
+        self.assertIn("$997 a month", offer.body, "a plumber's Managed quote is capped at Growth")
+        self.assertIn("no contract", offer.body)
+        self.assertIn("stop", offer.body)
+
+    def test_not_while_there_is_time_left(self):
+        from answerrank.agents.retention import RetentionAgent
+        p, _client = self._pilot(40)
+        RetentionAgent(self.store, self.settings).execute()
+        self.assertEqual(self._offers(p), [])
+
+    def test_a_result_inside_the_noise_is_called_that(self):
+        from answerrank import sales
+        _p, client = self._pilot(85, moved=False)
+        _subject, body = sales.pilot_offer(self.store, self.settings, client)
+        self.assertIn("hasn't moved enough", body)
+        self.assertNotIn("The numbers moved", body)
+
+    def test_a_pilot_becomes_a_paying_client(self):
+        p, client = self._pilot(85)
+        r = self._api().convert_pilot(client.id)
+        self.assertEqual((r["plan"], r["mrr"], r["status"]), ("growth", 997.0, "awaiting_payment"))
+        self.assertEqual(self.store.get_client(client.id).plan, "growth")
+        self.assertTrue(any(m.kind == "invoice" for m in self.store.messages_for(p.id)),
+                        "the payment link goes to them like any sign-up")
+        self.assertIn("error", self._api().convert_pilot(client.id))
+
+    def test_the_pilots_card_shows_the_end_date(self):
+        _p, _client = self._pilot(10)
+        (item,) = self._api().pilots()
+        self.assertTrue(item["ends_on"])
+        self.assertIn("$997", item["offer"])

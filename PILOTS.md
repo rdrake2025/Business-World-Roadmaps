@@ -49,7 +49,11 @@ permission to share the before-and-after.
    score, and the date of the next measurement.
 8. **After 45 days**, the Pilots card links to the **before-and-after**: a
    page you can show other businesses (also under Clients → the business →
-   **Before & after (case study)**). It says plainly whether the change is real or within the noise.
+   **Before & after (case study)**).
+9. **A week before the three months end**, AnswerRank writes the offer (Inbox:
+   "end of their free pilot"): where they stand, honestly, and the price for
+   their trade, no contract. Send it, and if they say yes, tap **They said
+   yes: start paid plan** on the Pilots card. That's your first paying client. It says plainly whether the change is real or within the noise.
    It only says "worth publishing" when the change is bigger than the margin
    of error. If it didn't move, it says not to publish.
 

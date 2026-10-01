@@ -263,6 +263,8 @@ cost. All it takes is your own computer and **$5 of OpenAI credit**.
    card on Today shows each pilot's scores and the next measurement date.
 7. After 45 days the Pilots card links to the **before-and-after**, a page
    you can show other businesses.
+8. A week before the three months end, the offer is written for you: their
+   numbers and the price. If they say yes: **They said yes: start paid plan**.
 
 Keep a note per pilot with the **Pilot log** template.
 
@@ -565,9 +567,11 @@ def live_notes(store, settings) -> dict[str, str]:
         plan = "free pilot" if c.plan == "pilot" else f"{c.plan}, ${c.mrr:,.0f} a month"
         rows = "\n".join(f"| {_day(a.created_at)} | {a.score:.0f} | {n} of {t} |"
                          for a in reversed(audits) for n, t in [_named(a)])
+        from .sales import pilot_ends
+        until = f" Free until {pilot_ends(c)}." if c.plan == "pilot" else ""
         body = [f"# {c.business.name}", "",
                 f"{trade_link} in {c.business.market}. {plan.capitalize()}, "
-                f"{c.status.replace('_', ' ')}, since {_day(c.started_at)}.", ""]
+                f"{c.status.replace('_', ' ')}, since {_day(c.started_at)}.{until}", ""]
         if audits:
             first, last = audits[-1], audits[0]
             age = (now - datetime.fromisoformat(first.created_at.replace("Z", "+00:00"))).days

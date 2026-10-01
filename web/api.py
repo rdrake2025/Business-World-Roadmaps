@@ -127,8 +127,12 @@ class Api:
             if c.plan != "pilot":
                 continue
             audits = self.store.audit_history(c.business.id, limit=24, comparable=True)
+            from answerrank import sales
+            ends = sales.pilot_ends(c)
+            plan = sales.offer_plan(self.settings, c.business.vertical)
             item: dict[str, Any] = {"id": c.id, "name": c.business.name,
-                                    "measured": len(audits)}
+                                    "measured": len(audits), "ends_on": day(ends + "T00:00:00+00:00"),
+                                    "offer": f"{plan.capitalize()}, ${self.settings.pricing.plan_price(plan):,.0f}/mo"}
             if audits:
                 first, last = audits[-1], audits[0]
                 age = (datetime.now(timezone.utc)
@@ -146,7 +150,8 @@ class Api:
         return out
 
     #: What each kind of draft is, in the words on its badge.
-    KIND_LABEL = {"reply": "answer to their reply", "report": "report they asked for",
+    KIND_LABEL = {"pilot_offer": "end of their free pilot",
+                  "reply": "answer to their reply", "report": "report they asked for",
                   "welcome": "welcome", "invoice": "payment link",
                   "client_report": "monthly report", "client_care": "check-in"}
 
@@ -502,6 +507,27 @@ class Api:
             self.store.kv_set(f"undo.{m.id}", "")
             return {"ok": True, "status": "drafted", "label": "Back in your drafts."}
         return {"error": "Nothing to undo for that one."}
+
+    def convert_pilot(self, client_id: str, plan: str = "") -> dict[str, Any]:
+        """A pilot said yes to a paid plan."""
+        from answerrank import sales
+
+        client = self.store.get_client(client_id)
+        if client is None:
+            return {"error": "That client isn't here any more."}
+        done = sales.convert_pilot(self.store, self.settings, client, plan)
+        if done.get("error"):
+            return done
+        price = f"${done['mrr']:,.0f}"
+        if done["payment_link"] and done["email"]:
+            nxt = f"The payment link for {price}/month goes to {done['email']} shortly."
+        elif done["payment_link"]:
+            nxt = ("The payment link is in the Inbox: Copy text, send it to them, then "
+                   "I sent it myself. They go live the moment it's paid.")
+        else:
+            nxt = (f"No payment link is set up yet. Send them an invoice for {price}, "
+                   f"then tap Paid on the Clients tab when it arrives.")
+        return {**done, "next": nxt}
 
     def sent_by_hand(self, message_id: str) -> dict[str, Any]:
         """You sent it yourself: from your own email, by text, in person.

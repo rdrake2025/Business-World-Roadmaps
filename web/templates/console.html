@@ -568,10 +568,30 @@
           (p.case_ready ? '<a href="' + esc(p.case_url) + '" target="_blank" rel="noopener">' +
                           'The before-and-after is ready</a>.'
                         : 'Before-and-after from ' + esc(p.case_on) + '.') +
-          '</div></div>';
+          ' Free until ' + esc(p.ends_on) + '.</div>' +
+          '<button class="act" style="flex-basis:100%;margin-top:8px" data-convert="' +
+            esc(p.id) + '" data-offer="' + esc(p.offer) + '">They said yes: start paid plan</button>' +
+          '</div>';
       }).join("") + '<div class="barnote" style="margin-top:6px">Scores are out of 100: ' +
       'how often and how well AI assistants name them.</div></div>';
   }
+  $("pilotCard").addEventListener("click", function(e){
+    var b = e.target.closest("button[data-convert]");
+    if(!b || busy) return;
+    if(!b.dataset.armed){
+      b.dataset.armed = "1";
+      b.textContent = "Tap again to start " + b.dataset.offer;
+      setTimeout(function(){ if(b.isConnected){ delete b.dataset.armed;
+        b.textContent = "They said yes: start paid plan"; } }, 4000);
+      return;
+    }
+    busy = true;
+    api("/api/convert_pilot", { id: b.dataset.convert }).then(function(r){
+      toast(r.error ? r.error : r.name + ": " + r.next, 7000);
+      return load(true);
+    }).catch(function(){ toast("That didn't go through"); })
+      .then(function(){ busy = false; });
+  });
   function renderToday(){
     var q = S.queue, p = S.pipeline;
     $("tDraft").textContent = q.drafted;

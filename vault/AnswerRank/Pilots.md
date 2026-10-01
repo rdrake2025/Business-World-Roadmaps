@@ -26,6 +26,8 @@ cost. All it takes is your own computer and **$5 of OpenAI credit**.
    card on Today shows each pilot's scores and the next measurement date.
 7. After 45 days the Pilots card links to the **before-and-after**, a page
    you can show other businesses.
+8. A week before the three months end, the offer is written for you: their
+   numbers and the price. If they say yes: **They said yes: start paid plan**.
 
 Keep a note per pilot with the **Pilot log** template.
 

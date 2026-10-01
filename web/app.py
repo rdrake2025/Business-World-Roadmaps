@@ -311,6 +311,11 @@ class Application:
     def api_undo(self, environ, start):
         return self._json(start, self.api.undo(str(self._body_json(environ).get("id", ""))))
 
+    def api_convert_pilot(self, environ, start):
+        d = self._body_json(environ)
+        return self._json(start, self.api.convert_pilot(str(d.get("id", "")),
+                                                        str(d.get("plan", ""))))
+
     def api_sent_by_hand(self, environ, start):
         return self._json(start, self.api.sent_by_hand(
             str(self._body_json(environ).get("id", ""))))
@@ -498,6 +503,7 @@ class Application:
             "/api/edit": self.api_edit,
             "/api/undo": self.api_undo,
             "/api/sent_by_hand": self.api_sent_by_hand,
+            "/api/convert_pilot": self.api_convert_pilot,
             "/api/send": self.api_send,
             "/api/tick": self.api_tick,
             "/api/clients": self.api_clients,
