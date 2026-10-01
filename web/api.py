@@ -55,6 +55,7 @@ class Api:
         from answerrank.agents.bookkeeper import BookkeeperAgent
         from answerrank.agents.outreach import OutreachAgent
         from answerrank.mailer import SMTPConfig
+        from answerrank.sales import pilot_budget
 
         kpis = BookkeeperAgent(self.store, self.settings).kpis()
         blockers = OutreachAgent(self.store, self.settings).preflight()
@@ -103,6 +104,7 @@ class Api:
             "can_send": not blockers,
             "mailbox": SMTPConfig.from_env().configured(),
             "pilots": self.pilots(),
+            "pilot_budget": pilot_budget(self.store, self.settings)["line"],
             "pilot_calendar": "/files/dates/answerrank-pilots.ics",
             "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }

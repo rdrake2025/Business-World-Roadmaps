@@ -609,6 +609,7 @@ def live_notes(store, settings) -> dict[str, str]:
 
     from . import casestudy, knowledge
     from .casestudy import MIN_DAYS
+    from .sales import pilot_budget
 
     now = datetime.now(timezone.utc)
     clients = [c for status in LIVE_STATUSES for c in store.get_clients(status)]
@@ -676,6 +677,7 @@ def live_notes(store, settings) -> dict[str, str]:
     paying = store.get_clients("active")
     stages = store.count_prospects_by_stage()
     drafts = len(store.get_messages("drafted", 500))
+    budget = pilot_budget(store, settings)["line"] if pilots else ""
     lines = ["# Dashboard", "", f"Updated {now.strftime('%Y-%m-%d %H:%M')} UTC by AnswerRank.", "",
              *_today(store, settings, now),
              "## Money",
@@ -685,6 +687,7 @@ def live_notes(store, settings) -> dict[str, str]:
              f"- Goal: ${settings.profit_target_monthly:,.0f} a month. See [[Plan]].", "",
              f"This week so far: [[{week_name}]]", "",
              "## Pilots", *(pilots or ["- None yet. See [[Pilots]]."]), "",
+             *([budget, ""] if budget else []),
              *(["## Coming up", *_dated(sorted(ahead)), ""] if ahead else []),
              "## Waiting for you",
              f"- {drafts} email(s) in the Inbox" if drafts else "- Nothing in the Inbox", ""]

@@ -7330,6 +7330,65 @@ class TestThreeMeasurementsAPilot(TestNotesInYourOwnVault):
         self.assertEqual(card["next_for"], "the before-and-after")
 
 
+class TestWhatTheCreditCovers(_Biz):
+    """A $5 credit runs out quietly. The Pilots card and the Dashboard say what
+    has been spent, what the pilots still need, and what that leaves."""
+
+    def setUp(self):
+        super().setUp()
+        self.env = unittest.mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"})
+        self.env.start()
+        self.settings.demo_mode = False
+        self.settings.engines = ["openai"]
+
+    def tearDown(self):
+        self.env.stop()
+        super().tearDown()
+
+    def _pilots(self, n):
+        api = self._api()
+        for i in range(n):
+            r = api.add_business(f"Pilot {i} Plumbing", "Tulsa", "OK", "plumbing",
+                                 f"pilot{i}.example", "", "")
+            api.win(r["id"], "pilot")
+
+    def test_new_pilots_need_three_measurements_each(self):
+        from answerrank import sales
+        self._pilots(3)
+        b = sales.pilot_budget(self.store, self.settings)
+        self.assertEqual((b["per"], b["to_come"], b["to_come_cost"]), (0.45, 9, 4.05))
+        self.assertIn("That leaves about $0.95", b["line"])
+
+    def test_what_was_spent_counts(self):
+        from answerrank import sales
+        from answerrank.models import LedgerEntry
+        self._pilots(1)
+        self.store.add_ledger(LedgerEntry(kind="cost", category="api", amount=0.45,
+                                          description="1 audits (1 engines)"))
+        b = sales.pilot_budget(self.store, self.settings)
+        self.assertEqual(b["spent"], 0.45)
+        self.assertIn("leaves about $3.20", b["line"])
+
+    def test_it_says_when_the_credit_wont_cover_them(self):
+        from answerrank import sales
+        self._pilots(4)
+        self.assertIn("Add about $0.40 of credit", sales.pilot_budget(self.store, self.settings)["line"])
+
+    def test_on_the_pilots_card_and_the_dashboard(self):
+        from answerrank import vault
+        self._pilots(2)
+        self.assertIn("Still to come for these pilots: 6 measurements", self._api().state()["pilot_budget"])
+        dash = vault.live_notes(self.store, self.settings)["AnswerRank/Dashboard.md"]
+        self.assertIn("Started with $5? That leaves about $2.30.", dash)
+
+    def test_demo_mode_says_nothing(self):
+        from answerrank import sales
+        self.settings.demo_mode = True
+        self.settings.engines = ["mock"]
+        self._pilots(1)
+        self.assertEqual(sales.pilot_budget(self.store, self.settings)["line"], "")
+
+
 class TestAddSeveralAtOnce(_Biz):
     """The Pilot Kit scores businesses you know; each one then had to be typed
     into AnswerRank again by hand. Its "Copy for AnswerRank" lines paste in."""

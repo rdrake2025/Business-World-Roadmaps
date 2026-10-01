@@ -79,6 +79,10 @@ permission to share the before-and-after.
   made-up businesses and made-up answers.)
 - AI answers change from one day to the next. That's why each question is
   asked three times, and why one good week isn't treated as proof.
+- The bottom of the Pilots card keeps count: what the checks have cost so
+  far, what your pilots still need, and what that leaves of $5. If it won't
+  cover them, it says how much to add before the last ones. (OpenAI's
+  billing page has the exact balance; AnswerRank can't read it.)
 - If the $5 runs out, Today says **Measurements paused** and why. Nothing
   is saved from a measurement that failed, so no pilot's numbers are
   spoiled by it. Add credit (another $5 covers about ten measurements) and

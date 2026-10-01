@@ -582,6 +582,7 @@
                      : '. All three measurements done. ') +
           (p.case_ready ? '<a href="' + esc(p.case_url) + '" target="_blank" rel="noopener">' +
                           'The before-and-after is ready</a>.'
+                        : p.next_for === 'the before-and-after' ? ''
                         : 'Before-and-after from ' + esc(p.case_on) + '.') +
           ' Free until ' + esc(p.ends_on) + '.</div>' +
           '<button class="act" style="flex-basis:100%;margin-top:8px" data-convert="' +
@@ -590,7 +591,9 @@
       }).join("") + '<div class="barnote" style="margin-top:6px">Scores are out of 100: ' +
       'how often and how well AI assistants name them. Measurements happen only while ' +
       'AnswerRank is open: <a href="' + esc(S.pilot_calendar || "") + '">add these dates ' +
-      'to your calendar</a> for a reminder on each morning.</div></div>';
+      'to your calendar</a> for a reminder on each morning.</div>' +
+      (S.pilot_budget ? '<div class="barnote" style="margin-top:6px">' + esc(S.pilot_budget) +
+                        '</div>' : '') + '</div>';
   }
   $("pilotCard").addEventListener("click", function(e){
     var b = e.target.closest("button[data-convert]");

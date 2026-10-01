@@ -990,6 +990,13 @@ class Store:
                 (category, f"{month}%"),
             ).fetchone() is not None
 
+    def api_spend(self) -> float:
+        """Everything spent on the answer engines and search, ever."""
+        with self.conn() as cx:
+            row = cx.execute("SELECT COALESCE(SUM(amount),0) t FROM ledger "
+                             "WHERE kind='cost' AND category='api'").fetchone()
+        return round(float(row["t"]), 2)
+
     def pnl(self, days: int = 30) -> dict[str, float]:
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
         with self.conn() as cx:

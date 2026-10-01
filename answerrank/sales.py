@@ -141,6 +141,41 @@ def pilot_due(client, audits, now=None) -> bool:
     return when is not None and when <= (now or datetime.now(timezone.utc)).date().isoformat()
 
 
+#: The credit PILOTS.md starts with. Only used to say what would be left:
+#: the real balance is on OpenAI's billing page, which no API key can read.
+PILOT_CREDIT = 5.0
+
+
+def pilot_budget(store, settings) -> dict:
+    """What the measurements have cost so far, what the active pilots still
+    need, and what that leaves of a $5 start. A $5 credit runs out quietly;
+    this says when it will, before it does."""
+    from .audit import DEPTHS, ENGINE_COST
+
+    engines = [e for e in settings.available_engines() if e != "mock"]
+    repeats = max(1, int(getattr(settings, "probe_repeats", 1)))
+    per = round(sum(ENGINE_COST.get(e, 0.01) for e in engines) * DEPTHS["full"] * repeats, 2)
+    left = {"first": 3, "mid": 2, "final": 1}
+    to_come = 0
+    for c in store.get_clients("active"):
+        if c.plan == "pilot":
+            nxt = pilot_next(c, store.audit_history(c.business.id, limit=24, comparable=True))
+            to_come += left[nxt[1]] if nxt else 0
+    spent = store.api_spend()
+    after = round(PILOT_CREDIT - spent - to_come * per, 2)
+    line = ""
+    if per:
+        line = (f"Spent on AI checks so far: about ${spent:,.2f}. Still to come for "
+                f"these pilots: {to_come} measurement{'' if to_come == 1 else 's'}, about "
+                f"${to_come * per:,.2f}. ")
+        line += (f"Started with ${PILOT_CREDIT:.0f}? That leaves about ${after:,.2f}."
+                 if after >= 0 else
+                 f"Started with ${PILOT_CREDIT:.0f}? Add about ${-after:,.2f} of credit "
+                 f"before the last ones.")
+    return {"per": per, "spent": spent, "to_come": to_come,
+            "to_come_cost": round(to_come * per, 2), "left_of_start": after, "line": line}
+
+
 def offer_plan(settings, vertical: str) -> str:
     """What a pilot is offered: their trade's plan, but never Managed, which
     means hands-on work on their site; that's a conversation, not an email."""
