@@ -188,6 +188,10 @@ the business finder (free for the first 2,500 searches, then about $1 per
 - Stripe: about 3.6% of each payment, about $36 of a $997 month.
 - Each client's monthly audit: about $1.60.
 
+Not ready for any monthly cost? [PILOTS.md](PILOTS.md) proves the service
+on two or three businesses you know for about $5 of OpenAI credit, on your
+own computer.
+
 Lean finds clients more slowly: a few first emails a day instead of the
 full warm-up. It is the cheapest way to start, and one answer in Keys and
 settings moves you up when the first client pays. One Growth client ($997)

@@ -13,6 +13,8 @@ being named, and does the work to change it.
 - **Human time:** ~5 hours/week approving and calling, or about ten minutes a
   week on **Autopilot**: see **[AUTOPILOT.md](AUTOPILOT.md)** for what runs by
   itself and the one-time setup only you can do
+- **Before any monthly cost:** prove it on two or three businesses you know
+  for about $5 of OpenAI credit: **[PILOTS.md](PILOTS.md)**
 
 ---
 
