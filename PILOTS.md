@@ -32,10 +32,13 @@ permission to share the before-and-after.
    **2 Keys and settings**. Paste the key at "OpenAI key". Press Enter to skip
    everything else.
 4. **Open AnswerRank** (option 1). The console opens in your browser.
-5. **Add each pilot.** Pipeline → **Add a business you know**. Then tap the
-   business, and under "They said yes — sign them up" choose **Free pilot —
-   prove it works**. Leave the console open for ten minutes: the first
-   measurement runs on its own.
+5. **Add each pilot.** If you used the Pilot Kit, tap **Copy for
+   AnswerRank** at the bottom of the Kit. In AnswerRank: Pipeline → **Add
+   several at once**, paste, leave "Sign each one up as a free pilot"
+   ticked, and tap **Add them all**. Without the Kit: Pipeline → **Add a
+   business you know**, then tap the business and, under "They said yes —
+   sign them up", choose **Free pilot — prove it works**. Either way, leave
+   the console open for ten minutes: the first measurement runs on its own.
 6. **Send them their starting point yourself.** Clients → the business:
    - their report (where they stand now, and what to fix);
    - the files for their website, with steps for their website builder.
@@ -46,16 +49,20 @@ permission to share the before-and-after.
 7. **Open AnswerRank about once a month** and leave it open for ten minutes.
    It measures each pilot again every 28 days, using the same questions each
    time. The **Pilots** card on Today shows each one's first and latest
-   score, and the date of the next measurement.
+   score, and the date of the next measurement. Tap **add these dates to
+   your calendar** on that card: your phone then reminds you on the morning
+   of each measurement, and of the other dates below.
 8. **After 45 days**, the Pilots card links to the **before-and-after**: a
    page you can show other businesses (also under Clients → the business →
-   **Before & after (case study)**).
+   **Before & after (case study)**). It says plainly whether the change is
+   real or within the noise. It only says "worth publishing" when the change
+   is bigger than the margin of error. If it didn't move, it says not to
+   publish.
 9. **A week before the three months end**, AnswerRank writes the offer (Inbox:
    "end of their free pilot"): where they stand, honestly, and the price for
    their trade, no contract. Send it, and if they say yes, tap **They said
-   yes: start paid plan** on the Pilots card. That's your first paying client. It says plainly whether the change is real or within the noise.
-   It only says "worth publishing" when the change is bigger than the margin
-   of error. If it didn't move, it says not to publish.
+   yes: start paid plan** on the Pilots card. That's your first paying
+   client.
 
 ## What to expect
 

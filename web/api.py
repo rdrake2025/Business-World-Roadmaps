@@ -103,6 +103,7 @@ class Api:
             "can_send": not blockers,
             "mailbox": SMTPConfig.from_env().configured(),
             "pilots": self.pilots(),
+            "pilot_calendar": "/files/dates/answerrank-pilots.ics",
             "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
 
@@ -1005,6 +1006,48 @@ class Api:
     #: Where a prospect already is in the cold sequence. Adding someone you
     #: know by hand takes them out of it.
     _COLD_STAGES = {"discovered", "audited", "queued", "contacted", "following_up"}
+
+    def add_many(self, text: str, pilots: bool = False) -> dict[str, Any]:
+        """Several businesses you know at once, one per line:
+        ``Name | trade | Town, ST`` and anything after (the Pilot Kit's status,
+        an email) optional. The Pilot Kit's "Copy for AnswerRank" writes
+        exactly this, so the businesses scored there don't get typed twice.
+        With ``pilots``, each one is signed up as a free pilot as well."""
+        from answerrank import knowledge
+
+        by_label = {v.label.lower(): k for k, v in knowledge.VERTICALS.items()}
+        added, signed, skipped = [], [], []
+        for raw in (text or "").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) < 3 or not parts[0] or not parts[2]:
+                skipped.append({"line": line, "why": "needs a name, a trade and a town"})
+                continue
+            name, trade, town = parts[0], parts[1].lower(), parts[2]
+            vertical = trade if trade in knowledge.VERTICALS else by_label.get(trade, "")
+            if not vertical:
+                skipped.append({"line": line, "why": f"unknown trade {parts[1]!r}"})
+                continue
+            city, state = town, ""
+            if "," in town:
+                head, tail = town.rsplit(",", 1)
+                if len(tail.strip()) == 2:
+                    city, state = head.strip(), tail.strip()
+            email = next((p for p in parts[3:] if "@" in p), "")
+            r = self.add_business(name, city, state, vertical, "", email, "")
+            if r.get("error"):
+                skipped.append({"line": line, "why": r["error"]})
+                continue
+            added.append(r["name"])
+            if pilots:
+                w = self.win(r["id"], "pilot")
+                if w.get("error"):
+                    skipped.append({"line": line, "why": w["error"]})
+                else:
+                    signed.append(r["name"])
+        return {"added": added, "signed": signed, "skipped": skipped}
 
     def add_business(self, name: str, city: str, state: str = "", vertical: str = "",
                      website: str = "", email: str = "", phone: str = "") -> dict[str, Any]:

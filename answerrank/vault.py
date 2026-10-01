@@ -228,6 +228,9 @@ A page for the free first step: it lists the questions to ask ChatGPT for
 any trade and town, scores the businesses you know, and writes each one a
 free-pilot offer. [Open the Pilot Kit]({PAGES['Pilot Kit']})
 
+When some say yes, **Copy for AnswerRank** at the bottom of the Kit copies
+them in the form AnswerRank's Pipeline → **Add several at once** reads.
+
 Next: [[Pilots]]. Back to [[AnswerRank]].
 """
 
@@ -255,12 +258,15 @@ cost. All it takes is your own computer and **$5 of OpenAI credit**.
 2. Buy $5 of OpenAI credit. It suggests $10: change it to 5, and leave
    automatic recharge off.
 3. AnswerRank button → **2 Keys and settings** → paste only the OpenAI key.
-4. **1 Open AnswerRank** → Pipeline → **Add a business you know** → choose
-   **Free pilot**.
+4. **1 Open AnswerRank** → Pipeline → **Add several at once** → paste what
+   **Copy for AnswerRank** in the [[Pilot Kit]] gave you. (Or **Add a
+   business you know** → choose **Free pilot**, one at a time.)
 5. Inbox: **Copy text** on the welcome, send it yourself with their report
    and files, then **I sent it myself**.
 6. Open AnswerRank about once a month so it measures again. The **Pilots**
-   card on Today shows each pilot's scores and the next measurement date.
+   card on Today shows each pilot's scores and the next measurement date,
+   and **add these dates to your calendar** puts every date on your phone
+   with a reminder. The [[Dashboard]] lists them too.
 7. After 45 days the Pilots card links to the **before-and-after**, a page
    you can show other businesses.
 8. A week before the three months end, the offer is written for you: their
@@ -509,6 +515,49 @@ def _week_fix(store, r, clients) -> str:
             "depends on it. Open AnswerRank once a month for the next measurement.")
 
 
+def _coming_up(store, c, now) -> list[tuple[str, str]]:
+    """One client's dated steps ahead (see dates.py), worded for the vault."""
+    from .dates import SAYS, ahead
+
+    link = f"[[{_title(c.business.name) or c.id}]]"
+    return [(d, SAYS[kind].format(who=link)) for d, kind in ahead(store, c, now)]
+
+
+def _dated(rows: list[tuple[str, str]]) -> list[str]:
+    from datetime import date
+    out = []
+    for d, text in rows:
+        try:
+            label = f"**{d}** ({date.fromisoformat(d).strftime('%a')})"
+        except ValueError:
+            label = f"**{d}**"
+        out.append(f"- {label}: {text}")
+    return out
+
+
+#: More than this and the rest are counted, not listed: the note is a glance.
+TODAY_MAX = 8
+
+
+def _today(store, settings, now) -> list[str]:
+    """The console's Today list, most urgent first, for reading in Obsidian
+    (on your phone too, if your vault syncs) without opening AnswerRank."""
+    from . import today
+
+    items = [i for i in today.next_actions(store, settings, now)["items"]
+             # The console shows sending problems in its own banner, and for
+             # pilots with no mailbox they are beside the point.
+             if i["key"] != "blocked"]
+    out = ["## Today", "", "As of the time above. The Today tab in AnswerRank is "
+           "always current.", ""]
+    out += [f"- **{i['title']}**: {i['detail']}" for i in items[:TODAY_MAX]]
+    if len(items) > TODAY_MAX:
+        out.append(f"- …and {len(items) - TODAY_MAX} more on the Today tab.")
+    if not items:
+        out.append("- Nothing needs you right now.")
+    return out + [""]
+
+
 def _week_note(store, settings, now, clients) -> tuple[str, str]:
     """This week's review as a note of its own. It's rewritten until the week
     ends and then left as it was, so the folder becomes the business's diary."""
@@ -536,8 +585,12 @@ def _week_note(store, settings, now, clients) -> tuple[str, str]:
              f"{w['won']} signed up, {w['paid']} paid",
              "- Measured: " + (", ".join(f"[[{_title(n)}]]" for n in measured) or "nobody"),
              f"- Now: {int(k['active_clients'])} client(s), "
-             f"${store.mrr():,.0f} a month coming in", "",
-             "## The funnel (last 30 days)", *funnel, "",
+             f"${store.mrr():,.0f} a month coming in", ""]
+    sunday = (monday + timedelta(days=6)).isoformat()
+    due = sorted((d, t) for c in clients for d, t in _coming_up(store, c, now) if d <= sunday)
+    if due:
+        lines += ["## Dates this week", *_dated(due), ""]
+    lines += ["## The funnel (last 30 days)", *funnel, "",
              "## The one thing to change", _week_fix(store, r, clients), ""]
     if r["upcoming"]:
         lines += ["## Booked for next week",
@@ -557,7 +610,7 @@ def live_notes(store, settings) -> dict[str, str]:
     now = datetime.now(timezone.utc)
     clients = [c for status in LIVE_STATUSES for c in store.get_clients(status)]
     notes: dict[str, str] = {}
-    index, pilots = [], []
+    index, pilots, ahead = [], [], []
     for c in clients:
         audits = store.audit_history(c.business.id, limit=24, comparable=True)
         name = _title(c.business.name) or c.id
@@ -590,6 +643,10 @@ def live_notes(store, settings) -> dict[str, str]:
             body += ["Not measured yet: the first measurement runs within the hour "
                      "while AnswerRank is open.", ""]
             score = "not yet"
+        theirs = _coming_up(store, c, now)
+        ahead += theirs
+        if theirs:
+            body += ["## Coming up", *_dated(theirs), ""]
         body += ["*Rewritten by AnswerRank each hour. Keep your own notes about them "
                  "in a separate note (the Pilot log template) that links here.*", "",
                  "Part of [[Clients]]." + (" See [[Pilots]]." if c.plan == "pilot" else "")]
@@ -611,6 +668,7 @@ def live_notes(store, settings) -> dict[str, str]:
     stages = store.count_prospects_by_stage()
     drafts = len(store.get_messages("drafted", 500))
     lines = [f"# Dashboard", "", f"Updated {now.strftime('%Y-%m-%d %H:%M')} UTC by AnswerRank.", "",
+             *_today(store, settings, now),
              "## Money",
              f"- Coming in each month: **${store.mrr():,.0f}** from "
              f"{sum(1 for c in paying if c.mrr > 0)} paying client(s)",
@@ -618,6 +676,7 @@ def live_notes(store, settings) -> dict[str, str]:
              f"- Goal: ${settings.profit_target_monthly:,.0f} a month. See [[Plan]].", "",
              f"This week so far: [[{week_name}]]", "",
              "## Pilots", *(pilots or ["- None yet. See [[Pilots]]."]), "",
+             *(["## Coming up", *_dated(sorted(ahead)), ""] if ahead else []),
              "## Waiting for you",
              f"- {drafts} email(s) in the Inbox" if drafts else "- Nothing in the Inbox", ""]
     if stages:
@@ -654,7 +713,10 @@ def build() -> dict[str, str]:
         f"{ROOT}/Dashboard.md": _placeholder(
             "Dashboard", "Your live numbers appear here once AnswerRank writes to your "
             "own vault: in Keys and settings, give it your vault's folder. It's "
-            "refreshed every hour while AnswerRank runs."),
+            "refreshed every hour while AnswerRank runs: what needs you today (the "
+            "same list as the Today tab), the money coming in, and the dates coming "
+            "up for each pilot: the next measurement, the before-and-after, the "
+            "offer and the end of the free months."),
         f"{ROOT}/Clients.md": _placeholder(
             "Clients", "A note for each client and pilot appears here once AnswerRank "
             "writes to your own vault: their scores over time, the next measurement "

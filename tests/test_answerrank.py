@@ -4271,6 +4271,36 @@ class TestThirtySalesEndToEnd(unittest.TestCase):
         from answerrank.models import now_iso
         self.assertFalse(now_iso().startswith("2030"))
 
+    def test_fixes_that_are_live_can_move_the_answers(self):
+        """The simulated engines used to answer the same way for ever, so no
+        client's score moved and "it worked" was never simulated."""
+        import datetime as dt
+        import random
+        from answerrank import simulate
+        start = dt.datetime(2030, 1, 1, tzinfo=dt.timezone.utc)
+        clock = simulate.SimClock(start)
+        world = simulate.World(clock, start, random.Random(1))
+        people = [simulate.Person(email=f"owner{i}@biz{i}.example", business=f"Biz {i}",
+                                  domain=f"biz{i}.example") for i in range(200)]
+        world.won = people
+        share = sum(world.responds(p) for p in people) / len(people)
+        self.assertTrue(0.6 <= share <= 0.8, share)
+        yes = next(p for p in people if world.responds(p))
+        no = next(p for p in people if not world.responds(p))
+        self.assertEqual(world.lift(yes.business), 0.0, "nothing installed yet")
+        yes.installed_at = no.installed_at = start
+        clock.advance(days=5)
+        self.assertEqual(world.lift(yes.business), 0.0, "too soon to show")
+        clock.advance(days=60)
+        self.assertAlmostEqual(world.lift(yes.business), 0.4)
+        self.assertEqual(world.lift(no.business), 0.0, "some never respond")
+        yes.city = "Tulsa"
+        twin = simulate.Person(email="owner@twin.example", business=yes.business,
+                               domain="twin.example", city="Waco")
+        world.won.append(twin)
+        self.assertEqual(world.lift(yes.business, "Waco"), 0.0,
+                         "a business with the same name in another town is not lifted")
+
 
 # ---------------------------------------------------------------------------
 # Payments, delivery, inbox, fulfilment, pilots, server — built after the
@@ -6974,3 +7004,171 @@ class TestThePilotEnds(_Biz):
         (item,) = self._api().pilots()
         self.assertTrue(item["ends_on"])
         self.assertIn("$997", item["offer"])
+
+
+class TestTheDatesAhead(TestNotesInYourOwnVault):
+    """A pilot has four dates to plan around: the next measurement, the
+    before-and-after, the offer and the end. They were only on the console's
+    Pilots card; the vault's Dashboard and each client's note list them."""
+
+    def _live(self):
+        from answerrank import vault
+        return vault.live_notes(self.store, self.settings)
+
+    def test_a_new_pilot_shows_every_date_ahead_soonest_first(self):
+        from answerrank import sales
+        self._pilot(days_ago=(2,))
+        client = self.store.get_clients("active")[0]
+        ends = sales.pilot_ends(client)
+        dash = self._live()["AnswerRank/Dashboard.md"]
+        ahead = dash[dash.index("## Coming up"):dash.index("## Waiting")]
+        lines = [l for l in ahead.splitlines() if l.startswith("- ")]
+        self.assertEqual(len(lines), 4, ahead)
+        self.assertEqual([l[4:14] for l in lines], sorted(l[4:14] for l in lines))
+        self.assertIn("measured again", lines[0])
+        self.assertIn("before-and-after", lines[1])
+        self.assertIn("offer", lines[2])
+        self.assertIn(ends, lines[3])
+        self.assertIn("## Coming up", self._live()["AnswerRank/Clients/Ridge Electric.md"])
+
+    def test_past_dates_drop_off_and_a_late_measurement_is_due_today(self):
+        self._pilot(days_ago=(60, 40))
+        today = datetime.now(timezone.utc).date().isoformat()
+        note = self._live()["AnswerRank/Clients/Ridge Electric.md"]
+        ahead = note[note.index("## Coming up"):]
+        self.assertIn(f"**{today}**", ahead, "measurement overdue: due now, not in the past")
+        self.assertNotIn("before-and-after is ready", ahead, "that date has passed")
+
+    def test_this_weeks_dates_are_kept_in_the_week_note(self):
+        from answerrank import vault
+        self._pilot(days_ago=(30,))
+        notes = vault.live_notes(self.store, self.settings)
+        week = next(t for p, t in notes.items() if "/Weeks/" in p)
+        self.assertIn("## Dates this week", week)
+        self.assertIn("[[Ridge Electric]] measured again", week, "overdue: due now")
+        self.assertNotIn("free pilot ends", week, "that is months away")
+
+    def test_paying_clients_show_only_their_measurement(self):
+        from answerrank import sales
+        p = self._prospect()
+        sales.sign_up(self.store, self.settings, p, "growth", send_link=False)
+        client = self.store.get_clients("awaiting_payment")[0]
+        client.status = "active"
+        self.store.upsert_client(client)
+        note = self._live()["AnswerRank/Clients/Ridge Electric.md"]
+        ahead = note[note.index("## Coming up"):note.index("*Rewritten")]
+        self.assertEqual(len([l for l in ahead.splitlines() if l.startswith("- ")]), 1)
+        self.assertIn("first measurement", ahead)
+
+
+class TestTodayInYourVault(TestNotesInYourOwnVault):
+    """The console's Today list, on the vault's Dashboard."""
+
+    def test_what_needs_you_is_listed_and_sending_problems_are_not(self):
+        from answerrank import vault
+        self.settings.physical_address = ""   # would block cold sending
+        p = self._prospect(stage="replied")
+        self.store.record_outcome(prospect_id=p.id, vertical="electrical", kind="replied",
+                                  sentiment="ready_to_buy", note="let's do it")
+        self.store.save_message(OutreachMessage(prospect_id=p.id, subject="Re", body="x",
+                                                kind="reply", status="drafted"))
+        dash = vault.live_notes(self.store, self.settings)["AnswerRank/Dashboard.md"]
+        today = dash[dash.index("## Today"):dash.index("## Money")]
+        self.assertNotIn("Sending is blocked", today)
+        self.assertIn("Ridge Electric", today, "someone ready to buy is at the top")
+
+    def test_an_empty_day_says_so(self):
+        from answerrank import vault
+        dash = vault.live_notes(self.store, self.settings)["AnswerRank/Dashboard.md"]
+        self.assertIn("- Nothing needs you right now.", dash)
+
+
+class TestPilotDatesOnYourCalendar(TestNotesInYourOwnVault):
+    """Pilots are measured only while AnswerRank is open. A calendar file
+    puts each pilot's dates on your phone, with a reminder on the morning."""
+
+    def _cal(self):
+        from answerrank import dates
+        return dates.calendar(self.store)
+
+    def test_each_date_with_a_morning_reminder(self):
+        from answerrank import sales
+        self._pilot(days_ago=(2,))
+        ends = sales.pilot_ends(self.store.get_clients("active")[0]).replace("-", "")
+        cal = self._cal()
+        self.assertTrue(cal.startswith("BEGIN:VCALENDAR\r\n"))
+        self.assertTrue(cal.endswith("END:VCALENDAR\r\n"))
+        self.assertEqual(cal.count("BEGIN:VEVENT"), 4)
+        self.assertEqual(cal.count("TRIGGER:PT9H"), 4)
+        self.assertIn(f"DTSTART;VALUE=DATE:{ends}", cal)
+        self.assertIn("SUMMARY:AnswerRank: send Ridge Electric their offer", cal)
+        self.assertNotIn("**", cal)
+        self.assertTrue(all(len(line.encode()) <= 75 for line in cal.split("\r\n")))
+
+    def test_paying_clients_are_left_out(self):
+        from answerrank import sales
+        p = self._prospect()
+        sales.sign_up(self.store, self.settings, p, "growth", send_link=False)
+        client = self.store.get_clients("awaiting_payment")[0]
+        client.status = "active"
+        self.store.upsert_client(client)
+        self.assertNotIn("BEGIN:VEVENT", self._cal())
+
+    def test_long_lines_fold_without_splitting_a_letter(self):
+        from answerrank import dates
+        line = "SUMMARY:" + "Café Électricité " * 8
+        folded = dates._fold(line)
+        self.assertTrue(all(len(part.encode()) <= 75 for part in folded))
+        self.assertEqual(folded[0] + "".join(part[1:] for part in folded[1:]), line)
+
+    def test_the_console_serves_it_behind_the_login(self):
+        from web.app import Application
+        self._pilot(days_ago=(2,))
+        app = Application(self.settings, self.store)
+
+        def get(path, token=app.token):
+            got = {}
+            env = {"PATH_INFO": path, "REQUEST_METHOD": "GET", "QUERY_STRING": "",
+                   "wsgi.input": io.BytesIO(b"")}
+            if token:
+                env["HTTP_X_AUTH_TOKEN"] = token
+            body = b"".join(app(env, lambda s, h, e=None: got.update(status=s, headers=dict(h))))
+            return got["status"], got["headers"], body
+        status, headers, body = get("/files/dates/answerrank-pilots.ics")
+        self.assertTrue(status.startswith("200"), status)
+        self.assertTrue(headers["Content-Type"].startswith("text/calendar"))
+        self.assertIn(b"BEGIN:VEVENT", body)
+        status, _h, _b = get("/files/dates/answerrank-pilots.ics", token="")
+        self.assertTrue(status.startswith("401"))
+        self.assertIn("/files/dates/answerrank-pilots.ics", json.dumps(self._api().state()))
+
+
+class TestAddSeveralAtOnce(_Biz):
+    """The Pilot Kit scores businesses you know; each one then had to be typed
+    into AnswerRank again by hand. Its "Copy for AnswerRank" lines paste in."""
+
+    KIT = ("# From the Pilot Kit\n"
+           "Harbor Line Plumbing | plumbing | Tulsa, OK | Said yes\n"
+           "Sunward Roofing | Roofing contractor | Owasso, OK | Said yes | dana@sunward.example\n"
+           "Mystery Co | astrology | Tulsa, OK\n"
+           "No Town Ltd | plumbing |\n")
+
+    def test_lines_from_the_kit_become_pilots(self):
+        r = self._api().add_many(self.KIT, pilots=True)
+        self.assertEqual(r["added"], ["Harbor Line Plumbing", "Sunward Roofing"])
+        self.assertEqual(r["signed"], ["Harbor Line Plumbing", "Sunward Roofing"])
+        self.assertEqual(len(r["skipped"]), 2, "an unknown trade and a missing town")
+        pilots = {c.business.name: c for c in self.store.get_clients("active") if c.plan == "pilot"}
+        self.assertEqual(set(pilots), {"Harbor Line Plumbing", "Sunward Roofing"})
+        self.assertEqual(pilots["Sunward Roofing"].business.vertical, "roofing",
+                         "the trade's label is understood as well as its key")
+        self.assertEqual((pilots["Harbor Line Plumbing"].business.city,
+                          pilots["Harbor Line Plumbing"].business.state), ("Tulsa", "OK"))
+
+    def test_pipeline_only_and_no_duplicates(self):
+        self._api().add_many("Harbor Line Plumbing | plumbing | Tulsa, OK", pilots=False)
+        self.assertEqual(self.store.get_clients("active"), [])
+        again = self._api().add_many("Harbor Line Plumbing | plumbing | Tulsa, OK", pilots=False)
+        names = [p.business.name for p in self.store.get_prospects(limit=50)]
+        self.assertEqual(names.count("Harbor Line Plumbing"), 1)
+        self.assertEqual(again["added"], ["Harbor Line Plumbing"], "found, not added twice")
