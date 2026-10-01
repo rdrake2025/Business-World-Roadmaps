@@ -237,6 +237,7 @@ class Person:
     email: str
     business: str
     domain: str
+    city: str = ""
     persona: str = ""                 #: assigned the first time they hear from us
     reply_on_touch: int = 1
     plan: str = "growth"
@@ -334,6 +335,34 @@ class World:
 
     def day(self) -> int:
         return self.clock.day(self.start)
+
+    #: Share of clients whose answers respond once their fixes are live. Not
+    #: all do: a crowded market or a thin site can hold a business back
+    #: whatever its markup says, and the case study must say so honestly.
+    RESPONDS = 0.7
+
+    def responds(self, p: Person) -> bool:
+        """Fixed per client, without drawing on ``rng``: an extra draw would
+        shift every random event after it and change the whole run."""
+        import hashlib
+        return int(hashlib.sha256(p.email.encode()).hexdigest()[:8], 16) % 100 \
+            < self.RESPONDS * 100
+
+    def lift(self, business: str, city: str = "") -> float:
+        """How much more often the answer engines name this business. Until
+        this the simulated engines never changed their answers, so no client's
+        score ever moved and the path the business sells (fixes go live, the
+        score rises, the before-and-after says so) was never run at all.
+
+        Matched on name and town: two clients can share a name."""
+        best = 0.0
+        for p in self.won:
+            if p.business != business or (city and p.city and p.city != city) \
+                    or not p.installed_at or not self.responds(p):
+                continue
+            days = (self.clock.now - p.installed_at).days
+            best = max(best, 0.4 * min(1.0, max(0.0, (days - 10) / 42)))
+        return best
 
     def issue(self, kind: str, who: str, detail: str) -> None:
         self.issues.append(Issue(self.day(), kind, who, detail))
@@ -774,7 +803,7 @@ def _seed_businesses(world: World, n: int, verticals: list[str], path: Path) -> 
         platform = rng.choices(["wordpress", "wix", "squarespace", "godaddy", "unknown"],
                                weights=[45, 20, 15, 10, 10])[0]
         world.people[email] = Person(email=email, business=name, domain=domain,
-                                     platform=platform)
+                                     city=city, platform=platform)
         world.sites[domain] = site_html(platform)
     with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=list(rows[0]))
@@ -885,6 +914,22 @@ def run(sales: int = 30, days: int = 100, seed: int = 7,
                     (SenderAgent, "_dns_blockers", lambda self: []),
                     (SenderAgent, "_unsub_blockers", lambda self: []),
                     (mailer.SMTPConfig, "configured", lambda self: True)]
+    # The answer engines respond to fixes that are live, as real ones are
+    # meant to, for most clients and not all of them.
+    from . import audit as audit_module
+    from .engines.mock import MockEngine
+    real_build = audit_module.build_engines
+
+    def _build_engines(names, business_name="", vertical="default", timeout=60,
+                       city="", state=""):
+        engines = real_build(names, business_name, vertical, timeout, city=city, state=state)
+        lift = world.lift(business_name, city)
+        for engine in engines:
+            if isinstance(engine, MockEngine):
+                engine.visibility = min(0.95, engine.visibility + lift)
+        return engines
+
+    patches.append((audit_module, "build_engines", _build_engines))
     originals = [(obj, name, getattr(obj, name)) for obj, name, _ in patches]
     for obj, name, value in patches:
         setattr(obj, name, value)
@@ -1112,7 +1157,10 @@ def _scorecard(world: World, store, settings, sales: int, days: int,
 
     # Fixes: installed ones should be seen; stuck ones should be flagged.
     from .agents.retention import RetentionAgent
-    health_by_name = {h.name: h for h in RetentionAgent(store, settings).portfolio()}
+    # By client, not by name: two clients can share a name, and keyed by name
+    # one hid the other (the bands counted 22 clients of 24).
+    health = RetentionAgent(store, settings).portfolio()
+    health_by_id = {h.client_id: h for h in health}
     fixes_live = fixes_unseen = stuck_unflagged = 0
     for p in staying:
         client = client_of.get(p.email)
@@ -1124,9 +1172,48 @@ def _scorecard(world: World, store, settings, sales: int, days: int,
             fixes_unseen += not seen_live
         live_days = (world.clock.now - p.paid_at).days
         if not p.installed_at and live_days > 24:
-            h = health_by_name.get(p.business)
+            h = health_by_id.get(client.id) if client else None
             if h and not any("not live" in sig for sig in h.signals):
                 stuck_unflagged += 1
+
+    # Results: where the fixes worked and the rise is beyond the margin of
+    # error, Retention and the before-and-after must both say so (it is the
+    # renewal argument and the next sale). A real rise still inside the
+    # margin is counted, not failed: with ten questions one or two more named
+    # answers can't be told from chance, and saying so is the honest call.
+    # Neither may ever claim a result the world didn't have.
+    from . import casestudy
+    rose = rose_unseen = rose_unproven = 0
+    unseen_why: list[str] = []
+    verdicts: Counter[str] = Counter()
+    false_claims = []
+    for p in staying:
+        client = client_of.get(p.email)
+        if not client:
+            continue
+        ev = casestudy.evidence(store, client)
+        worked = bool(p.installed_at) and world.responds(p)
+        if ev.verdict != "too_early":
+            verdicts[ev.verdict] += 1
+            if ev.verdict == "moved" and not worked:
+                false_claims.append(p.business)
+        history = store.audit_history(client.business.id, limit=1, comparable=True)
+        if not worked or ev.audits < 2 or not history:
+            continue
+        latest = _dt_module.datetime.fromisoformat(history[0].created_at.replace("Z", "+00:00"))
+        if latest < p.installed_at + timedelta(days=40):
+            continue  # not measured since most of the lift came through
+        rose += 1
+        if ev.verdict != "moved":
+            rose_unproven += 1
+            continue
+        h = health_by_id.get(client.id)
+        if not h or not any("Visibility up" in sig for sig in h.signals):
+            rose_unseen += 1
+            said = next((sig for sig in (h.signals if h else []) if "Visibility" in sig),
+                        f"no health row (status {client.status})" if not h else "nothing")
+            unseen_why.append(f"{p.business}: before-and-after {ev.score_before:.0f} → "
+                              f"{ev.score_after:.0f} over {ev.audits} audits; Retention: {said}")
 
     # Onboarding, delivery, reporting — for clients who paid.
     welcomes = Counter(p.email for p in paid for d in p.received if d.kind == "welcome")
@@ -1148,7 +1235,6 @@ def _scorecard(world: World, store, settings, sales: int, days: int,
                if stage_of.get(p.prospect_id) not in {"won", None}]
 
     # Retention: false alarms on clients who are plainly talking to us.
-    health = list(health_by_name.values())
     engaged = {p.business for p in world.won if p.stage == "client_engaged"}
     false_alarms = [h.name for h in health
                     if h.name in engaged and any("No contact on record" in s
@@ -1198,6 +1284,12 @@ def _scorecard(world: World, store, settings, sales: int, days: int,
         "fixes_unseen": fixes_unseen,
         "installs_never": sum(1 for p in paid if not p.installed_at),
         "stuck_installs_unflagged": stuck_unflagged,
+        "results_rose": rose,
+        "results_unseen": rose_unseen,
+        "results_unproven": rose_unproven,
+        "results_unseen_why": unseen_why,
+        "case_verdicts": dict(verdicts),
+        "case_false_claims": false_claims,
         "broken_files": world.broken_files,
         "revenue_billed": round(sum(revenue_by_client.values()), 2),
         "double_billed": double_billed,
@@ -1273,6 +1365,17 @@ def render(card: dict[str, Any]) -> str:
     add(f"  {ok(not card['stuck_installs_unflagged'])} Clients stuck at the install step "
         f"that Retention did not flag: {card['stuck_installs_unflagged']} "
         f"(of {card['installs_never']} who never installed)")
+    proven = card["results_rose"] - card["results_unproven"]
+    add(f"  {ok(not card['results_unseen'])} Results: {card['results_rose']} clients named "
+        f"more often after their fixes went live; {proven} beyond the margin of error, "
+        f"reported by Retention for {proven - card['results_unseen']}; "
+        f"{card['results_unproven']} still inside it, so not claimed yet")
+    for line in card.get("results_unseen_why", [])[:4]:
+        add(f"      {line}")
+    v = card.get("case_verdicts", {})
+    add(f"  {ok(not card['case_false_claims'])} Before-and-after: {v.get('moved', 0)} worth "
+        f"publishing, {v.get('flat', 0) + v.get('worse', 0)} marked do not publish; "
+        f"{len(card['case_false_claims'])} claimed a result that wasn't there")
     add(f"  {ok(not card['clients_demoted_in_pipeline'])} Paying clients shown as "
         f"something else in the pipeline: {len(card['clients_demoted_in_pipeline'])}")
     add(f"  {ok(not card['retention_false_alarms'])} Retention false alarms on clients "
@@ -1329,7 +1432,8 @@ def render(card: dict[str, Any]) -> str:
         add(f"  Scratch files: {card['work_dir']}")
     add("\n  The replies were made up and the answer engines were simulated. This")
     add("  shows whether the software handles a sale end to end, not whether a")
-    add("  real market will buy.")
+    add("  real market will buy. Seven in ten clients' answers were set to improve")
+    add("  once their fixes were live: whether real ones do is what pilots prove.")
     return "\n".join(lines)
 
 
@@ -1361,4 +1465,6 @@ def passed(card: dict[str, Any]) -> bool:
             and not card["reminder_problems"] and not card["overdue_unflagged"]
             and not card["report_gaps"] and not card["fixes_unseen"]
             and not card["broken_files"] and not card["stuck_installs_unflagged"]
+            and not card.get("results_unseen")
+            and not card.get("case_false_claims")
             and not (set(card["issues"]) - tolerated))

@@ -41,6 +41,12 @@ ones. The latest run:
 - 8 buyers paid straight from their report without writing back.
 - Cancellations: 4 clients asked to cancel; each got the billing link, was
   cancelled in Stripe, and was taken off the books.
+- Results: seven in ten clients' answers were set to improve once their
+  fixes were live. Every rise beyond the margin of error was reported, by
+  Retention and by the before-and-after; the one too small to prove was
+  called that; no before-and-after claimed a result that wasn't there.
+  Clients whose answers didn't move, or whose fixes never went live, were
+  the ones put in "act now" (11 of 24), not everyone.
 
 That proves the software can run a sale without you. It doesn't prove the
 market will buy: real reply rates decide that.

@@ -4271,6 +4271,36 @@ class TestThirtySalesEndToEnd(unittest.TestCase):
         from answerrank.models import now_iso
         self.assertFalse(now_iso().startswith("2030"))
 
+    def test_fixes_that_are_live_can_move_the_answers(self):
+        """The simulated engines used to answer the same way for ever, so no
+        client's score moved and "it worked" was never simulated."""
+        import datetime as dt
+        import random
+        from answerrank import simulate
+        start = dt.datetime(2030, 1, 1, tzinfo=dt.timezone.utc)
+        clock = simulate.SimClock(start)
+        world = simulate.World(clock, start, random.Random(1))
+        people = [simulate.Person(email=f"owner{i}@biz{i}.example", business=f"Biz {i}",
+                                  domain=f"biz{i}.example") for i in range(200)]
+        world.won = people
+        share = sum(world.responds(p) for p in people) / len(people)
+        self.assertTrue(0.6 <= share <= 0.8, share)
+        yes = next(p for p in people if world.responds(p))
+        no = next(p for p in people if not world.responds(p))
+        self.assertEqual(world.lift(yes.business), 0.0, "nothing installed yet")
+        yes.installed_at = no.installed_at = start
+        clock.advance(days=5)
+        self.assertEqual(world.lift(yes.business), 0.0, "too soon to show")
+        clock.advance(days=60)
+        self.assertAlmostEqual(world.lift(yes.business), 0.4)
+        self.assertEqual(world.lift(no.business), 0.0, "some never respond")
+        yes.city = "Tulsa"
+        twin = simulate.Person(email="owner@twin.example", business=yes.business,
+                               domain="twin.example", city="Waco")
+        world.won.append(twin)
+        self.assertEqual(world.lift(yes.business, "Waco"), 0.0,
+                         "a business with the same name in another town is not lifted")
+
 
 # ---------------------------------------------------------------------------
 # Payments, delivery, inbox, fulfilment, pilots, server — built after the
