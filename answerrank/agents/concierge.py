@@ -183,7 +183,7 @@ def report_email(prospect: Prospect, audit, settings,
             f"revenue. {risk['assumption']}")
     if levers:
         paragraphs.append("The three fixes that move it fastest:\n" + "\n".join(
-            f"{i}. {lever.name} — {lever.why}" for i, lever in enumerate(levers, 1)))
+            f"{i}. {lever.name.rstrip('.')}. {lever.why}" for i, lever in enumerate(levers, 1)))
     link = start_link(settings, prospect)
     paragraphs += [
         f"You can take that list and do it yourself; it's yours either way. If "
@@ -194,7 +194,7 @@ def report_email(prospect: Prospect, audit, settings,
         booking_line(settings) if offer_call else "",
         f"{settings.brand}\n{settings.website}",
     ]
-    subject = f"Your AI visibility report — {biz.name[:30]}"
+    subject = f"Your AI visibility report for {playbook.short_name(biz.name, 30)}"
     return subject, _body(*paragraphs) + _compliance_block(settings)
 
 
@@ -226,18 +226,18 @@ def draft_response(intent: str, prospect: Prospect, settings,
     if intent == "ready_to_buy":
         # With a payment link configured, the close carries it: the fewer
         # steps between "yes" and paid, the fewer yeses go cold.
-        how = (f"Here's the link to set it up — ${price:,.0f}/month, renews "
-               f"monthly, cancel any time:\n{payment_link}"
+        how = (f"Here's the link to set it up. It's ${price:,.0f} a month, renews "
+               f"monthly, and you can cancel any time:\n{payment_link}"
                if payment_link else
                f"It's ${price:,.0f}/month, billed monthly, no long contract, cancel "
                f"any time. I'll send the invoice over today.")
         return ("close_sale", _body(
             "Hi,",
-            f"Great — glad to have {biz.name} on board.",
+            f"Great, I'm glad to have {biz.name} on board.",
             how,
-            "As soon as that's settled you'll get a short welcome note with the two "
-            "things I need from you — about ten minutes of your time — and "
-            "I start on the fixes from the report straight away.",
+            "As soon as that's settled, you'll get a short welcome note with the two "
+            "things I need from you (about ten minutes of your time), and I'll "
+            "start on the fixes from the report straight away.",
             brand))
 
     if intent == "client_message":
@@ -299,7 +299,7 @@ def draft_response(intent: str, prospect: Prospect, settings,
     if intent == "referral":
         return ("forward_to_contact", _body(
             "Hi,",
-            "Of course — happy to send it to them directly. What's the best address?",
+            "Of course, I'm happy to send it to them directly. What's the best address?",
             "Worth saying: this usually isn't something their existing work covers. A "
             "site can rank first in local search and still be absent from the AI "
             "answer, because assistants build answers from structured data rather "

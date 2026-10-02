@@ -829,7 +829,7 @@ def revenue_at_risk(vertical: str, missed_answers: int, total_answers: int,
             f"new customers arriving via search, {int(econ.ai_answer_share * 100)}% "
             f"of those resolving to an AI answer, and a "
             f"{econ.booking_rate * 100:.1f}% booking rate. Every step is set low on "
-            f"purpose — the real figure is likely higher."
+            f"purpose, so the real figure is likely higher."
         ),
     }
 

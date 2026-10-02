@@ -7389,6 +7389,33 @@ class TestWhatTheCreditCovers(_Biz):
         self.assertEqual(sales.pilot_budget(self.store, self.settings)["line"], "")
 
 
+class TestNamesInSubjectLines(unittest.TestCase):
+    """Subjects sliced the name at a fixed length: owners saw their own
+    business as "Riverbend Animal Hospita" or "Cornerstone Heating & :"."""
+
+    def test_whole_words_and_no_dangling_ampersand(self):
+        from answerrank.playbook import short_name
+        self.assertEqual(short_name("Riverbend Animal Hospital"), "Riverbend Animal Hospital")
+        self.assertEqual(short_name("Cornerstone Heating & Air Conditioning", 28), "Cornerstone Heating & Air")
+        self.assertEqual(short_name("Summit Plumbing and Drain Co, LLC", 28), "Summit Plumbing and Drain Co")
+        self.assertEqual(short_name("Hollister Family Dental and Orthodontics", 28), "Hollister Family Dental")
+        self.assertEqual(short_name("Supercalifragilisticexpialidociouscleaning", 20), "Supercalifragilistic")
+        for name in ("Lakeside Heating & Air of Greater Tulsa", "The Best of the West Roofing Co"):
+            out = short_name(name, 24)
+            self.assertLessEqual(len(out), 24)
+            self.assertNotIn(out.split()[-1].lower(), {"&", "and", "of", "the"})
+            self.assertTrue(name.startswith(out))
+
+    def test_every_subject_keeps_the_name_whole(self):
+        from answerrank.agents.outreach import subject_line
+        name = "Riverbend Animal Hospital & Emergency Care"
+        for subject in (subject_line(name, "Tulsa", 3, 4), subject_line("Cornerstone Heating & Air", "Tulsa", 4, 4)):
+            head = subject.split(":")[0].replace(" is missing from AI search", "")
+            self.assertTrue((name + " ").startswith(head + " ") or "Cornerstone Heating & Air".startswith(head), subject)
+            self.assertNotIn("\u2026", subject)
+            self.assertNotIn("\u2014", subject)
+
+
 class TestAddSeveralAtOnce(_Biz):
     """The Pilot Kit scores businesses you know; each one then had to be typed
     into AnswerRank again by hand. Its "Copy for AnswerRank" lines paste in."""

@@ -247,7 +247,7 @@ def monthly_email(client, audit: Audit, previous: Audit | None, deliverables,
     paragraphs += ["Questions about any of it? Just reply.",
                    f"Invoices, card details and cancellation: {portal}" if portal else "",
                    f"{settings.brand}\n{settings.website}"]
-    subject = f"{when} report — {biz.name[:30]}: named in {shown} of {n}"
+    subject = f"Your {when} report for {playbook.short_name(biz.name, 30)}: named in {shown} of {n}"
     body = playbook.email_body(*paragraphs)
     # The files go after the wrapped text, untouched. Wrapped with the rest
     # at 74 columns, a line break lands inside a JSON string, the file stops
