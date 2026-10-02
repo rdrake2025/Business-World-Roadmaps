@@ -124,11 +124,11 @@ def payment_email(prospect: Prospect, client: Client, settings, reminder: bool =
                     prospect.business.email)
     price = f"${client.mrr:,.0f}/month"
     if reminder:
-        subject = f"Getting {prospect.business.name[:28]} started"
-        opening = ("Just making sure the payment link reached you — nothing starts "
+        subject = f"Getting {playbook.short_name(prospect.business.name, 28)} started"
+        opening = ("Just making sure the payment link reached you. Nothing starts "
                    "until it's set up, and I'd rather not lose the week.")
     else:
-        subject = f"Your link to start — {prospect.business.name[:28]}"
+        subject = f"Your link to get {playbook.short_name(prospect.business.name, 28)} started"
         opening = f"Great to have {prospect.business.name} on board."
     body = playbook.email_body(
         "Hi,",

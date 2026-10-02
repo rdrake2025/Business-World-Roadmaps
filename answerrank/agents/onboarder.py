@@ -99,7 +99,7 @@ def welcome_email(client, audit, settings) -> tuple[str, str]:
             "Any questions, just reply.",
             f"{settings.brand}\n{settings.website}".strip())
         return ("Your free pilot: here's what happens next" if pilot
-                else "You're in — here's what happens next"), body
+                else "You're in: here's what happens next"), body
 
     body = playbook.email_body(
         f"Hi,",
@@ -127,7 +127,7 @@ def welcome_email(client, audit, settings) -> tuple[str, str]:
         f"Any questions, just reply. I read everything.",
         f"{settings.brand}\n{settings.website}")
 
-    return f"You're in — here's what happens next", body
+    return f"You're in: here's what happens next", body
 
 
 class OnboarderAgent(Agent):

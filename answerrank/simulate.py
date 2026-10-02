@@ -281,7 +281,7 @@ def classify_outbound(subject: str, body: str) -> str:
         return "report"
     if s.startswith(("You're in", "Your free pilot")):
         return "welcome"
-    if re.match(r"^[A-Z][a-z]+ report \u2014 ", s):
+    if re.match(r"^Your [A-Z][a-z]+ report for ", s):
         return "client_report"
     if "buy.stripe.com" in b and s.startswith("Getting "):
         return "payment_reminder"

@@ -374,6 +374,35 @@ def value_proposition(vertical: str, monthly_price: float, brand: str) -> str:
     )
 
 
+#: Endings dropped first when a name is too long for a subject line.
+_LEGAL = re.compile(r",?\s+(llc|l\.l\.c\.|inc\.?|incorporated|co\.?|company|corp\.?|ltd\.?)$", re.I)
+#: Words a shortened name must never end on.
+_DANGLING = {"&", "and", "of", "the", "-", "\u2013", "\u2014", "+", "at", "in", "for", "/"}
+
+
+def short_name(name: str, limit: int = 28) -> str:
+    """A business name that fits a subject line and still reads as a name.
+
+    Subjects used to slice the name at a fixed length, so owners saw their
+    own business as "Riverbend Animal Hospita" or "Cornerstone Heating & :".
+    Nothing makes a cold email look more like a mail merge. Now "LLC" and
+    "Inc" go first, then whole words from the end, never stopping on "&".
+    """
+    name = " ".join(str(name or "").split())
+    if len(name) <= limit:
+        return name
+    name = _LEGAL.sub("", name).rstrip(" ,")
+    if len(name) <= limit:
+        return name
+    words = name.split(" ")
+    while len(words) > 1 and (len(" ".join(words)) > limit or words[-1].lower() in _DANGLING):
+        words.pop()
+    while len(words) > 1 and words[-1].lower().rstrip(",") in _DANGLING:
+        words.pop()
+    out = " ".join(words).rstrip(" ,")
+    return out if len(out) <= limit else out[:limit].rstrip()
+
+
 # ---------------------------------------------------------------------------
 # Follow-up discipline
 # ---------------------------------------------------------------------------

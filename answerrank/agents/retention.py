@@ -59,7 +59,7 @@ def care_email(client, health: "Health", check: dict | None, settings) -> tuple[
     if client.status == "past_due":
         if not portal:
             return None
-        return ("card", f"Your card didn't go through — {biz.name[:30]}", playbook.email_body(
+        return ("card", f"The card for {playbook.short_name(biz.name, 30)} didn't go through", playbook.email_body(
             "Hi,",
             "Your last payment didn't go through; usually it's just an expired card. "
             "You can update it here in a minute, and nothing else changes:",
@@ -67,7 +67,7 @@ def care_email(client, health: "Health", check: dict | None, settings) -> tuple[
     if "still not live" in signals:
         platform = (check or {}).get("platform", "unknown")
         where = PLATFORM_LABEL.get(platform, "your website")
-        return ("install", f"The one step left for {biz.name[:30]}", playbook.email_body(
+        return ("install", f"The one step left for {playbook.short_name(biz.name, 30)}", playbook.email_body(
             "Hi,",
             f"Your fixes are written, but they aren't on your site yet, so the AI "
             f"assistants can't see them. It's the one step between you and the "
@@ -79,13 +79,13 @@ def care_email(client, health: "Health", check: dict | None, settings) -> tuple[
             "they need is in the report. Reply if you get stuck and I'll help.",
             sign))
     if "silence" in signals or "No contact on record" in signals:
-        return ("check_in", f"Quick question about {biz.name[:30]}", playbook.email_body(
+        return ("check_in", f"Quick question about {playbook.short_name(biz.name, 30)}", playbook.email_body(
             "Hi,",
             "Quick one: is the monthly report useful as it is, or is there something "
             "you'd rather see in it? One line back is plenty.",
             sign))
     if "Visibility up" in signals and "Say this in the next report" in signals:
-        return ("referral", f"{biz.name[:30]} is getting named more", playbook.email_body(
+        return ("referral", f"{playbook.short_name(biz.name, 30)} is getting named more", playbook.email_body(
             "Hi,",
             "Your AI visibility is up since you started, and it's the kind of "
             "change that compounds.",

@@ -53,10 +53,10 @@ def subject_line(business: str, city: str, missed: int, total: int) -> str:
     these are read. The business's own name goes first so the truncation, if
     any, never costs the one word that proves this is not a blast.
     """
-    name = business if len(business) <= 22 else business[:21].rstrip() + "\u2026"
+    name = playbook.short_name(business, 28)
     candidates = [
         f"{name}: {missed} of {total} AI answers missed",
-        f"{name} \u2014 missing from AI search",
+        f"{name} is missing from AI search",
         f"{name} and AI search in {city}",
         f"{name}: invisible to AI search",
     ]
@@ -98,9 +98,9 @@ def first_touch(prospect: Prospect, settings, audit=None) -> tuple[str, str]:
 
     subject = subject_line(biz.name, biz.city, missed, total)
     if blocks_engines:
-        subject = f"{biz.name[:26]}: your site blocks AI search"
+        subject = f"{playbook.short_name(biz.name, 28)}: your site blocks AI search"
     elif score >= 40:
-        subject = f"{biz.name[:22]}: a gap in AI search"
+        subject = f"{playbook.short_name(biz.name, 28)}: a gap in AI search"
 
     evidence = note.split(" | ")[0] if note else (
         f"{biz.name} appears in very few AI answers for "
@@ -118,7 +118,7 @@ def first_touch(prospect: Prospect, settings, audit=None) -> tuple[str, str]:
         return subject, playbook.email_body(
             "Hi,",
             evidence,
-            "I check this for a living and it is almost always unintentional \u2014 a "
+            "I check this for a living, and it is almost always unintentional. A "
             "plugin or a previous agency adds the rule to block scrapers, and the "
             "same line removes the business from the answers its customers read.",
             f"You can confirm it yourself: open {biz.website.rstrip('/')}/robots.txt "
@@ -173,22 +173,21 @@ def followup(prospect: Prospect, step: int, settings) -> tuple[str, str]:
             "data and corroborating sources rather than from the results page.",
             "That's why your existing SEO spend didn't stop it.",
             evidence,
-            'Happy to send the one-page report \u2014 no charge, no call. Just reply "yes".',
+            'I\'m happy to send the one-page report, with no charge and no call. Just reply "yes".',
             settings.brand)
     elif step == 3:
-        subject = f"Closing the loop \u2014 {biz.name[:24]}"
+        subject = f"Closing the loop with {playbook.short_name(biz.name, 28)}"
         body = playbook.email_body(
             "Hi,",
             "Last note from me on this.",
             f"If AI search visibility isn't a priority for {biz.name} right now, "
             f"that's a fair call and I'll leave you alone.",
-            f"If it becomes one \u2014 the run-up to {v.peak_label()} is when it costs "
-            f"the most \u2014 reply any time and I'll run a fresh check for "
-            f"{biz.market}.",
+            f"If it becomes one, reply any time and I'll run a fresh check for "
+            f"{biz.market}. The run-up to {v.peak_label()} is when it costs the most.",
             "Either way, good luck this season.",
             f"{settings.brand}\n{settings.website}")
     else:
-        subject = f"One last thing \u2014 {biz.name[:24]}"
+        subject = f"One last thing for {playbook.short_name(biz.name, 28)}"
         risk = knowledge.revenue_at_risk(biz.vertical, 7, 10)
         body = playbook.email_body(
             "Hi,",
@@ -197,7 +196,7 @@ def followup(prospect: Prospect, step: int, settings) -> tuple[str, str]:
             f"roughly seven in ten AI answers loses on the order of "
             f"${float(risk['annual_revenue']):,.0f} a year in first-job revenue. That "
             f"is built on ${v.economics.avg_ticket:,.0f} tickets and a deliberately "
-            f"low booking rate, so check it against your own books \u2014 it costs you "
+            f"low booking rate, so check it against your own books. It costs you "
             f"nothing to know the figure either way.",
             f"If you ever want the detail behind it for {biz.name}, reply any time.",
             settings.brand)
