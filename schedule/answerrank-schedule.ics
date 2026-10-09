@@ -1,17 +1,17 @@
 BEGIN:VCALENDAR
 VERSION:2.0
-PRODID:-//AnswerRank//Operator Schedule//EN
+PRODID:-//Riley//Operator Schedule//EN
 CALSCALE:GREGORIAN
 METHOD:PUBLISH
-X-WR-CALNAME:AnswerRank - Business Schedule
+X-WR-CALNAME:Riley - Business Schedule
 X-WR-CALDESC:Daily operating rhythm and 30-day launch plan.
 BEGIN:VEVENT
 UID:3e6d1b4c696bde30b777@answerrank.local
-DTSTAMP:20260919T051854Z
+DTSTAMP:20260923T145418Z
 DTSTART:20260926T090000
 DTEND:20260926T110000
 SUMMARY:LAUNCH 1: Install and prove it works
-CATEGORIES:AnswerRank Launch
+CATEGORIES:Riley Launch
 DESCRIPTION:Nothing costs money today.\n\n1. git clone the repo onto your l
  aptop\n2. pip install -r requirements.txt\n3. python3 -m unittest discover
   -s tests     (expect 43 passing)\n4. python3 run.py tick --force         
@@ -30,11 +30,11 @@ END:VALARM
 END:VEVENT
 BEGIN:VEVENT
 UID:e1ef534046ced6dc0c97@answerrank.local
-DTSTAMP:20260919T051854Z
+DTSTAMP:20260923T145418Z
 DTSTART:20260926T130000
 DTEND:20260926T143000
 SUMMARY:LAUNCH 2: Pick your vertical and market
-CATEGORIES:AnswerRank Launch
+CATEGORIES:Riley Launch
 DESCRIPTION:Decide\, then commit. Specificity is what makes the email land.
  \n\nPick ONE vertical: hvac\, plumbing\, roofing\, dental\, or legal.\nPic
  k 2-3 metros. Mid-size beats huge - less competition\, same budgets.\n\nSu
@@ -51,11 +51,11 @@ END:VALARM
 END:VEVENT
 BEGIN:VEVENT
 UID:b7335169ae5fa3ca703c@answerrank.local
-DTSTAMP:20260919T051854Z
+DTSTAMP:20260923T145418Z
 DTSTART:20260928T180000
 DTEND:20260928T184500
 SUMMARY:LAUNCH 3: Buy the sending domain ($12)
-CATEGORIES:AnswerRank Launch
+CATEGORIES:Riley Launch
 DESCRIPTION:First money spent. Twelve dollars.\n\n1. Buy a SEPARATE sending
   domain - never your main one.\n   If it burns\, your real domain and clie
  nt email survive.\n   Pattern: <brand>-mail.com\, get<brand>.com\, <brand>
@@ -70,11 +70,11 @@ END:VALARM
 END:VEVENT
 BEGIN:VEVENT
 UID:290ac7f8976849bf7010@answerrank.local
-DTSTAMP:20260919T051854Z
+DTSTAMP:20260923T145418Z
 DTSTART:20260929T180000
 DTEND:20260929T190000
 SUMMARY:LAUNCH 4: DNS - SPF\, DKIM\, DMARC
-CATEGORIES:AnswerRank Launch
+CATEGORIES:Riley Launch
 DESCRIPTION:The most important hour of the whole launch.\n\nIn your domain'
  s DNS:\n  SPF    TXT  @         v=spf1 include:_spf.google.com ~all\n  DKI
  M   TXT  (Google Admin generates this - enable it and paste)\n  DMARC  TXT
@@ -92,11 +92,11 @@ END:VALARM
 END:VEVENT
 BEGIN:VEVENT
 UID:6311c1202eff1c136dc6@answerrank.local
-DTSTAMP:20260919T051854Z
+DTSTAMP:20260923T145418Z
 DTSTART:20260930T180000
 DTEND:20260930T184500
 SUMMARY:LAUNCH 5: API keys + first real audits
-CATEGORIES:AnswerRank Launch
+CATEGORIES:Riley Launch
 DESCRIPTION:Put $15 of credit on the APIs. It goes further than you expect 
  -\na full 10-prompt\, 4-engine audit costs about $0.06.\n\n  export OPENAI
  _API_KEY=...\n  export ANTHROPIC_API_KEY=...\n  export SERPER_API_KEY=... 
@@ -111,11 +111,11 @@ END:VALARM
 END:VEVENT
 BEGIN:VEVENT
 UID:b92a976aaa3b23ff3eb3@answerrank.local
-DTSTAMP:20260919T051854Z
+DTSTAMP:20260923T145418Z
 DTSTART:20261003T090000
 DTEND:20261003T110000
 SUMMARY:LAUNCH 6: Build the prospect list
-CATEGORIES:AnswerRank Launch
+CATEGORIES:Riley Launch
 DESCRIPTION:Target 200-300 qualified prospects in your vertical and metros.
  \n\n  python3 run.py tick --force\n  python3 run.py prospects\n\nQualifica
  tion bar - all four must be true:\n  1. Visibility score under 55       (t
@@ -133,11 +133,11 @@ END:VALARM
 END:VEVENT
 BEGIN:VEVENT
 UID:90dc141ccc329411cda7@answerrank.local
-DTSTAMP:20260919T051854Z
+DTSTAMP:20260923T145418Z
 DTSTART:20261003T130000
 DTEND:20261003T150000
 SUMMARY:LAUNCH 7: One-page site + unsubscribe
-CATEGORIES:AnswerRank Launch
+CATEGORIES:Riley Launch
 DESCRIPTION:Keep it to one page. A logo is not what closes a $997 deal.\n\n
    - What it is\, who it is for\, the three tiers\, a booking link\n  - Pri
  vacy policy and terms (templates are fine)\n  - THE UNSUBSCRIBE ENDPOINT A
@@ -152,11 +152,11 @@ END:VALARM
 END:VEVENT
 BEGIN:VEVENT
 UID:4cd6eba6da33b1ff1733@answerrank.local
-DTSTAMP:20260919T051854Z
+DTSTAMP:20260923T145418Z
 DTSTART:20261005T180000
 DTEND:20261005T184500
 SUMMARY:LAUNCH 8: Stripe + booking link
-CATEGORIES:AnswerRank Launch
+CATEGORIES:Riley Launch
 DESCRIPTION:  - Stripe account\, verified\n  - Payment links for all four t
  iers: $297\, $499\, $997\, $1997\n  - A calendar booking link (Cal.com fre
  e tier works)\n\nPut the booking link in your email signature today.
@@ -168,11 +168,11 @@ END:VALARM
 END:VEVENT
 BEGIN:VEVENT
 UID:742140a06a27659a7ac2@answerrank.local
-DTSTAMP:20260919T051854Z
+DTSTAMP:20260923T145418Z
 DTSTART:20261006T180000
 DTEND:20261006T183000
 SUMMARY:LAUNCH 9: Mid-warmup check
-CATEGORIES:AnswerRank Launch
+CATEGORIES:Riley Launch
 DESCRIPTION:Halfway through warmup.\n\n  python3 run.py send --dry-run\n\nC
  onfirm: DNS passes\, no preflight errors\, physical address set in\nanswer
  rank.yml. If anything is red\, fix it now - you send in four days.\n\nStil
@@ -184,12 +184,12 @@ TRIGGER:-PT30M
 END:VALARM
 END:VEVENT
 BEGIN:VEVENT
-UID:b49a68b76143ff901ede@answerrank.local
-DTSTAMP:20260919T051854Z
-DTSTART:20261008T180000
-DTEND:20261008T190000
+UID:4c1bbba06c91fda17cdd@answerrank.local
+DTSTAMP:20260923T145418Z
+DTSTART:20261012T180000
+DTEND:20261012T190000
 SUMMARY:LAUNCH 10: FIRST SEND - 20 emails
-CATEGORIES:AnswerRank Launch
+CATEGORIES:Riley Launch
 DESCRIPTION:The business starts today.\n\n  python3 run.py send --dry-run  
     (confirm clean)\n  python3 run.py inbox --full       (READ ALL 20. Ever
  y word.)\n  python3 run.py approve\n  python3 run.py send --limit 20\n\nTw
@@ -203,12 +203,12 @@ TRIGGER:-PT30M
 END:VALARM
 END:VEVENT
 BEGIN:VEVENT
-UID:a0d9dc0aa3c300ae14ef@answerrank.local
-DTSTAMP:20260919T051854Z
-DTSTART:20261009T180000
-DTEND:20261009T183000
+UID:179f5cfff7caad92b7b6@answerrank.local
+DTSTAMP:20260923T145418Z
+DTSTART:20261013T180000
+DTEND:20261013T183000
 SUMMARY:LAUNCH 11: Ramp to 40/day
-CATEGORIES:AnswerRank Launch
+CATEGORIES:Riley Launch
 DESCRIPTION:  python3 run.py send --limit 40\n\nWatch two numbers daily fro
  m here:\n  bounces    must stay under 2%\n  complaints must stay under 0.1
  %\n\nEither one drifts up -> STOP SENDING. Verify the list. Re-warm.\nDeli
@@ -220,12 +220,12 @@ TRIGGER:-PT30M
 END:VALARM
 END:VEVENT
 BEGIN:VEVENT
-UID:b8bc74193188a86ab850@answerrank.local
-DTSTAMP:20260919T051854Z
-DTSTART:20261012T180000
-DTEND:20261012T183000
+UID:1f6902a2e100932a1af9@answerrank.local
+DTSTAMP:20260923T145418Z
+DTSTART:20261014T180000
+DTEND:20261014T183000
 SUMMARY:LAUNCH 12: Ramp to 60-100/day
-CATEGORIES:AnswerRank Launch
+CATEGORIES:Riley Launch
 DESCRIPTION:  python3 run.py send --limit 60\n\nReplies should be appearing
   by now. Every reply gets an answer within\ntwo hours during the day.\n\nE
  xpected at this point: 1-3% reply rate. On 200 sent\, that is 2-6 replies.
@@ -237,11 +237,11 @@ END:VALARM
 END:VEVENT
 BEGIN:VEVENT
 UID:64e61bef1f414c8cc0e8@answerrank.local
-DTSTAMP:20260919T051854Z
+DTSTAMP:20260923T145418Z
 DTSTART:20261017T090000
 DTEND:20261017T103000
 SUMMARY:LAUNCH 13: Deliver to anyone who said yes
-CATEGORIES:AnswerRank Launch
+CATEGORIES:Riley Launch
 DESCRIPTION:Send the full report to everyone who asked\, and offer the 20-m
  inute call.\n\n  python3 run.py audit "<Business>" <City> --state <ST> \\\
  n      --vertical <v> --website <url> --report\n\nReview the report by han
@@ -255,11 +255,11 @@ END:VALARM
 END:VEVENT
 BEGIN:VEVENT
 UID:fc3b79bf9ecd9300da49@answerrank.local
-DTSTAMP:20260919T051854Z
+DTSTAMP:20260923T145418Z
 DTSTART:20261024T090000
 DTEND:20261024T110000
 SUMMARY:LAUNCH 14: Diagnose\, do not guess
-CATEGORIES:AnswerRank Launch
+CATEGORIES:Riley Launch
 DESCRIPTION:Thirty days. Be honest about the numbers.\n\n  python3 run.py d
  ashboard\n  python3 run.py budget\n\nTargets:   250 audited / 400 sent / 8
  -15 replies / 4-8 calls / 2-3 clients\nAcceptable: 150 audited / 250 sent 
@@ -279,32 +279,32 @@ TRIGGER:-PT30M
 END:VALARM
 END:VEVENT
 BEGIN:VEVENT
-UID:065746fc7139fba7e526@answerrank.local
-DTSTAMP:20260919T051854Z
+UID:ad57f24cc68cf1884cbd@answerrank.local
+DTSTAMP:20260923T145418Z
 DTSTART:20260930T193000
 DTEND:20260930T194000
-SUMMARY:AnswerRank: Email warmup (10 min)
-CATEGORIES:AnswerRank Launch
+SUMMARY:Riley: Email warmup (10 min)
+CATEGORIES:Riley Launch
 DESCRIPTION:10 minutes. Keep the sending domain warming.\n\nSend 5-10 real\
  , personal emails from the sending address today - to\nyourself\, to frien
  ds\, to anyone who will reply. Replies are the signal\nthat builds reputat
  ion.\n\nDo NOT start cold outreach until day 18. Sending cold from a cold 
  domain\nburns it permanently\, and a burned domain is abandoned\, not repa
  ired.
-RRULE:FREQ=DAILY;UNTIL=20261008T193000
+RRULE:FREQ=DAILY;UNTIL=20261012T193000
 BEGIN:VALARM
 ACTION:DISPLAY
-DESCRIPTION:AnswerRank: Email warmup (10 min)
+DESCRIPTION:Riley: Email warmup (10 min)
 TRIGGER:-PT5M
 END:VALARM
 END:VEVENT
 BEGIN:VEVENT
-UID:38b39691abb345217ad5@answerrank.local
-DTSTAMP:20260919T051854Z
+UID:8f400eb20fd384785bff@answerrank.local
+DTSTAMP:20260923T145418Z
 DTSTART:20261012T063000
 DTEND:20261012T065000
-SUMMARY:AnswerRank: Morning ops
-CATEGORIES:AnswerRank
+SUMMARY:Riley: Morning ops
+CATEGORIES:Riley
 DESCRIPTION:Your 20 minutes that keep the business moving.\n\n1. python3 ru
  n.py agents\n   -> any ERR twice in a row? investigate before anything els
  e.\n\n2. python3 run.py inbox --full\n   -> READ every draft. They go out 
@@ -314,17 +314,17 @@ DESCRIPTION:Your 20 minutes that keep the business moving.\n\n1. python3 ru
 RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR
 BEGIN:VALARM
 ACTION:DISPLAY
-DESCRIPTION:AnswerRank: Morning ops
+DESCRIPTION:Riley: Morning ops
 TRIGGER:-PT5M
 END:VALARM
 END:VEVENT
 BEGIN:VEVENT
-UID:218ec477e7ccb62e0fac@answerrank.local
-DTSTAMP:20260919T051854Z
+UID:472688cee6376964ef8e@answerrank.local
+DTSTAMP:20260923T145418Z
 DTSTART:20261012T121500
 DTEND:20261012T122500
-SUMMARY:AnswerRank: Reply check
-CATEGORIES:AnswerRank
+SUMMARY:Riley: Reply check
+CATEGORIES:Riley
 DESCRIPTION:10 minutes. Replies only.\n\nAnswer anyone who responded. Speed
   matters more than polish -\na reply inside an hour converts far better th
  an a perfect one tomorrow.\n\nIf they asked for the report:\n  python3 run
@@ -334,17 +334,17 @@ DESCRIPTION:10 minutes. Replies only.\n\nAnswer anyone who responded. Speed
 RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR
 BEGIN:VALARM
 ACTION:DISPLAY
-DESCRIPTION:AnswerRank: Reply check
+DESCRIPTION:Riley: Reply check
 TRIGGER:-PT5M
 END:VALARM
 END:VEVENT
 BEGIN:VEVENT
-UID:aaadb9325b4d6a669804@answerrank.local
-DTSTAMP:20260919T051854Z
+UID:473b50eb389a9df67af9@answerrank.local
+DTSTAMP:20260923T145418Z
 DTSTART:20261013T173000
 DTEND:20261013T190000
-SUMMARY:AnswerRank: Sales calls
-CATEGORIES:AnswerRank
+SUMMARY:Riley: Sales calls
+CATEGORIES:Riley
 DESCRIPTION:Owners of home service businesses are reachable now -\noff the 
  tools\, not yet at dinner. This is the best calling window you have.\n\nPe
  r business/02_SALES_PLAYBOOK.md:\n  0-2 min   "How do people find you toda
@@ -357,17 +357,17 @@ DESCRIPTION:Owners of home service businesses are reachable now -\noff the
 RRULE:FREQ=WEEKLY;BYDAY=TU,TH
 BEGIN:VALARM
 ACTION:DISPLAY
-DESCRIPTION:AnswerRank: Sales calls
+DESCRIPTION:Riley: Sales calls
 TRIGGER:-PT15M
 END:VALARM
 END:VEVENT
 BEGIN:VEVENT
-UID:611016c5d252ea6e59ea@answerrank.local
-DTSTAMP:20260919T051854Z
+UID:df024aa3bc89c5d866f3@answerrank.local
+DTSTAMP:20260923T145418Z
 DTSTART:20261031T090000
 DTEND:20261031T110000
-SUMMARY:AnswerRank: Weekly deep work
-CATEGORIES:AnswerRank
+SUMMARY:Riley: Weekly deep work
+CATEGORIES:Riley
 DESCRIPTION:Two hours. The only long block in your week - protect it.\n\n1.
   python3 run.py dashboard\n   Where are you against $5k? Which funnel step
   is weakest?\n\n2. python3 run.py prospects --stage audited --limit 30\n  
@@ -382,29 +382,29 @@ DESCRIPTION:Two hours. The only long block in your week - protect it.\n\n1.
 RRULE:FREQ=WEEKLY;BYDAY=SA
 BEGIN:VALARM
 ACTION:DISPLAY
-DESCRIPTION:AnswerRank: Weekly deep work
+DESCRIPTION:Riley: Weekly deep work
 TRIGGER:-PT30M
 END:VALARM
 END:VEVENT
 BEGIN:VEVENT
-UID:bc8c32173c73936b9da5@answerrank.local
-DTSTAMP:20260919T051854Z
+UID:f64b7ccaca2886b1ccfa@answerrank.local
+DTSTAMP:20260923T145418Z
 DTSTART:20260927T100000
 DTEND:20260927T103000
-SUMMARY:AnswerRank: Rest day - no business work
-CATEGORIES:AnswerRank
+SUMMARY:Riley: Rest day - no business work
+CATEGORIES:Riley
 DESCRIPTION:Deliberately empty.\n\nThe plan assumes you take this day off. 
  Six days a week is sustainable\nfor a year\; seven is sustainable for abou
  t a month\, and this business\nneeds the year.
 RRULE:FREQ=WEEKLY;BYDAY=SU
 END:VEVENT
 BEGIN:VEVENT
-UID:b9928e723e44461c4eb1@answerrank.local
-DTSTAMP:20260919T051854Z
+UID:e0c9295794ce3a73e4c5@answerrank.local
+DTSTAMP:20260923T145418Z
 DTSTART:20261107T111500
 DTEND:20261107T120000
-SUMMARY:AnswerRank: Monthly close + tax reserve
-CATEGORIES:AnswerRank
+SUMMARY:Riley: Monthly close + tax reserve
+CATEGORIES:Riley
 DESCRIPTION:Monthly close - 45 minutes. Do not skip this one.\n\n1. python3
   run.py dashboard\n   python3 run.py budget\n\n2. Reconcile the ledger aga
  inst your bank and Stripe.\n\n3. MOVE 30% OF PROFIT TO THE TAX ACCOUNT. To
@@ -416,7 +416,7 @@ DESCRIPTION:Monthly close - 45 minutes. Do not skip this one.\n\n1. python3
 RRULE:FREQ=MONTHLY;BYDAY=1SA
 BEGIN:VALARM
 ACTION:DISPLAY
-DESCRIPTION:AnswerRank: Monthly close + tax reserve
+DESCRIPTION:Riley: Monthly close + tax reserve
 TRIGGER:-PT60M
 END:VALARM
 END:VEVENT

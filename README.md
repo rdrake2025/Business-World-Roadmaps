@@ -87,7 +87,7 @@ Explore these ten expertly crafted roadmaps, each a complete guide to mastery in
    *Projects*: Sales pipeline, pitch script, CRM dashboard.  
    *Communities*: Sales Hacker, Reddit r/sales.  
 
-6. **[📦 Operations & Supply Chain](./Supply_Chain_Logistics_README.md)**  
+6. **[📦 Operations & Supply Chain](./Operations_Supply_Chain_README.md)**  
    Optimize global supply chains with AI, blockchain, and sustainable logistics. Design systems using AnyLogic and Tableau.  
    *Key Skills*: Inventory management, route optimization, ESG logistics, blockchain.  
    *Projects*: Supply chain dashboard, logistics simulation, green logistics plan.  

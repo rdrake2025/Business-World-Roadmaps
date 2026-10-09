@@ -6,7 +6,8 @@ data/
 
 # Local configuration and secrets
 answerrank.yml
-budget.yml          # personal financial data
+# personal financial data
+budget.yml
 .env
 .env.local
 backups/
